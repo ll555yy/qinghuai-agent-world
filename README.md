@@ -73,6 +73,13 @@ python scripts/backfill_embeddings.py --live --run-id run_xxx --limit 100 --batc
 cd ../..
 ```
 
+在长模拟前运行一次真实小型聊天闭环（默认 dry-run）：
+
+```powershell
+python core/backend/scripts/run_real_chat_acceptance.py
+python core/backend/scripts/run_real_chat_acceptance.py --live
+```
+
 真实七日模拟必须使用 PostgreSQL。默认依次运行旁观、支持林慧兰和支持赵磊三条路线，每局最多 600 次模型适配器调用、总计最多 1800 次；报告只保存指标和结构化结果：
 
 ```powershell

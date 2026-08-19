@@ -11,7 +11,10 @@ alembic check
 cd ../..
 python core/backend/scripts/check_ark_connection.py --live
 python core/backend/scripts/check_ark_embedding.py --live
+python core/backend/scripts/run_real_chat_acceptance.py --live
 ```
+
+`run_real_chat_acceptance.py` 先跑一局 Day1 小闭环，并以脱敏门禁验证 NPC 主动邀请、玩家加入发言、NPC 离场沉淀、Conversation Memory 向量和 Repository 重启恢复；默认完成后删除验收 Run。
 
 ## 三条路线
 
