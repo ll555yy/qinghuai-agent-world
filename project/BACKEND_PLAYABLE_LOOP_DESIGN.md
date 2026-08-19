@@ -11,7 +11,7 @@
 
 ## 2. 保留与修订的边界
 
-- 继续使用单进程 `InMemoryRunRepository`，Run 是唯一权威状态。
+- 本文记录可玩闭环阶段；其后的数据库阶段已由 `DATABASE_BACKEND_DESIGN.md` 覆盖。`InMemoryRunRepository` 仍用于纯单元测试，正式本地运行可使用 PostgreSQL `RunRepository`，Run 领域聚合仍是编排期间的唯一写入入口。
 - 世界最多两场聊天，每场最多三人，一个角色最多参加一场。
 - 新加入 NPC 只读取加入后的消息；玩家成功加入后可以读取整场历史。
 - `ChatDecision` 仍只有 `speak | wait | leave_chat`。按 D-057，离场沉淀后若 NPC 已无 `active | blocked` Goal，由后端将其标记为 `departed`。

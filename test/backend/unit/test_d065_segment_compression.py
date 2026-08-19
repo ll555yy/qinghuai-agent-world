@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+from core.backend.app.ai.models import TextGenerationResult
+from core.backend.app.domain.clock import WorldTime
+from core.backend.app.orchestration.run_service import (
+    SEGMENT_SUMMARY_RECENT_MESSAGES,
+    RunService,
+)
+
+
+class WaitAndSummaryModel:
+    """Small deterministic provider for lifecycle and summary tests."""
+
+    def __init__(self, *, speak_on_chat_call: int | None = None) -> None:
+        self.chat_calls = 0
+        self.speak_on_chat_call = speak_on_chat_call
+        self.segment_prompts: list[dict] = []
+
+    async def generate(self, request):
+        protocol = request.system_prompt.split("协议=", 1)[1].splitlines()[0]
+        context = json.loads(request.messages[0].content)
+        if protocol == "ChatDecision":
+            self.chat_calls += 1
+            if self.speak_on_chat_call == self.chat_calls:
+                value = {
+                    "result": "decided",
+                    "action": "speak",
+                    "responseDesire": 1,
+                    "intent": "回应一轮内部空闲调度",
+                }
+            else:
+                value = {"result": "decided", "action": "wait"}
+        elif protocol == "SpeechGeneration":
+            value = {"text": "第二轮仍有人愿意回应。"}
+        elif protocol == "SegmentSummary":
+            self.segment_prompts.append(context)
+            value = {
+                "claims": ["滚动摘要已生成"],
+                "actorIds": context.get("participants", []),
+            }
+        else:
+            value = {
+                "memories": [],
+                "goalUpdates": [],
+                "relationshipUpdates": [],
+                "newShortGoals": [],
+                "chapterEffects": [],
+            }
+        return TextGenerationResult(
+            text=json.dumps(value, ensure_ascii=False),
+            provider="test",
+            model="offline",
+        )
+
+
+async def _open(service: RunService, participants: list[str]):
+    created = await service.create_run()
+    opened = await service.create_conversation(created["runId"], participants)
+    run = await service.get_run_entity(created["runId"])
+    return run, run.conversations[opened["conversation"]["conversationId"]]
+
+
+async def _write_messages(service: RunService, run, conversation, count: int) -> None:
+    async with run.lock:
+        for index in range(count):
+            service._write_message_locked(
+                run,
+                conversation,
+                "npc_001" if index % 2 == 0 else "npc_002",
+                f"原文第{index + 1}条",
+            )
+
+
+@pytest.mark.anyio
+async def test_pure_npc_waits_once_then_auto_closes_conversation(registry) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(registry, text_model=model)
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+
+    async with run.lock:
+        message = service._write_message_locked(run, conversation, "npc_001", "先把问题摆在这里。")
+        await service._run_chat_pipeline_locked(run, conversation, message["messageId"])
+
+    assert conversation.close_reason == "conversation_idle"
+    idle_events = [event for event in run.events if event.event_type == "conversation_idle"]
+    assert [event.payload["idleCount"] for event in idle_events] == [1, 2]
+    assert run.active_chat_pipelines == 0
+
+
+@pytest.mark.anyio
+async def test_first_idle_dispatch_is_bounded_and_a_speech_resets_idle(registry) -> None:
+    # Outer round waits; the one bounded internal round lets npc_002 speak.
+    model = WaitAndSummaryModel(speak_on_chat_call=3)
+    service = RunService(registry, text_model=model)
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+
+    async with run.lock:
+        message = service._write_message_locked(run, conversation, "npc_001", "还有一轮机会。")
+        await service._run_chat_pipeline_locked(run, conversation, message["messageId"])
+
+    assert conversation.is_open
+    assert run.idle_counts[conversation.conversation_id] == 1
+    assert any(
+        item["authorActorId"] == "npc_002"
+        and item["text"] == "第二轮仍有人愿意回应。"
+        for item in run.messages[conversation.conversation_id]
+    )
+
+
+@pytest.mark.anyio
+async def test_player_chat_never_enters_automatic_idle(registry) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(registry, text_model=model)
+    run, conversation = await _open(service, ["npc_001", registry.player_actor_id])
+
+    async with run.lock:
+        message = service._write_message_locked(run, conversation, registry.player_actor_id, "玩家还在聊天。")
+        await service._run_chat_pipeline_locked(run, conversation, message["messageId"])
+
+    assert conversation.is_open
+    assert not any(event.event_type == "conversation_idle" for event in run.events)
+    assert run.idle_counts[conversation.conversation_id] == 0
+
+    await service.conversation_idle(run.run_id, conversation.conversation_id)
+    await service.conversation_idle(run.run_id, conversation.conversation_id)
+    assert conversation.close_reason == "idle"
+
+
+@pytest.mark.anyio
+async def test_18_boundary_closes_without_starting_an_idle_round(registry) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(registry, text_model=model)
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+    async with run.lock:
+        run.clock.current = WorldTime(day=1, hour=17, minute=59)
+        message = service._write_message_locked(run, conversation, "npc_001", "临近收束。")
+
+    await service.world_step(run.run_id, 1)
+
+    assert conversation.close_reason == "day_end"
+    assert not any(event.event_type == "conversation_idle" for event in run.events)
+    # A late continuation is a no-op at 18:00 and cannot create another idle
+    # round after the unified day-end path has run.
+    async with run.lock:
+        await service._run_chat_pipeline_locked(run, conversation, message["messageId"])
+    assert not any(event.event_type == "conversation_idle" for event in run.events)
+
+
+@pytest.mark.anyio
+async def test_rolling_summary_keeps_eight_raw_messages_and_advances_cursor(registry) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(registry, text_model=model)
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+    await _write_messages(service, run, conversation, 21)
+
+    async with run.lock:
+        await service._maybe_roll_segment_summary_locked(run, conversation)
+        segment = run.segments[conversation.conversation_id][-1]
+        context = service._chat_context(run, conversation, "npc_001")
+
+    assert len(run.messages[conversation.conversation_id]) == 21
+    assert segment["summaryThroughMessageId"] == "msg_000013"
+    assert len(context["messages"]) == SEGMENT_SUMMARY_RECENT_MESSAGES
+    assert context["messages"][0]["messageId"] == "msg_000014"
+    assert context["segmentSummaries"][0]["summary"]["claims"] == ["滚动摘要已生成"]
+    assert model.segment_prompts[0]["mode"] == "rolling"
+    assert [item["messageId"] for item in model.segment_prompts[0]["messages"]] == [
+        f"msg_{index:06d}" for index in range(1, 14)
+    ]
+
+
+@pytest.mark.anyio
+async def test_final_summary_is_incremental_and_failure_does_not_advance_cursor(registry) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(registry, text_model=model)
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+    await _write_messages(service, run, conversation, 21)
+    async with run.lock:
+        await service._maybe_roll_segment_summary_locked(run, conversation)
+        service._write_message_locked(run, conversation, "npc_001", "最后补充的一条。")
+        await service._close_current_segment_locked(run, conversation)
+        segment = run.segments[conversation.conversation_id][-1]
+
+    assert segment["summaryThroughMessageId"] == "msg_000022"
+    assert model.segment_prompts[-1]["mode"] == "final"
+    assert [item["messageId"] for item in model.segment_prompts[-1]["messages"]] == [
+        f"msg_{index:06d}" for index in range(14, 23)
+    ]
+
+    failed_service = RunService(registry, text_model=None)
+    failed_run, failed_conversation = await _open(
+        failed_service,
+        ["npc_001", "npc_002"],
+    )
+    await _write_messages(failed_service, failed_run, failed_conversation, 21)
+    async with failed_run.lock:
+        await failed_service._maybe_roll_segment_summary_locked(
+            failed_run,
+            failed_conversation,
+        )
+        failed_segment = failed_run.segments[failed_conversation.conversation_id][-1]
+        failed_context = failed_service._chat_context(
+            failed_run,
+            failed_conversation,
+            "npc_001",
+        )
+
+    assert failed_segment["summaryThroughMessageId"] is None
+    assert failed_segment["summary"] is None
+    assert len(failed_run.messages[failed_conversation.conversation_id]) == 21
+    assert len(failed_context["messages"]) == 21
+
+
+@pytest.mark.anyio
+async def test_joiner_cannot_read_previous_segment_summary(registry) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(registry, text_model=model)
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+    await _write_messages(service, run, conversation, 21)
+    async with run.lock:
+        await service._maybe_roll_segment_summary_locked(run, conversation)
+        await service._join_conversation_locked(run, conversation, "npc_003")
+        joiner_context = service._chat_context(run, conversation, "npc_003")
+
+    assert service._visible_messages(run, conversation, "npc_003") == []
+    assert joiner_context["messages"] == []
+    assert joiner_context["segmentSummaries"] == []
+    assert len(run.messages[conversation.conversation_id]) == 21

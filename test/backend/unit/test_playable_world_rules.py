@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from core.backend.app.ai.decision_service import DecisionService, StructuredCallFailed
 from core.backend.app.ai.errors import AIError, AIErrorCode
 from core.backend.app.ai.models import TextGenerationResult

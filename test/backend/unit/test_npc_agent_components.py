@@ -13,8 +13,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 
 import pytest
-from pydantic import ValidationError
-
 from core.backend.app.agents.memory_tool import RetrieveOwnedMemoriesTool
 from core.backend.app.agents.models import (
     AgentInvocation,
@@ -27,6 +25,7 @@ from core.backend.app.agents.trace import AgentTrace, InMemoryAgentTraceSink
 from core.backend.app.ai.decision_service import DecisionService
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.ai.protocols import ChatDecision, MemoryQuery, SpeechGeneration
+from pydantic import ValidationError
 
 
 def _context(owner: str = "npc_001") -> MemoryToolContext:

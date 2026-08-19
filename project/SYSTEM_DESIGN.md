@@ -3,6 +3,7 @@
 - 状态：基于已确认玩法的实施设计
 - 技术栈：已确认，见 `PROJECT_DESIGN.md` D-052 与 `TECH_STACK.md`
 - 范围：单场景、五名 NPC、一名玩家、最多两场并行聊天、Day1～Day7 单章节
+- 当前实现修订：数据库阶段已落地；加入审批、NPC 离场和每日时隙以 `PROJECT_DESIGN.md` D-057、D-058、D-061、D-065 为准。
 
 ## 1. 核心不变量
 
@@ -73,16 +74,16 @@ invitation_pending
   └─ refuse ─→ idle_for_day
 
 approaching_to_join
-  ├─ slot still available ─→ in_conversation
-  └─ state changed/full ───→ idle_for_day
+  ├─ all frozen approvers accept ─→ in_conversation
+  └─ any refusal/state changed/full ─→ idle_for_day
 
 in_conversation
-  └─ leave_chat / conversation closed ─→ idle
+  └─ leave_chat / conversation closed ─→ consolidate ─→ idle | departed
 ```
 
-- NPC 主动找空闲目标时需要邀请；目标在未满 Conversation 中时，NPC 到达后作为第三人直接加入。
+- NPC 主动找空闲目标时需要邀请；目标在未满 Conversation 中时发起加入请求，冻结当时所有现有参与者并要求一致同意。玩家审批由玩家操作。
 - 本日主动邀请失败后不再寻找第二目标，但仍可被邀请或作为第三人加入。
-- NPC 不存在 `leave_world` 或永久退出状态。
+- NPC 离场沉淀后若已经没有 `active | blocked` Goal，则进入 `departed`，当天和后续不再思考、移动、邀请或加入。
 
 ## 6. Conversation 生命周期
 

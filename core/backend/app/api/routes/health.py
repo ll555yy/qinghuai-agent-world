@@ -9,17 +9,24 @@ from fastapi import APIRouter, Request
 router = APIRouter(tags=["health"])
 
 
-def _health(request: Request) -> dict[str, Any]:
+async def _health(request: Request) -> dict[str, Any]:
     loaded = bool(getattr(request.app.state, "scenario_loaded", False))
-    return {
-        "status": "ok" if loaded else "degraded",
+    repository = getattr(request.app.state, "run_repository", None)
+    database_configured = bool(
+        getattr(request.app.state, "database_configured", False)
+    )
+    storage_healthy = bool(repository is not None and await repository.healthcheck())
+    result = {
+        "status": "ok" if loaded and storage_healthy else "degraded",
         "processAlive": True,
         "scenarioLoaded": loaded,
     }
+    if database_configured:
+        result.update(persistence="postgres", storageHealthy=storage_healthy)
+    return result
 
 
 @router.get("/health")
 @router.get("/api/health")
 async def health(request: Request) -> dict[str, Any]:
-    return _health(request)
-
+    return await _health(request)

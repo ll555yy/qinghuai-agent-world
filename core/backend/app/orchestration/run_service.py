@@ -1,4 +1,4 @@
-"""Application service for in-memory Runs and public events."""
+"""Application service for durable Runs and public events."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import uuid
 from copy import deepcopy
 from typing import Any, cast
 
+from ..agents.memory_tool import RetrieveOwnedMemoriesTool
 from ..agents.models import AgentInvocation, MemoryToolContext
 from ..agents.runtime import NPCAgent, NPCAgentRegistry, NPCAgentRuntime
 from ..ai.decision_service import DecisionService, StructuredCallFailed
@@ -45,8 +46,16 @@ from ..domain.errors import (
 )
 from ..domain.run import CommandRecord, Run
 from ..persistence.in_memory import InMemoryRunRepository
+from ..persistence.memory_retriever import MemoryRetriever
+from ..persistence.run_repository import RunRepository
 from ..scenario.models import ScenarioRegistry
 from .event_hub import EventHub
+
+# Keep the first rolling-summary policy deliberately small and deterministic.
+# The source messages remain authoritative; these values only control what is
+# supplied to the next private model prompt.
+SEGMENT_SUMMARY_TRIGGER_MESSAGES = 20
+SEGMENT_SUMMARY_RECENT_MESSAGES = 8
 
 
 class RunService:
@@ -55,9 +64,10 @@ class RunService:
     def __init__(
         self,
         registry: ScenarioRegistry,
-        repository: InMemoryRunRepository | None = None,
+        repository: RunRepository | None = None,
         event_hub: EventHub | None = None,
         text_model: Any | None = None,
+        memory_retriever: MemoryRetriever | None = None,
         seed: int = 1,
     ) -> None:
         self.registry = registry
@@ -68,7 +78,15 @@ class RunService:
         # Five logical NPC Agents share this DecisionService and one compiled
         # LangGraph.  They receive only invocation snapshots; RunService
         # remains the authority that applies their semantic decisions.
-        self.agent_runtime = NPCAgentRuntime(self.decisions)
+        self.agent_runtime = NPCAgentRuntime(
+            self.decisions,
+            memory_tool_factory=(
+                lambda actor_id: RetrieveOwnedMemoriesTool(
+                    bound_owner_npc_id=actor_id,
+                    retriever=memory_retriever,
+                )
+            ),
+        )
         self.agents = NPCAgentRegistry(
             self.agent_runtime,
             [npc.actor_id for npc in self.registry.npcs],
@@ -166,13 +184,17 @@ class RunService:
                     "playerAgendaId": agenda_id,
                 },
             )
+            # Register the aggregate before Day1's due actions.  Those
+            # actions may release the Run lock for a model call, and that
+            # boundary checkpoints through ``repository.save``.
+            await self.repository.add(run)
             # Day1's public notice is authoritative and is always visible
             # before the first scheduled NPC thought.
             initial_events = [event]
             await self._process_due_locked(run)
             initial_events.extend(run.events[len(initial_events):])
             snapshot = run.to_public_snapshot(self.registry)
-        await self.repository.add(run)
+            await self.repository.save(run)
         for initial_event in initial_events:
             await self.event_hub.publish(run_id, initial_event.to_dict())
         return snapshot
@@ -189,11 +211,10 @@ class RunService:
             return deepcopy(run.to_public_snapshot(self.registry))
 
     async def get_events(self, run_id: str, after_seq: int = 0) -> dict[str, Any]:
-        run = await self.get_run_entity(run_id)
+        await self.get_run_entity(run_id)
         if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
             raise ValueError("afterSeq must be a non-negative integer")
-        async with run.lock:
-            events = [event.to_dict() for event in run.events_after(after_seq)]
+        events = [event.to_dict() for event in await self.repository.events_after(run_id, after_seq)]
         return {"runId": run_id, "afterSeq": after_seq, "events": events}
 
     async def create_conversation(
@@ -252,7 +273,7 @@ class RunService:
             )
             run.conversations[conversation_id] = conversation
             run.messages[conversation_id] = []
-            run.segments[conversation_id] = [{"segmentId": run.next_segment_identity(), "participants": list(participant_ids), "startedAt": run.clock.as_dict()["label"], "summary": None}]
+            run.segments[conversation_id] = [{"segmentId": run.next_segment_identity(), "participants": list(participant_ids), "startedAt": run.clock.as_dict()["label"], "summary": None, "summaryThroughMessageId": None}]
             run.conversation_drafts[conversation_id] = {
                 actor_id: {
                     "goalUpdates": {},
@@ -279,6 +300,7 @@ class RunService:
                 "run": run.to_public_snapshot(self.registry),
             }
             self._record_command(run, command_id, fingerprint, result)
+            await self.repository.save(run)
         assert event_dict is not None
         await self.event_hub.publish(run_id, event_dict)
         return result
@@ -336,6 +358,7 @@ class RunService:
                 "run": run.to_public_snapshot(self.registry),
             }
             self._record_command(run, command_id, fingerprint, result)
+            await self.repository.save(run)
         for event_dict in events_to_publish:
             await self.event_hub.publish(run_id, event_dict)
         return result
@@ -366,6 +389,7 @@ class RunService:
                 "advancedTo": new_time.label,
             }
             self._record_command(run, command_id, fingerprint, result)
+            await self.repository.save(run)
         for event_dict in events_to_publish:
             await self.event_hub.publish(run_id, event_dict)
         return result
@@ -400,6 +424,7 @@ class RunService:
                 "advancedMinutes": real_seconds,
             }
             self._record_command(run, command_id, fingerprint, result)
+            await self.repository.save(run)
         for event_dict in published:
             await self.event_hub.publish(run_id, event_dict)
         return result
@@ -466,6 +491,7 @@ class RunService:
             published = [item.to_dict() for item in run.events_after(before_seq)]
             result = {"invitation": self._public_invitation(invitation), "run": run.to_public_snapshot(self.registry)}
             self._record_command(run, command_id, fingerprint, result)
+            await self.repository.save(run)
         for published_event in published:
             await self.event_hub.publish(run_id, published_event)
         return result
@@ -529,6 +555,7 @@ class RunService:
                 published = [item.to_dict() for item in run.events_after(before_seq)]
                 result = {"invitation": self._public_invitation(invitation), "conversation": conversation.to_public_dict(), "run": run.to_public_snapshot(self.registry)}
             self._record_command(run, command_id, fingerprint, result)
+            await self.repository.save(run)
         for published_event in published:
             await self.event_hub.publish(run_id, published_event)
         return result
@@ -593,6 +620,7 @@ class RunService:
                     run.messages.get(conversation_id, [])
                 )
             self._record_command(run, command_id, fingerprint, result)
+            await self.repository.save(run)
         for event in published:
             await self.event_hub.publish(run_id, event)
         return result
@@ -604,16 +632,20 @@ class RunService:
     ) -> dict[str, Any]:
         run = await self.get_run_entity(run_id)
         async with run.lock:
+            before_seq = run.event_seq
             self._expire_pending_requests_locked(run)
             join_request = run.join_requests.get(join_request_id)
             if join_request is None:
                 raise JoinRequestNotFoundError(
                     details={"joinRequestId": join_request_id}
                 )
-            return {
+            result = {
                 "joinRequest": self._public_join_request(join_request),
                 "run": run.to_public_snapshot(self.registry),
             }
+            if run.event_seq != before_seq:
+                await self.repository.save(run)
+            return result
 
     async def respond_join_request(
         self,
@@ -673,6 +705,7 @@ class RunService:
                 )
             self._record_command(run, command_id, fingerprint, result)
             published = [event.to_dict() for event in run.events_after(before_seq)]
+            await self.repository.save(run)
         for event in published:
             await self.event_hub.publish(run_id, event)
         return result
@@ -713,6 +746,7 @@ class RunService:
                 }
                 self._record_command(run, command_id, fingerprint, result)
                 events = [item.to_dict() for item in run.events_after(before_seq)]
+                await self.repository.save(run)
         for event in events:
             await self.event_hub.publish(run_id, event)
         return result
@@ -733,6 +767,7 @@ class RunService:
                 await self._close_conversation_locked(run, conversation, "idle")
             result = {"conversation": conversation.to_public_dict(), "run": run.to_public_snapshot(self.registry)}
             events = [item.to_dict() for item in run.events_after(before_seq)]
+            await self.repository.save(run)
         for event in events:
             await self.event_hub.publish(run_id, event)
         return result
@@ -756,6 +791,7 @@ class RunService:
             await self._consolidate_locked(run, conversation, npc_id, "retry")
             published = [event.to_dict() for event in run.events_after(before_seq)]
             result = {"npcId": npc_id, "conversationId": conversation_id, "status": run.consolidation_status[(conversation_id, npc_id)].get("status"), "run": run.to_public_snapshot(self.registry)}
+            await self.repository.save(run)
         for event in published:
             await self.event_hub.publish(run_id, event)
         return result
@@ -774,6 +810,12 @@ class RunService:
         Callers enter with ``run.lock`` held and resume with it held again.
         """
 
+        # Any state produced before the provider wait (for example an
+        # accepted message or pending invitation) must survive a process
+        # failure while the network call is in flight.  This save completes
+        # before releasing the aggregate lock and does not keep a database
+        # transaction open across the model call.
+        await self.repository.save(run)
         run.lock.release()
         try:
             return await awaitable
@@ -1759,7 +1801,7 @@ class RunService:
         conversation = Conversation(conversation_id=conversation_id, creation_seq=creation_seq, participants=list(participant_ids))
         run.conversations[conversation_id] = conversation
         run.messages[conversation_id] = []
-        run.segments[conversation_id] = [{"segmentId": run.next_segment_identity(), "participants": list(participant_ids), "startedAt": run.clock.as_dict()["label"], "summary": None}]
+        run.segments[conversation_id] = [{"segmentId": run.next_segment_identity(), "participants": list(participant_ids), "startedAt": run.clock.as_dict()["label"], "summary": None, "summaryThroughMessageId": None}]
         run.conversation_drafts[conversation_id] = {
             actor_id: {
                 "goalUpdates": {},
@@ -1843,7 +1885,7 @@ class RunService:
         old_participants = list(conversation.participants)
         await self._close_current_segment_locked(run, conversation)
         conversation.add_participant(actor_id)
-        run.segments[conversation.conversation_id].append({"segmentId": run.next_segment_identity(), "participants": list(conversation.participants), "startedAt": run.clock.as_dict()["label"], "summary": None})
+        run.segments[conversation.conversation_id].append({"segmentId": run.next_segment_identity(), "participants": list(conversation.participants), "startedAt": run.clock.as_dict()["label"], "summary": None, "summaryThroughMessageId": None})
         if self.registry.actor(actor_id) is not None and self.registry.actor(actor_id).kind == "npc":  # type: ignore[union-attr]
             run.conversation_drafts.setdefault(conversation.conversation_id, {})[actor_id] = {
                 "goalUpdates": {},
@@ -1859,6 +1901,10 @@ class RunService:
         )
         run.actor_states[actor_id]["status"] = "chatting"
         run.append_event("conversation_participant_joined", {"conversation": conversation.to_public_dict(), "actorJoined": actor_id})
+        # A participant-set change starts a fresh idle cadence.  In
+        # particular, a joiner must not inherit an idle round that was earned
+        # by the previous participant set.
+        run.idle_counts[conversation.conversation_id] = 0
         await self._run_participant_event_locked(
             run,
             conversation,
@@ -1872,10 +1918,13 @@ class RunService:
         conversation: Conversation,
         participant_ids: list[str],
         trigger: str,
+        *,
+        _allow_idle_reentry: bool = True,
     ) -> None:
         if not conversation.is_open or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
             return
         decisions: dict[str, ChatDecision] = {}
+        participants_changed = False
         npc_ids = {npc.actor_id for npc in self.registry.npcs}
         for npc_id in participant_ids:
             if npc_id in npc_ids and npc_id in conversation.participants:
@@ -1887,6 +1936,7 @@ class RunService:
                 )
         for npc_id, decision in list(decisions.items()):
             if decision.action == "leave_chat" and npc_id in conversation.participants:
+                participants_changed = True
                 await self._leave_and_consolidate_locked(
                     run,
                     conversation,
@@ -1901,6 +1951,17 @@ class RunService:
             if npc_id in conversation.participants and decision.action == "speak"
         ]
         if not candidates:
+            # Participant-change notifications are a fresh context for the
+            # remaining actors, but are not themselves an idle turn.  D-065
+            # starts from a message-driven round (or its bounded internal
+            # ``conversation_idle`` retry), so a join/leave cannot close a
+            # newly changed conversation before anyone has a chance to speak.
+            if trigger == "conversation_idle" and not participants_changed:
+                await self._handle_automatic_idle_locked(
+                    run,
+                    conversation,
+                    _allow_reentry=_allow_idle_reentry,
+                )
             return
         winner_id, winner = self._select_speaker(run, conversation, candidates)
         try:
@@ -1939,7 +2000,64 @@ class RunService:
                 conversation,
                 message["messageId"],
                 7,
+                _allow_idle_reentry=False,
             )
+
+    async def _handle_automatic_idle_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        *,
+        _allow_reentry: bool,
+    ) -> None:
+        """Advance D-065 for one complete NPC-only no-speech dispatch.
+
+        The first idle round is deliberately bounded to one internal
+        participant dispatch.  That gives the other NPCs one fresh chance to
+        speak, while the ``_allow_reentry`` guard prevents a provider/fallback
+        that keeps returning ``wait`` from recursively spinning forever.
+        Conversations containing the player remain on the explicit player
+        ``conversation_idle`` API path.
+        """
+
+        if (
+            not conversation.is_open
+            or run.clock.current.clock_minutes >= run.clock.active_end_minutes
+            or not conversation.participants
+            or any(
+                (actor := self.registry.actor(actor_id)) is None
+                or actor.kind != "npc"
+                for actor_id in conversation.participants
+            )
+        ):
+            return
+        conversation_id = conversation.conversation_id
+        run.idle_counts[conversation_id] = run.idle_counts.get(conversation_id, 0) + 1
+        run.append_event(
+            "conversation_idle",
+            {
+                "conversationId": conversation_id,
+                "idleCount": run.idle_counts[conversation_id],
+            },
+        )
+        if run.idle_counts[conversation_id] >= 2:
+            await self._close_conversation_locked(
+                run,
+                conversation,
+                "conversation_idle",
+            )
+            return
+        if not _allow_reentry:
+            return
+        # The participant list is copied after the guard so a nested
+        # leave/consolidation cannot mutate the dispatcher's iteration view.
+        await self._run_participant_event_locked(
+            run,
+            conversation,
+            list(conversation.participants),
+            "conversation_idle",
+            _allow_idle_reentry=False,
+        )
 
     async def _close_current_segment_locked(self, run: Run, conversation: Conversation) -> None:
         segments = run.segments.get(conversation.conversation_id, [])
@@ -1949,40 +2067,179 @@ class RunService:
         segment["endedAt"] = run.clock.as_dict()["label"]
         segment["summary"] = await self._summarize_segment_locked(run, conversation, segment)
 
+    @staticmethod
+    def _empty_segment_summary(participants: list[str]) -> dict[str, Any]:
+        return {
+            "claims": [],
+            "commitments": [],
+            "revealedFacts": [],
+            "openQuestions": [],
+            "actorIds": list(participants),
+            "topicHints": [],
+        }
+
+    def _segment_messages(
+        self,
+        run: Run,
+        conversation: Conversation,
+        segment: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return the complete, private source set for one Segment.
+
+        This is intentionally separate from prompt projection.  Messages are
+        never deleted or replaced by a summary; the pointer only tells the
+        prompt builder which prefix has already been represented by the
+        shared summary.
+        """
+
+        return [
+            self._public_messages([message])[0]
+            for message in run.messages.get(conversation.conversation_id, [])
+            if message.get("segmentId") == segment.get("segmentId")
+        ]
+
+    @staticmethod
+    def _messages_after_summary_cursor(
+        messages: list[dict[str, Any]],
+        cursor: str | None,
+    ) -> list[dict[str, Any]]:
+        if not cursor:
+            return list(messages)
+        for index, message in enumerate(messages):
+            if message.get("messageId") == cursor:
+                return messages[index + 1 :]
+        # A missing cursor is treated conservatively as an uncompressed
+        # source set.  It is safer to repeat input than to silently hide it.
+        return list(messages)
+
+    def _segment_summary_entries(
+        self,
+        run: Run,
+        conversation: Conversation,
+        npc_id: str,
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "segmentId": segment.get("segmentId"),
+                "summary": deepcopy(segment.get("summary")),
+            }
+            for segment in run.segments.get(conversation.conversation_id, [])
+            if npc_id in segment.get("participants", [])
+            and segment.get("summary") is not None
+        ]
+
+    async def _maybe_roll_segment_summary_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+    ) -> None:
+        """Compress the current Segment once its un-summarized tail is long.
+
+        The model sees the prior neutral summary plus the older part of the
+        uncompressed tail, while the newest eight source messages remain
+        verbatim.  A failed call leaves both the summary and its cursor
+        untouched so a later message can retry it.
+        """
+
+        segments = run.segments.get(conversation.conversation_id, [])
+        if not conversation.is_open or not segments:
+            return
+        segment = segments[-1]
+        if segment.get("endedAt") is not None:
+            return
+        source_messages = self._segment_messages(run, conversation, segment)
+        unsummarized = self._messages_after_summary_cursor(
+            source_messages,
+            segment.get("summaryThroughMessageId"),
+        )
+        if len(unsummarized) <= SEGMENT_SUMMARY_TRIGGER_MESSAGES:
+            return
+        to_compress = unsummarized[:-SEGMENT_SUMMARY_RECENT_MESSAGES]
+        if not to_compress:
+            return
+        segment_id = segment.get("segmentId")
+        previous_cursor = segment.get("summaryThroughMessageId")
+        prompt = json.dumps(
+            {
+                "protocol": "segment_summary",
+                "mode": "rolling",
+                "participants": list(segment.get("participants", [])),
+                "summary": deepcopy(segment.get("summary")),
+                "summaryThroughMessageId": previous_cursor,
+                "messages": to_compress,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            result = await self._await_model_without_run_lock(
+                run,
+                self.decisions.segment_summary(prompt),
+            )
+        except StructuredCallFailed:
+            return
+        if self.decisions.last_failed_protocol == "SegmentSummary":
+            return
+        current_segments = run.segments.get(conversation.conversation_id, [])
+        if (
+            not conversation.is_open
+            or not current_segments
+            or current_segments[-1].get("segmentId") != segment_id
+            or current_segments[-1].get("endedAt") is not None
+            or current_segments[-1].get("summaryThroughMessageId") != previous_cursor
+        ):
+            return
+        summary = result.model_dump(by_alias=True)
+        participants = list(current_segments[-1].get("participants", []))
+        summary["actorIds"] = [
+            actor_id for actor_id in summary.get("actorIds", [])
+            if actor_id in participants
+        ]
+        current_segments[-1]["summary"] = summary
+        current_segments[-1]["summaryThroughMessageId"] = to_compress[-1].get("messageId")
+
     async def _summarize_segment_locked(
         self,
         run: Run,
         conversation: Conversation,
         segment: dict[str, Any],
     ) -> dict[str, Any]:
-        messages = [
-            self._public_messages([message])[0]
-            for message in run.messages.get(conversation.conversation_id, [])
-            if message.get("segmentId") == segment.get("segmentId")
-        ]
+        messages = self._segment_messages(run, conversation, segment)
         participants = list(segment.get("participants", []))
         if not messages:
-            return {
-                "claims": [],
-                "commitments": [],
-                "revealedFacts": [],
-                "openQuestions": [],
-                "actorIds": participants,
-                "topicHints": [],
-            }
+            return self._empty_segment_summary(participants)
+        previous_summary = deepcopy(segment.get("summary"))
+        remaining = self._messages_after_summary_cursor(
+            messages,
+            segment.get("summaryThroughMessageId"),
+        )
+        if previous_summary is not None and not remaining:
+            return previous_summary
         prompt = json.dumps(
-            {"protocol": "segment_summary", "messages": messages, "participants": participants},
+            {
+                "protocol": "segment_summary",
+                "mode": "final",
+                "summary": previous_summary,
+                "summaryThroughMessageId": segment.get("summaryThroughMessageId"),
+                "messages": remaining,
+                "participants": participants,
+            },
             ensure_ascii=False,
         )
         try:
             result = await self.decisions.segment_summary(prompt)
+            if self.decisions.last_failed_protocol == "SegmentSummary":
+                return previous_summary or self._empty_segment_summary(participants)
             summary = result.model_dump(by_alias=True)
             summary["actorIds"] = [
-                actor_id for actor_id in summary["actorIds"] if actor_id in participants
+                actor_id for actor_id in summary.get("actorIds", [])
+                if actor_id in participants
             ]
+            # This is the only successful path that advances the durable
+            # pointer.  The raw messages remain in Run.messages forever.
+            segment["summaryThroughMessageId"] = messages[-1].get("messageId")
             return summary
         except StructuredCallFailed:
-            return {"claims": [], "commitments": [], "revealedFacts": [], "openQuestions": [], "actorIds": participants, "topicHints": []}
+            return previous_summary or self._empty_segment_summary(participants)
 
     def _write_message_locked(self, run: Run, conversation: Conversation, author_id: str, text: str) -> dict[str, Any]:
         if not conversation.is_open or author_id not in conversation.participants:
@@ -2013,6 +2270,7 @@ class RunService:
         chain_left: int = 8,
         *,
         _registered: bool = False,
+        _allow_idle_reentry: bool = True,
     ) -> None:
         """Run one chat round while allowing the clock to cross day-end.
 
@@ -2032,7 +2290,11 @@ class RunService:
         try:
             if not conversation.is_open or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
                 return
+            await self._maybe_roll_segment_summary_locked(run, conversation)
+            if not conversation.is_open or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+                return
             decisions: dict[str, ChatDecision] = {}
+            participants_changed = False
             for actor_id in list(conversation.participants):
                 actor = self.registry.actor(actor_id)
                 if actor is None or actor.kind != "npc":
@@ -2044,6 +2306,7 @@ class RunService:
                 if actor_id not in conversation.participants:
                     continue
                 if decision.action == "leave_chat":
+                    participants_changed = True
                     await self._leave_and_consolidate_locked(run, conversation, actor_id, "model_leave")
             # A ChatDecision that was already in flight may finish after the
             # boundary, but it cannot open the next Speech/Chat round.
@@ -2055,6 +2318,13 @@ class RunService:
                 return
             candidates = [(actor_id, decision) for actor_id, decision in decisions.items() if actor_id in conversation.participants and decision.action == "speak"]
             if not candidates:
+                if participants_changed:
+                    return
+                await self._handle_automatic_idle_locked(
+                    run,
+                    conversation,
+                    _allow_reentry=_allow_idle_reentry,
+                )
                 return
             winner_id, winner = self._select_speaker(run, conversation, candidates)
             # Grant the Speech call while still below 18:00.  The grant and
@@ -2123,6 +2393,7 @@ class RunService:
                     message["messageId"],
                     chain_left - 1,
                     _registered=True,
+                    _allow_idle_reentry=False,
                 )
         finally:
             if root_pipeline:
@@ -2249,22 +2520,60 @@ class RunService:
         npc_id: str,
     ) -> dict[str, Any]:
         segments = run.segments.get(conversation.conversation_id, [])
-        current_segment_id = segments[-1].get("segmentId") if segments else None
-        messages = [
+        current_segment = segments[-1] if segments else None
+        current_segment_id = current_segment.get("segmentId") if current_segment else None
+        visible_messages = [
             message
             for message in self._visible_messages(run, conversation, npc_id)
             if message.get("segmentId") == current_segment_id
-        ][-20:]
-        summaries = [
-            {
-                "segmentId": segment.get("segmentId"),
-                "summary": deepcopy(segment.get("summary")),
-            }
-            for segment in segments[:-1]
-            if npc_id in segment.get("participants", [])
-            and segment.get("summary") is not None
         ]
+        if current_segment is not None:
+            messages = self._messages_after_summary_cursor(
+                visible_messages,
+                current_segment.get("summaryThroughMessageId"),
+            )
+        else:
+            messages = []
+        summaries = self._segment_summary_entries(run, conversation, npc_id)
+        # Before the first successful compression preserve the existing
+        # small-chat behaviour.  After compression the cursor, rather than a
+        # hard slice, decides which raw tail is still needed; this ensures a
+        # failed summary never hides source evidence from the Agent.
         return {"segmentSummaries": summaries, "messages": messages}
+
+    def _consolidation_prompt_messages(
+        self,
+        run: Run,
+        conversation: Conversation,
+        npc_id: str,
+    ) -> list[dict[str, Any]]:
+        """Project summaries plus uncompressed evidence for ExitConsolidation."""
+
+        result: list[dict[str, Any]] = []
+        for segment in run.segments.get(conversation.conversation_id, []):
+            if npc_id not in segment.get("participants", []):
+                continue
+            segment_messages = self._segment_messages(run, conversation, segment)
+            visible_ids = {
+                message["messageId"]
+                for message in self._visible_messages(run, conversation, npc_id)
+                if message.get("segmentId") == segment.get("segmentId")
+            }
+            if segment.get("summaryThroughMessageId"):
+                # ExitConsolidation still needs a bounded evidence tail for
+                # validating Memory/Goal/Effect references.  The shared
+                # summary carries the older context; the latest eight raw
+                # messages retain concrete evidence without re-expanding the
+                # whole segment prompt.
+                projected = segment_messages[-SEGMENT_SUMMARY_RECENT_MESSAGES:]
+            else:
+                projected = segment_messages
+            result.extend(
+                message
+                for message in projected
+                if message.get("messageId") in visible_ids
+            )
+        return result
 
     @staticmethod
     def _public_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2432,8 +2741,10 @@ class RunService:
                     "participants": list(conversation.participants),
                     "startedAt": run.clock.as_dict()["label"],
                     "summary": None,
+                    "summaryThroughMessageId": None,
                 }
             )
+            run.idle_counts[conversation.conversation_id] = 0
         await self._consolidate_locked(run, conversation, npc_id, reason)
         if conversation.is_open and len(conversation.participants) >= 2:
             await self._run_participant_event_locked(
@@ -2480,8 +2791,10 @@ class RunService:
                     "participants": list(conversation.participants),
                     "startedAt": run.clock.as_dict()["label"],
                     "summary": None,
+                    "summaryThroughMessageId": None,
                 }
             )
+            run.idle_counts[conversation.conversation_id] = 0
             await self._run_participant_event_locked(
                 run,
                 conversation,
@@ -2544,6 +2857,7 @@ class RunService:
         if existing and existing.get("status") == "succeeded":
             return
         messages = self._visible_messages(run, conversation, npc_id)
+        prompt_messages = self._consolidation_prompt_messages(run, conversation, npc_id)
         draft = run.conversation_drafts.get(conversation.conversation_id, {}).get(
             npc_id,
             {
@@ -2553,7 +2867,21 @@ class RunService:
                 "chapterEffects": [],
             },
         )
-        prompt = self._npc_prompt(run, npc_id, "exit_consolidation", {"reason": reason, "messages": messages, "draft": draft})
+        prompt = self._npc_prompt(
+            run,
+            npc_id,
+            "exit_consolidation",
+            {
+                "reason": reason,
+                "messages": prompt_messages,
+                "segmentSummaries": self._segment_summary_entries(
+                    run,
+                    conversation,
+                    npc_id,
+                ),
+                "draft": draft,
+            },
+        )
         try:
             consolidation = await self.decisions.exit_consolidation(prompt)
         except StructuredCallFailed:

@@ -4,7 +4,6 @@ import json
 from copy import deepcopy
 
 import pytest
-
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.clock import WorldTime
 from core.backend.app.domain.errors import InvalidInvitationError

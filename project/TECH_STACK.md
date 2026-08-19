@@ -119,7 +119,7 @@ project/
   CONSISTENCY_AUDIT.md 一致性审计
 ```
 
-前端使用 pnpm，Python 后端使用独立 Conda 环境与 `environment.yml`，不使用 Conda 的 `base` 环境。`core/backend/app/domain` 不依赖 FastAPI、SQLAlchemy 或 OpenAI SDK，数据库和模型能力通过接口注入，保证大逻辑能用确定性测试验证。AI 尚未进入实现阶段，因此当前不创建 `prompts` 或模型调用目录。
+前端计划使用 pnpm，Python 后端使用独立 Conda 环境与 `environment.yml`，不使用 Conda 的 `base` 环境。`core/backend/app/domain` 不依赖 FastAPI、SQLAlchemy 或 OpenAI SDK，数据库和模型能力通过接口注入，保证大逻辑能用确定性测试验证。当前 AI Agent、PostgreSQL/pgvector、Alembic 和数据库 Memory 工具均已进入后端实现；前端仍未开始。
 
 ## 8. 两个备选方案
 

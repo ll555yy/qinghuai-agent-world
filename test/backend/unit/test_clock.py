@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from core.backend.app.domain.clock import WorldClock
 from core.backend.app.domain.errors import (
     ChapterAlreadyEndedError,

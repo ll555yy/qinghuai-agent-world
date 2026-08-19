@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "qinghuai-backend"
 version = "0.1.0"
-description = "In-memory FastAPI backend for the Qinghuai alley chat world"
+description = "FastAPI backend for the Qinghuai alley chat world"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -14,7 +14,16 @@ dependencies = [
   "openai>=2,<3",
   "PyYAML>=6,<7",
   "langgraph>=1,<2",
+  "SQLAlchemy>=2.0,<3",
+  "psycopg[binary]>=3.2,<4",
+  "alembic>=1.14,<2",
+  "pgvector>=0.3,<1",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["migrations*"]
 
 [tool.pytest.ini_options]
 testpaths = ["../../test/backend"]

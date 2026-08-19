@@ -9,10 +9,13 @@ never model-controlled.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ..ai.protocols import MemoryQuery
 from .models import MemoryToolContext, MemoryToolResult
+
+if TYPE_CHECKING:
+    from ..persistence.memory_retriever import MemoryRetriever
 
 
 def _value(item: Any, key: str, default: Any = None) -> Any:
@@ -36,8 +39,14 @@ class RetrieveOwnedMemoriesTool:
     )
     args_schema: ClassVar[type[MemoryQuery]] = MemoryQuery
 
-    def __init__(self, *, bound_owner_npc_id: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        bound_owner_npc_id: str | None = None,
+        retriever: MemoryRetriever | None = None,
+    ) -> None:
         self.bound_owner_npc_id = bound_owner_npc_id
+        self.retriever = retriever
 
     def invoke(
         self,
@@ -67,7 +76,18 @@ class RetrieveOwnedMemoriesTool:
         context: MemoryToolContext,
         agent_npc_id: str,
     ) -> MemoryToolResult:
-        return self.invoke(query, context=context, agent_npc_id=agent_npc_id)
+        if context.owner_npc_id != agent_npc_id:
+            raise ValueError("memory owner does not match the bound Agent")
+        if self.bound_owner_npc_id is not None and self.bound_owner_npc_id != agent_npc_id:
+            raise ValueError("memory tool is bound to another Agent")
+        validated = query if isinstance(query, MemoryQuery) else self.args_schema.model_validate(query)
+        if self.retriever is not None:
+            return await self.retriever.search(
+                run_id=context.run_id,
+                owner_npc_id=agent_npc_id,
+                query=validated,
+            )
+        return self._search(validated, context)
 
     @staticmethod
     def _search(query: MemoryQuery, context: MemoryToolContext) -> MemoryToolResult:
