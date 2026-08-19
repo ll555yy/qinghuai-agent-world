@@ -59,10 +59,13 @@ class WorldClock:
     active_start_minutes: int = 8 * 60
     active_end_minutes: int = 18 * 60
     final_day: int = 7
+    new_chat_cutoff_minutes: int = 17 * 60
 
     def __post_init__(self) -> None:
         if self.active_start_minutes >= self.active_end_minutes:
             raise ValueError("active window must have a positive duration")
+        if not self.active_start_minutes <= self.new_chat_cutoff_minutes <= self.active_end_minutes:
+            raise ValueError("new-chat cutoff must be inside the active window")
         if self.final_day < 1 or self.final_day > 7:
             raise ValueError("final_day must be between 1 and 7")
         if not self.active_start_minutes <= self.current.clock_minutes <= self.active_end_minutes:
@@ -79,11 +82,13 @@ class WorldClock:
         active_start_minutes: int = 8 * 60,
         active_end_minutes: int = 18 * 60,
         final_day: int = 7,
+        new_chat_cutoff_minutes: int = 17 * 60,
     ) -> WorldClock:
         return cls(
             current=WorldTime(day=1, hour=start_hour, minute=start_minute),
             active_start_minutes=active_start_minutes,
             active_end_minutes=active_end_minutes,
+            new_chat_cutoff_minutes=new_chat_cutoff_minutes,
             final_day=final_day,
         )
 
@@ -93,12 +98,46 @@ class WorldClock:
             status=self.status,
             active_start_minutes=self.active_start_minutes,
             active_end_minutes=self.active_end_minutes,
+            new_chat_cutoff_minutes=self.new_chat_cutoff_minutes,
             final_day=self.final_day,
         )
 
     @property
     def is_ended(self) -> bool:
         return self.status == "chapter_ended"
+
+    @property
+    def new_chat_allowed(self) -> bool:
+        """Whether a new invitation/conversation may start at ``current``."""
+
+        return (
+            self.status != "chapter_ended"
+            and self.active_start_minutes <= self.current.clock_minutes < self.new_chat_cutoff_minutes
+        )
+
+    @property
+    def closing_soon(self) -> bool:
+        """Whether the clock is in the one-hour chat-closing window."""
+
+        return self.current.clock_minutes >= self.new_chat_cutoff_minutes
+
+    @property
+    def remaining_active_minutes(self) -> int:
+        """Active minutes remaining before the current 18:00 day boundary."""
+
+        return max(0, self.active_end_minutes - self.current.clock_minutes)
+
+    def time_policy(self) -> dict[str, int | bool | str]:
+        """Return the structured time policy injected into NPC prompts."""
+
+        return {
+            "worldTime": self.current.label,
+            "dayEnd": f"{self.active_end_minutes // 60:02d}:{self.active_end_minutes % 60:02d}",
+            "newChatCutoff": f"{self.new_chat_cutoff_minutes // 60:02d}:{self.new_chat_cutoff_minutes % 60:02d}",
+            "remainingMinutes": self.remaining_active_minutes,
+            "newChatAllowed": self.new_chat_allowed,
+            "closingSoon": self.closing_soon,
+        }
 
     def pause(self) -> None:
         if self.status == "chapter_ended":
@@ -169,4 +208,3 @@ class WorldClock:
         result = self.current.as_dict()
         result["status"] = self.status
         return result
-

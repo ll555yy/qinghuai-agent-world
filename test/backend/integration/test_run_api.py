@@ -19,7 +19,9 @@ def test_create_snapshot_advance_and_hidden_boundary(client) -> None:
     )
     assert advanced.status_code == 200
     assert advanced.json()["worldTime"]["label"] == "Day1 10:00"
-    assert advanced.json()["run"]["stateVersion"] == created["stateVersion"] + 1
+    # Reaching 10:00 now includes the NPC assigned to that daily action slot,
+    # so the state version may advance by more than the clock event alone.
+    assert advanced.json()["run"]["stateVersion"] > created["stateVersion"]
 
     repeated = client.post(
         f"/api/runs/{run_id}/time/advance",
@@ -30,7 +32,11 @@ def test_create_snapshot_advance_and_hidden_boundary(client) -> None:
 
     events = client.get(f"/api/runs/{run_id}/events?afterSeq={created['eventSeq']}")
     assert events.status_code == 200
-    assert [event["eventType"] for event in events.json()["events"]] == ["time_advanced"]
+    assert [event["eventType"] for event in events.json()["events"]] == [
+        "time_advanced",
+        "npc_thought_started",
+        "npc_waited",
+    ]
 
 
 def test_run_and_agenda_not_found_errors(client) -> None:

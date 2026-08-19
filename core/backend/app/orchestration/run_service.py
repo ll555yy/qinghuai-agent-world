@@ -86,6 +86,7 @@ class RunService:
             ),
             active_start_minutes=self.registry.active_start_minutes,
             active_end_minutes=self.registry.active_end_minutes,
+            new_chat_cutoff_minutes=17 * 60,
             final_day=self.registry.end_day,
         )
         run = Run(
@@ -98,7 +99,11 @@ class RunService:
             },
         )
         run.positions = self._default_positions()
-        run.daily_think_minutes = self._daily_schedule(run_seed)
+        run.daily_think_order = self._daily_order(run_seed)
+        run.daily_think_schedule = self._build_daily_schedules(run.daily_think_order)
+        run.daily_think_minutes = deepcopy(
+            run.daily_think_schedule.get(run.clock.current.day, {})
+        )
         run.thought_days = {npc.actor_id: set() for npc in self.registry.npcs}
         run.goals = {
             goal_id: {
@@ -203,6 +208,8 @@ class RunService:
             if previous is not None:
                 return deepcopy(previous)
             self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
+            self._validate_new_chat_window_locked(run)
             if len(participant_ids) not in (2, 3) or len(set(participant_ids)) != len(participant_ids):
                 raise InvalidConversationParticipantsError()
             for actor_id in participant_ids:
@@ -284,6 +291,8 @@ class RunService:
             if previous is not None:
                 return deepcopy(previous)
             self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
+            self._validate_new_chat_window_locked(run)
             conversation = run.conversations.get(conversation_id)
             if conversation is None:
                 raise ConversationNotFoundError(details={"conversationId": conversation_id})
@@ -318,11 +327,14 @@ class RunService:
             previous = self._existing_command(run, command_id, fingerprint)
             if previous is not None:
                 return deepcopy(previous)
+            self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
             conversation = run.conversations.get(conversation_id)
             if conversation is None:
                 raise ConversationNotFoundError(details={"conversationId": conversation_id})
             if not conversation.is_open:
                 raise InvalidConversationParticipantsError("Conversation is already closed.")
+            self._require_chat_open_locked(run, operation="leave")
             self._require_actor(actor_id)
             before_seq = run.event_seq
             actor = self.registry.actor(actor_id)
@@ -355,6 +367,7 @@ class RunService:
             if previous is not None:
                 return deepcopy(previous)
             self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
             before_seq = run.event_seq
             await self._advance_virtual_locked(run, virtual_minutes)
             new_time = run.clock.current
@@ -444,6 +457,8 @@ class RunService:
             if previous is not None:
                 return deepcopy(previous)
             self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
+            self._validate_new_chat_window_locked(run)
             before_seq = run.event_seq
             open_target = run.actor_open_conversation(target_actor_id)
             if open_target is not None:
@@ -483,6 +498,7 @@ class RunService:
             if previous is not None:
                 return deepcopy(previous)
             self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
             invitation = run.invitations.get(invitation_id)
             if invitation is None:
                 raise InvitationNotFoundError(details={"invitationId": invitation_id})
@@ -543,6 +559,8 @@ class RunService:
             if previous is not None:
                 return deepcopy(previous)
             self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
+            self._validate_new_chat_window_locked(run)
             conversation = self._conversation(run, conversation_id)
             if len(conversation.participants) >= 3:
                 raise ConversationFullError()
@@ -573,27 +591,30 @@ class RunService:
         run = await self.get_run_entity(run_id)
         fingerprint = self._fingerprint("player_message", {"conversationId": conversation_id, "text": text})
         before_seq = 0
-        async with run.lock:
-            previous = self._existing_command(run, command_id, fingerprint)
-            if previous is not None:
-                return deepcopy(previous)
-            self._require_active_run(run)
-            conversation = self._conversation(run, conversation_id)
-            if (
-                not conversation.is_open
-                or not conversation.has_participant(self.registry.player_actor_id)
-            ):
-                raise PlayerAccessDeniedError(details={"conversationId": conversation_id})
-            before_seq = run.event_seq
-            self._write_message_locked(run, conversation, self.registry.player_actor_id, text)
-            await self._run_chat_pipeline_locked(run, conversation, trigger_message_id=run.messages[conversation_id][-1]["messageId"])
-            result = {
-                "conversation": conversation.to_public_dict(),
-                "messages": self._public_messages(run.messages.get(conversation_id, [])),
-                "run": run.to_public_snapshot(self.registry),
-            }
-            self._record_command(run, command_id, fingerprint, result)
-            events = [item.to_dict() for item in run.events_after(before_seq)]
+        async with run.chat_pipeline_lock:
+            async with run.lock:
+                previous = self._existing_command(run, command_id, fingerprint)
+                if previous is not None:
+                    return deepcopy(previous)
+                self._require_active_run(run)
+                self._expire_pending_requests_locked(run)
+                conversation = self._conversation(run, conversation_id)
+                if (
+                    not conversation.is_open
+                    or not conversation.has_participant(self.registry.player_actor_id)
+                ):
+                    raise PlayerAccessDeniedError(details={"conversationId": conversation_id})
+                self._require_chat_open_locked(run, operation="message")
+                before_seq = run.event_seq
+                self._write_message_locked(run, conversation, self.registry.player_actor_id, text)
+                await self._run_chat_pipeline_locked(run, conversation, trigger_message_id=run.messages[conversation_id][-1]["messageId"])
+                result = {
+                    "conversation": conversation.to_public_dict(),
+                    "messages": self._public_messages(run.messages.get(conversation_id, [])),
+                    "run": run.to_public_snapshot(self.registry),
+                }
+                self._record_command(run, command_id, fingerprint, result)
+                events = [item.to_dict() for item in run.events_after(before_seq)]
         for event in events:
             await self.event_hub.publish(run_id, event)
         return result
@@ -607,6 +628,7 @@ class RunService:
             before_seq = run.event_seq
             if not conversation.is_open:
                 return {"conversation": conversation.to_public_dict(), "run": run.to_public_snapshot(self.registry)}
+            self._require_chat_open_locked(run, operation="idle")
             run.idle_counts[conversation_id] = run.idle_counts.get(conversation_id, 0) + 1
             run.append_event("conversation_idle", {"conversationId": conversation_id, "idleCount": run.idle_counts[conversation_id]})
             if run.idle_counts[conversation_id] >= 2:
@@ -644,6 +666,22 @@ class RunService:
     # World and conversation internals.  These methods run while the Run
     # lock is held.  They append only player-safe public events.
 
+    async def _await_model_without_run_lock(self, run: Run, awaitable: Any) -> Any:
+        """Await one model call without pinning the Run lock.
+
+        The orchestration lock protects the in-memory aggregate, but it must
+        not also become a model/network lock.  Chat calls use this helper so a
+        concurrent ``world_step`` can advance the authoritative clock and
+        install the day-end barrier while the provider is still waiting.
+        Callers enter with ``run.lock`` held and resume with it held again.
+        """
+
+        run.lock.release()
+        try:
+            return await awaitable
+        finally:
+            await run.lock.acquire()
+
     def _default_positions(self) -> dict[str, dict[str, int]]:
         return {
             "npc_001": {"x": 0, "y": 0},
@@ -654,10 +692,62 @@ class RunService:
             "player_001": {"x": 1, "y": 2},
         }
 
-    def _daily_schedule(self, seed: int) -> dict[str, int]:
+    def _daily_order(self, seed: int) -> list[str]:
+        """Return the replayable seed-derived baseline NPC order."""
+
         ids = [npc.actor_id for npc in self.registry.npcs]
         random.Random(seed).shuffle(ids)
-        return {actor_id: (9 + index * 2) * 60 for index, actor_id in enumerate(ids)}
+        return ids
+
+    def _daily_schedule(self, seed: int) -> dict[str, int]:
+        """Return Day1's five compressed action slots.
+
+        Kept as a small compatibility helper for callers that used the
+        original service implementation.  Rotation is applied by
+        ``_build_daily_schedules`` rather than by the model or the clock.
+        """
+
+        return {
+            actor_id: (9 + index) * 60
+            for index, actor_id in enumerate(self._daily_order(seed))
+        }
+
+    def _build_daily_schedules(self, baseline_order: list[str]) -> dict[int, dict[str, int]]:
+        """Expand the baseline into a fixed, left-rotated schedule per day."""
+
+        if not baseline_order:
+            return {}
+        schedules: dict[int, dict[str, int]] = {}
+        for day in range(self.registry.start_day, self.registry.end_day + 1):
+            shift = (day - self.registry.start_day) % len(baseline_order)
+            order = baseline_order[shift:] + baseline_order[:shift]
+            schedules[day] = {
+                actor_id: (9 + index) * 60
+                for index, actor_id in enumerate(order)
+            }
+        return schedules
+
+    def _schedule_for_day(self, run: Run, day: int) -> dict[str, int]:
+        """Return and cache the authoritative schedule for ``day``."""
+
+        schedule = run.daily_think_schedule.get(day)
+        if schedule is None:
+            baseline = run.daily_think_order or [npc.actor_id for npc in self.registry.npcs]
+            if not baseline:
+                return {}
+            shift = (day - self.registry.start_day) % len(baseline)
+            order = baseline[shift:] + baseline[:shift]
+            schedule = {
+                actor_id: (9 + index) * 60
+                for index, actor_id in enumerate(order)
+            }
+            run.daily_think_schedule[day] = schedule
+        return schedule
+
+    def _refresh_daily_schedule_locked(self, run: Run) -> dict[str, int]:
+        schedule = self._schedule_for_day(run, run.clock.current.day)
+        run.daily_think_minutes = deepcopy(schedule)
+        return schedule
 
     @staticmethod
     def _absolute(day: int, hour: int, minute: int) -> int:
@@ -682,10 +772,16 @@ class RunService:
         if run.clock.is_ended:
             raise WorldStepError("The chapter has already ended.")
         await self._process_due_locked(run)
+        # A day-end close is deliberately deferred while a pre-boundary chat
+        # call is in flight.  Do not consume the same command's remaining
+        # minutes into the next day before that chat has been settled.
+        if run.pending_day_end is not None:
+            return
         remaining = virtual_minutes
         while remaining and not run.clock.is_ended:
             if run.clock.current.clock_minutes == self.registry.end_hour * 60 + self.registry.end_minute and run.clock.current.day < self.registry.end_day:
                 run.clock.current = WorldTime(day=run.clock.current.day + 1, hour=self.registry.active_start_minutes // 60, minute=self.registry.active_start_minutes % 60)
+                self._refresh_daily_schedule_locked(run)
                 run.append_event("world_day_started", {"worldTime": run.clock.as_dict()})
                 for npc in self.registry.npcs:
                     run.fresh_event_context[npc.actor_id] = []
@@ -699,9 +795,18 @@ class RunService:
                     candidates.append(event_abs)
             for npc in self.registry.npcs:
                 if run.clock.current.day not in run.thought_days.get(npc.actor_id, set()):
-                    thought_abs = self._absolute(run.clock.current.day, run.daily_think_minutes[npc.actor_id] // 60, run.daily_think_minutes[npc.actor_id] % 60)
+                    schedule = self._schedule_for_day(run, run.clock.current.day)
+                    thought_minute = schedule[npc.actor_id]
+                    thought_abs = self._absolute(run.clock.current.day, thought_minute // 60, thought_minute % 60)
                     if thought_abs > current:
                         candidates.append(thought_abs)
+            cutoff = self._absolute(
+                run.clock.current.day,
+                run.clock.new_chat_cutoff_minutes // 60,
+                run.clock.new_chat_cutoff_minutes % 60,
+            )
+            if cutoff > current:
+                candidates.append(cutoff)
             day_end = self._absolute(run.clock.current.day, self.registry.end_hour, self.registry.end_minute)
             if day_end > current:
                 candidates.append(day_end)
@@ -724,9 +829,12 @@ class RunService:
             run.append_event("time_advanced", {"worldTime": run.clock.as_dict()})
             remaining -= consumed
             await self._process_due_locked(run)
+            if remaining and run.pending_day_end is not None:
+                break
             if remaining and run.clock.current.clock_minutes == self.registry.end_hour * 60 + self.registry.end_minute and not run.clock.is_ended:
                 if run.clock.current.day < self.registry.end_day:
                     run.clock.current = WorldTime(day=run.clock.current.day + 1, hour=self.registry.active_start_minutes // 60, minute=self.registry.active_start_minutes % 60)
+                    self._refresh_daily_schedule_locked(run)
                     run.append_event("world_day_started", {"worldTime": run.clock.as_dict()})
                     for npc in self.registry.npcs:
                         run.fresh_event_context[npc.actor_id] = []
@@ -734,24 +842,55 @@ class RunService:
 
     async def _process_due_locked(self, run: Run) -> None:
         current = self._time_absolute(run)
-        # Stable order: script event first, then NPC decisions at that time.
-        due_events = sorted(
-            [event for event in self.registry.events if event.event_id not in run.fired_event_ids and self._event_absolute(event) <= current],
-            key=self._event_absolute,
-        )
-        for event in due_events:
-            if event.world_day == self.registry.end_day and event.at == f"{self.registry.end_hour:02d}:{self.registry.end_minute:02d}":
-                await self._finish_chapter_locked(run, event)
-                return
-            if not self._event_condition_met(run, event):
-                run.fired_event_ids.add(event.event_id)
+        # Request expiration is a deterministic boundary action.  It runs
+        # before any operation at/after 17:00, including a response command
+        # issued without a world step in between.
+        self._expire_pending_requests_locked(run)
+
+        # Process the due timeline in chronological order.  The priority of a
+        # script event is lower than an NPC thought at the same minute, so a
+        # world event always updates visibility and fresh context first.  This
+        # also preserves the intuitive order when a caller resumes a run with
+        # several due points already accumulated.
+        schedule = self._schedule_for_day(run, run.clock.current.day)
+        due_items: list[tuple[int, int, str, Any]] = []
+        for event in self.registry.events:
+            event_abs = self._event_absolute(event)
+            if event.event_id not in run.fired_event_ids and event_abs <= current:
+                due_items.append((event_abs, 0, "event", event))
+        for npc in self.registry.npcs:
+            thought_days = run.thought_days.get(npc.actor_id, set())
+            if run.clock.current.day in thought_days:
                 continue
-            await self._apply_world_event_locked(run, event)
-        due_thoughts = sorted(
-            [npc for npc in self.registry.npcs if run.clock.current.day not in run.thought_days.get(npc.actor_id, set()) and self._absolute(run.clock.current.day, run.daily_think_minutes[npc.actor_id] // 60, run.daily_think_minutes[npc.actor_id] % 60) <= current],
-            key=lambda npc: run.daily_think_minutes[npc.actor_id],
-        )
-        for npc in due_thoughts:
+            thought_minute = schedule.get(npc.actor_id)
+            if thought_minute is None:
+                continue
+            thought_abs = self._absolute(
+                run.clock.current.day,
+                thought_minute // 60,
+                thought_minute % 60,
+            )
+            if thought_abs <= current:
+                due_items.append((thought_abs, 1, "thought", npc))
+
+        for _scheduled_abs, _priority, kind, item in sorted(
+            due_items,
+            key=lambda entry: (entry[0], entry[1], getattr(entry[3], "actor_id", "")),
+        ):
+            if run.run_finished:
+                return
+            if kind == "event":
+                event = item
+                if event.world_day == self.registry.end_day and event.at == f"{self.registry.end_hour:02d}:{self.registry.end_minute:02d}":
+                    await self._finish_chapter_locked(run, event)
+                    return
+                if not self._event_condition_met(run, event):
+                    run.fired_event_ids.add(event.event_id)
+                    continue
+                await self._apply_world_event_locked(run, event)
+                continue
+
+            npc = item
             run.thought_days.setdefault(npc.actor_id, set()).add(run.clock.current.day)
             if run.actor_states.get(npc.actor_id, {}).get("status") == "departed":
                 continue
@@ -765,7 +904,10 @@ class RunService:
                     },
                 )
                 continue
-            if run.actor_states.get(npc.actor_id, {}).get("status") == "inviting":
+            if (
+                run.actor_states.get(npc.actor_id, {}).get("status") in {"chatting", "approaching", "inviting"}
+                or self._actor_has_pending_invitation(run, npc.actor_id)
+            ):
                 run.append_event(
                     "npc_thought_skipped",
                     {
@@ -778,6 +920,112 @@ class RunService:
             run.actor_states[npc.actor_id]["status"] = "waiting"
             run.append_event("npc_thought_started", {"actorId": npc.actor_id, "worldTime": run.clock.as_dict()})
             await self._daily_action_locked(run, npc.actor_id)
+
+        # Ordinary days stop at 18:00 as well.  Day7's deadline event takes
+        # the branch above and performs its own close/consolidate-before-
+        # resolution sequence.
+        if (
+            not run.run_finished
+            and run.clock.current.clock_minutes >= self.registry.end_hour * 60 + self.registry.end_minute
+        ):
+            if run.active_chat_pipelines:
+                # A ChatDecision/Speech already granted before 18:00 owns the
+                # short grace period.  Do not hold world_step on the rest of
+                # its recursive chain; the root pipeline will close and
+                # consolidate once that one in-flight call returns.
+                run.pending_day_end = (run.clock.current.day, "day_end")
+            else:
+                await self._close_day_locked(run, run.clock.current.day, "day_end")
+
+    def _actor_has_pending_invitation(self, run: Run, actor_id: str) -> bool:
+        return any(
+            invitation.get("status") == "pending"
+            and actor_id
+            in {
+                invitation.get("initiatorActorId"),
+                invitation.get("targetActorId"),
+            }
+            for invitation in run.invitations.values()
+        )
+
+    def _expire_pending_requests_locked(self, run: Run) -> None:
+        """Expire all unanswered requests once the daily cutoff is reached."""
+
+        if run.clock.current.clock_minutes < run.clock.new_chat_cutoff_minutes:
+            return
+        now = run.clock.as_dict()["label"]
+        for invitation in run.invitations.values():
+            if invitation.get("status") != "pending":
+                continue
+            invitation["status"] = "expired"
+            invitation["expiredAt"] = now
+            initiator_id = invitation.get("initiatorActorId")
+            if initiator_id in run.actor_states:
+                actor = self.registry.actor(initiator_id)
+                if actor is not None:
+                    run.actor_states[initiator_id]["status"] = (
+                        "present" if actor.kind == "player" else "waiting"
+                    )
+            run.append_event(
+                "invitation_request_cleared",
+                {"invitationId": invitation.get("invitationId"), "reason": "expired"},
+            )
+            run.append_event(
+                "invitation_expired",
+                {
+                    "invitationId": invitation.get("invitationId"),
+                    "initiatorActorId": invitation.get("initiatorActorId"),
+                    "targetActorId": invitation.get("targetActorId"),
+                    "expiredAt": now,
+                },
+            )
+
+    def _validate_new_chat_window_locked(self, run: Run) -> None:
+        """Enforce the backend's 17:00 new-chat cutoff."""
+
+        if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+            raise InvalidInvitationError(
+                "The world day has ended; no chat operation is accepted.",
+                details={"worldTime": run.clock.as_dict(), "reason": "day_end"},
+            )
+        if not run.clock.new_chat_allowed:
+            raise InvalidInvitationError(
+                "New invitations and conversation expansion are closed after 17:00.",
+                details={
+                    "worldTime": run.clock.as_dict(),
+                    "newChatCutoff": "17:00",
+                    "reason": "new_chat_cutoff",
+                },
+            )
+
+    def _require_chat_open_locked(self, run: Run, *, operation: str) -> None:
+        """Reject player chat mutations at/after the 18:00 hard boundary."""
+
+        if run.clock.current.clock_minutes < run.clock.active_end_minutes:
+            return
+        if operation == "message":
+            raise InvalidMessageError(
+                "The world day has ended; new messages are no longer accepted.",
+            )
+        raise InvalidConversationParticipantsError(
+            "The world day has ended; chat operations are no longer accepted.",
+        )
+
+    async def _close_day_locked(self, run: Run, day: int, reason: str) -> None:
+        """Force-close all conversations and consolidate every NPC once."""
+
+        if day in run.closed_days:
+            return
+        if run.active_chat_pipelines:
+            run.pending_day_end = (day, reason)
+            return
+        run.closed_days.add(day)
+        for conversation in list(run.open_conversations()):
+            await self._close_conversation_locked(run, conversation, reason)
+        run.append_event(
+            "world_day_ended",
+            {"worldTime": run.clock.as_dict(), "reason": reason},
+        )
 
     async def _apply_world_event_locked(self, run: Run, event: Any) -> None:
         run.fired_event_ids.add(event.event_id)
@@ -897,21 +1145,20 @@ class RunService:
         actor = self.registry.actor(npc_id)
         if actor is None or actor.kind != "npc":
             return
+        if not run.clock.new_chat_allowed:
+            run.actor_states[npc_id]["status"] = "waiting"
+            run.append_event(
+                "npc_waited",
+                {"actorId": npc_id, "reason": "new_chat_cutoff", "worldTime": run.clock.as_dict()},
+            )
+            return
         active_goals = [goal for goal in run.goals.values() if goal["ownerNpcId"] == npc_id and goal["status"] in {"active", "blocked"}]
         candidates: list[str] = []
         open_count = len(run.open_conversations())
         for candidate in self.registry.actors.values():
             if candidate.actor_id == npc_id or run.actor_states.get(candidate.actor_id, {}).get("status") == "departed":
                 continue
-            if any(
-                invitation.get("status") == "pending"
-                and candidate.actor_id
-                in {
-                    invitation.get("initiatorActorId"),
-                    invitation.get("targetActorId"),
-                }
-                for invitation in run.invitations.values()
-            ):
+            if self._actor_has_pending_invitation(run, candidate.actor_id):
                 continue
             candidate_conversation = run.actor_open_conversation(candidate.actor_id)
             if candidate_conversation is not None and len(candidate_conversation.participants) < 3:
@@ -999,6 +1246,7 @@ class RunService:
         private_goal_id: str | None = None,
         private_intent: str | None = None,
     ) -> dict[str, Any]:
+        self._expire_pending_requests_locked(run)
         self._validate_new_invitation_locked(run, initiator_id, target_id)
 
         invitation_id = run.next_invitation_identity()
@@ -1079,6 +1327,7 @@ class RunService:
         target_id: str,
     ) -> None:
         self._require_active_run(run)
+        self._validate_new_chat_window_locked(run)
         if initiator_id == target_id:
             raise InvalidInvitationError("An actor cannot invite itself.")
         if run.actor_states.get(initiator_id, {}).get("status") == "departed":
@@ -1115,6 +1364,7 @@ class RunService:
         participant_ids: list[str],
     ) -> None:
         self._require_active_run(run)
+        self._validate_new_chat_window_locked(run)
         if len(run.open_conversations()) >= 2:
             raise ConversationLimitReachedError()
         for actor_id in participant_ids:
@@ -1164,6 +1414,8 @@ class RunService:
         goal_id: str | None = None,
         intent: str | None = None,
     ) -> None:
+        if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+            return
         try:
             speech = await self._npc_agent(npc_id).generate_speech(
                 self._npc_prompt(
@@ -1189,6 +1441,7 @@ class RunService:
     async def _join_conversation_locked(self, run: Run, conversation: Conversation, actor_id: str) -> None:
         if not conversation.is_open or len(conversation.participants) >= 3:
             raise ConversationFullError()
+        self._validate_new_chat_window_locked(run)
         if run.actor_open_conversation(actor_id) is not None:
             raise ActorAlreadyInConversationError(details={"actorId": actor_id})
         if run.actor_states.get(actor_id, {}).get("status") == "departed":
@@ -1240,6 +1493,8 @@ class RunService:
         participant_ids: list[str],
         trigger: str,
     ) -> None:
+        if not conversation.is_open or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+            return
         decisions: dict[str, ChatDecision] = {}
         npc_ids = {npc.actor_id for npc in self.registry.npcs}
         for npc_id in participant_ids:
@@ -1370,58 +1625,146 @@ class RunService:
         run.idle_counts[conversation.conversation_id] = 0
         return message
 
-    async def _run_chat_pipeline_locked(self, run: Run, conversation: Conversation, trigger_message_id: str | None, chain_left: int = 8) -> None:
-        if not conversation.is_open:
-            return
-        decisions: dict[str, ChatDecision] = {}
-        for actor_id in list(conversation.participants):
-            actor = self.registry.actor(actor_id)
-            if actor is None or actor.kind != "npc":
-                continue
-            if actor_id == (run.messages[conversation.conversation_id][-1]["authorActorId"] if run.messages.get(conversation.conversation_id) else None):
-                continue
-            decisions[actor_id] = await self._run_one_chat_decision_locked(run, conversation, actor_id, "new_message", trigger_message_id)
-        for actor_id, decision in list(decisions.items()):
-            if actor_id not in conversation.participants:
-                continue
-            if decision.action == "leave_chat":
-                await self._leave_and_consolidate_locked(run, conversation, actor_id, "model_leave")
-        if not conversation.is_open or chain_left <= 0:
-            return
-        candidates = [(actor_id, decision) for actor_id, decision in decisions.items() if actor_id in conversation.participants and decision.action == "speak"]
-        if not candidates:
-            return
-        winner_id, winner = self._select_speaker(run, conversation, candidates)
+    async def _run_chat_pipeline_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        trigger_message_id: str | None,
+        chain_left: int = 8,
+        *,
+        _registered: bool = False,
+    ) -> None:
+        """Run one chat round while allowing the clock to cross day-end.
+
+        The method name is retained because a few tests and internal callers
+        deliberately invoke it while holding ``run.lock``.  Only the small
+        provider awaits release that lock; all state application and the
+        recursive-boundary checks remain serialized by it.
+        """
+
+        # Registration is per invocation, not a Run-global depth counter:
+        # two conversations may legitimately be in separate provider awaits
+        # at the same time.  Only the recursive continuation belongs to its
+        # already-registered root pipeline.
+        root_pipeline = not _registered
+        if root_pipeline:
+            run.active_chat_pipelines += 1
         try:
-            speech = await self._npc_agent(winner_id).generate_speech(
-                self._npc_prompt(
-                    run,
-                    winner_id,
-                    "speech",
-                    {
-                        "conversationId": conversation.conversation_id,
-                        "intent": winner.intent,
-                        **self._chat_context(run, conversation, winner_id),
-                    },
-                )
+            if not conversation.is_open or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+                return
+            decisions: dict[str, ChatDecision] = {}
+            for actor_id in list(conversation.participants):
+                actor = self.registry.actor(actor_id)
+                if actor is None or actor.kind != "npc":
+                    continue
+                if actor_id == (run.messages[conversation.conversation_id][-1]["authorActorId"] if run.messages.get(conversation.conversation_id) else None):
+                    continue
+                decisions[actor_id] = await self._run_one_chat_decision_locked(run, conversation, actor_id, "new_message", trigger_message_id)
+            for actor_id, decision in list(decisions.items()):
+                if actor_id not in conversation.participants:
+                    continue
+                if decision.action == "leave_chat":
+                    await self._leave_and_consolidate_locked(run, conversation, actor_id, "model_leave")
+            # A ChatDecision that was already in flight may finish after the
+            # boundary, but it cannot open the next Speech/Chat round.
+            if (
+                not conversation.is_open
+                or chain_left <= 0
+                or run.clock.current.clock_minutes >= run.clock.active_end_minutes
+            ):
+                return
+            candidates = [(actor_id, decision) for actor_id, decision in decisions.items() if actor_id in conversation.participants and decision.action == "speak"]
+            if not candidates:
+                return
+            winner_id, winner = self._select_speaker(run, conversation, candidates)
+            # Grant the Speech call while still below 18:00.  The grant and
+            # the clock check are one lock-held section, so world_step cannot
+            # move the boundary in between and accidentally create a new
+            # post-boundary model call.  The result remains valid even if the
+            # clock crosses 18:00 while the provider is waiting.
+            if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+                return
+            speech_prompt = self._npc_prompt(
+                run,
+                winner_id,
+                "speech",
+                {
+                    "conversationId": conversation.conversation_id,
+                    "intent": winner.intent,
+                    **self._chat_context(run, conversation, winner_id),
+                },
             )
-        except StructuredCallFailed:
-            run.append_event("conversation_activity", {"conversationId": conversation.conversation_id, "reason": "speech_unavailable"})
-            return
-        if not speech.text.strip():
-            return
-        message = self._write_message_locked(run, conversation, winner_id, speech.text)
-        self._apply_spoken_chapter_effects(
-            run,
-            conversation,
-            winner_id,
-            winner,
-            message["messageId"],
-        )
-        if winner.leave_chat_after_speaking and winner_id in conversation.participants:
-            await self._leave_and_consolidate_locked(run, conversation, winner_id, "said_and_left")
-        if conversation.is_open:
-            await self._run_chat_pipeline_locked(run, conversation, message["messageId"], chain_left - 1)
+            speech_segment_id = (
+                run.segments.get(conversation.conversation_id, [])[-1].get("segmentId")
+                if run.segments.get(conversation.conversation_id)
+                else None
+            )
+            run.in_flight_speech_calls += 1
+            try:
+                try:
+                    speech = await self._await_model_without_run_lock(
+                        run,
+                        self._npc_agent(winner_id).generate_speech(speech_prompt),
+                    )
+                except StructuredCallFailed:
+                    run.append_event("conversation_activity", {"conversationId": conversation.conversation_id, "reason": "speech_unavailable"})
+                    return
+            finally:
+                run.in_flight_speech_calls -= 1
+            current_segments = run.segments.get(conversation.conversation_id, [])
+            current_segment_id = current_segments[-1].get("segmentId") if current_segments else None
+            if (
+                not speech.text.strip()
+                or not conversation.is_open
+                or winner_id not in conversation.participants
+                or current_segment_id != speech_segment_id
+            ):
+                return
+            # This is the one permitted post-boundary mutation: a Speech call
+            # whose grant happened before 18:00 may still land on its original
+            # open conversation.  No recursive round is started afterwards.
+            message = self._write_message_locked(run, conversation, winner_id, speech.text)
+            self._apply_spoken_chapter_effects(
+                run,
+                conversation,
+                winner_id,
+                winner,
+                message["messageId"],
+            )
+            if winner.leave_chat_after_speaking and winner_id in conversation.participants:
+                await self._leave_and_consolidate_locked(run, conversation, winner_id, "said_and_left")
+            if (
+                conversation.is_open
+                and run.clock.current.clock_minutes < run.clock.active_end_minutes
+            ):
+                await self._run_chat_pipeline_locked(
+                    run,
+                    conversation,
+                    message["messageId"],
+                    chain_left - 1,
+                    _registered=True,
+                )
+        finally:
+            if root_pipeline:
+                run.active_chat_pipelines -= 1
+                chapter_event_id = (
+                    run.pending_chapter_event_id
+                    if run.active_chat_pipelines == 0
+                    else None
+                )
+                pending = run.pending_day_end if run.active_chat_pipelines == 0 else None
+                if chapter_event_id is not None:
+                    run.pending_chapter_event_id = None
+                    run.pending_day_end = None
+                    chapter_event = next(
+                        event
+                        for event in self.registry.events
+                        if event.event_id == chapter_event_id
+                    )
+                    await self._finish_chapter_locked(run, chapter_event)
+                elif pending is not None:
+                    run.pending_day_end = None
+                    await self._close_day_locked(run, pending[0], pending[1])
 
     async def _run_one_chat_decision_locked(
         self,
@@ -1431,6 +1774,13 @@ class RunService:
         trigger: str,
         trigger_message_id: str | None = None,
     ) -> ChatDecision:
+        if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+            return ChatDecision(result="decided", action="wait")
+        segment_id = (
+            run.segments.get(conversation.conversation_id, [])[-1].get("segmentId")
+            if run.segments.get(conversation.conversation_id)
+            else None
+        )
         cache_key = (conversation.conversation_id, npc_id)
         cached_memory_ids = [
             memory_id
@@ -1465,26 +1815,40 @@ class RunService:
             )
 
         try:
-            agent_result = await self._npc_agent(npc_id).chat_message_received(
-                AgentInvocation(
-                    run_id=run.run_id,
-                    npc_id=npc_id,
-                    event_type="chat_message_received",
-                    prompt=prompt,
-                    conversation_id=conversation.conversation_id,
-                    trigger_message_id=trigger_message_id,
-                    visible_messages=tuple(
-                        self._visible_messages(run, conversation, npc_id)
-                    ),
-                    memory_cache=tuple(cached_memory_ids),
-                    memory_context=self._memory_tool_context(
-                        run,
-                        npc_id,
-                        conversation.conversation_id,
-                    ),
-                    prompt_builder=prompt_builder,
-                )
+            agent_result = await self._await_model_without_run_lock(
+                run,
+                self._npc_agent(npc_id).chat_message_received(
+                    AgentInvocation(
+                        run_id=run.run_id,
+                        npc_id=npc_id,
+                        event_type="chat_message_received",
+                        prompt=prompt,
+                        conversation_id=conversation.conversation_id,
+                        trigger_message_id=trigger_message_id,
+                        visible_messages=tuple(
+                            self._visible_messages(run, conversation, npc_id)
+                        ),
+                        memory_cache=tuple(cached_memory_ids),
+                        memory_context=self._memory_tool_context(
+                            run,
+                            npc_id,
+                            conversation.conversation_id,
+                        ),
+                        prompt_builder=prompt_builder,
+                    )
+                ),
             )
+            current_segments = run.segments.get(conversation.conversation_id, [])
+            current_segment_id = current_segments[-1].get("segmentId") if current_segments else None
+            if (
+                not conversation.is_open
+                or npc_id not in conversation.participants
+                or current_segment_id != segment_id
+            ):
+                # The provider result belongs to a stale conversation view;
+                # do not let late drafts or recalled IDs leak into a new
+                # segment after a concurrent join/leave/close.
+                return ChatDecision(result="decided", action="wait")
             for memory_id in agent_result.recalled_memory_ids:
                 memory = run.memories.get(memory_id)
                 if memory is not None and memory.get("ownerNpcId") == npc_id:
@@ -1726,10 +2090,9 @@ class RunService:
                 )
 
     async def _close_conversation_locked(self, run: Run, conversation: Conversation, reason: str) -> None:
+        was_open = conversation.is_open
         if conversation.is_open:
             await self._close_current_segment_locked(run, conversation)
-            conversation.close(reason)
-            run.append_event("conversation_closed", {"conversation": conversation.to_public_dict()})
         for actor_id in list(conversation.participants):
             actor = self.registry.actor(actor_id)
             if actor is not None and actor.kind == "npc":
@@ -1738,6 +2101,27 @@ class RunService:
             elif actor is not None and actor.kind == "player":
                 run.actor_states[actor_id]["status"] = "present"
                 run.memory_cache.pop((conversation.conversation_id, actor_id), None)
+        if was_open:
+            conversation.close(reason)
+            run.append_event("conversation_closed", {"conversation": conversation.to_public_dict()})
+        # Segment/conversation state is no longer needed by the live
+        # scheduler.  Keep messages and consolidation status for history and
+        # retry, but drop per-conversation caches and drafts that were
+        # successfully committed.
+        run.idle_counts.pop(conversation.conversation_id, None)
+        for key in list(run.memory_cache):
+            if key[0] == conversation.conversation_id:
+                run.memory_cache.pop(key, None)
+        npc_history = [
+            actor_id
+            for actor_id in conversation.participant_history()
+            if (actor := self.registry.actor(actor_id)) is not None and actor.kind == "npc"
+        ]
+        if all(
+            run.consolidation_status.get((conversation.conversation_id, actor_id), {}).get("status") == "succeeded"
+            for actor_id in npc_history
+        ):
+            run.conversation_drafts.pop(conversation.conversation_id, None)
 
     async def _consolidate_locked(self, run: Run, conversation: Conversation, npc_id: str, reason: str) -> None:
         key = (conversation.conversation_id, npc_id)
@@ -2012,10 +2396,18 @@ class RunService:
     async def _finish_chapter_locked(self, run: Run, event: Any) -> None:
         if run.run_finished:
             return
+        if run.active_chat_pipelines:
+            # The whole deadline transaction is deferred, not just closing
+            # the Conversation.  Chapter state must be read only after the
+            # already-authorized model call returns and consolidation commits.
+            run.pending_day_end = (event.world_day, "chapter_deadline")
+            run.pending_chapter_event_id = event.event_id
+            return
         run.fired_event_ids.add(event.event_id)
-        # Stop new invites and close all active chats before reading chapter state.
-        for conversation in list(run.open_conversations()):
-            await self._close_conversation_locked(run, conversation, "chapter_deadline")
+        # Stop new invites and close all active chats before reading chapter
+        # state.  The deadline is a day-end variant, but its reason remains
+        # visible as ``chapter_deadline`` for consolidation and history.
+        await self._close_day_locked(run, event.world_day, "chapter_deadline")
         run.world_events[event.event_id] = {"eventId": event.event_id, "worldDay": event.world_day, "at": event.at, "visibility": event.visibility, "sourceLabel": event.source_label, "summary": event.summary, "visibleActorIds": list(event.visible_actor_ids) if not isinstance(event.visible_actor_ids, str) else list(run.positions)}
         run.append_event(
             "world_event_occurred",
@@ -2159,6 +2551,7 @@ class RunService:
         payload = {
             "protocol": protocol,
             "worldTime": run.clock.as_dict(),
+            "timePolicy": run.clock.time_policy(),
             "actor": {"actorId": npc_id, "name": actor.name if actor else npc_id},
             "actorState": {
                 "status": run.actor_states.get(npc_id, {}).get("status", "present"),

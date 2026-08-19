@@ -52,6 +52,12 @@ class Run:
     # chapter.  They are intentionally not copied wholesale to clients.
     positions: dict[str, dict[str, int]] = field(default_factory=dict)
     daily_think_minutes: dict[str, int] = field(default_factory=dict)
+    # The seed-derived order and the expanded per-day schedule are kept on
+    # the Run.  ``daily_think_minutes`` is the schedule for the current day
+    # (and is refreshed when a new world day starts) for callers that need a
+    # cheap lookup; the two fields below are the durable source for replay.
+    daily_think_order: list[str] = field(default_factory=list)
+    daily_think_schedule: dict[int, dict[str, int]] = field(default_factory=dict)
     thought_days: dict[str, set[int]] = field(default_factory=dict)
     goals: dict[str, dict[str, Any]] = field(default_factory=dict)
     relationships: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
@@ -79,6 +85,21 @@ class Run:
     next_invitation_seq: int = 0
     next_memory_seq: int = 0
     run_finished: bool = False
+    # Ordinary day-end handling is idempotent.  This also prevents a second
+    # world command issued while the clock is parked at 18:00 from repeating
+    # consolidation or emitting duplicate close events.
+    closed_days: set[int] = field(default_factory=set)
+    # Chat model calls temporarily release ``lock`` so a concurrent world
+    # step can reach the hard day boundary.  These counters let the boundary
+    # defer close/consolidate until the already-authorized chat call returns.
+    active_chat_pipelines: int = 0
+    in_flight_speech_calls: int = 0
+    pending_day_end: tuple[int, str] | None = None
+    pending_chapter_event_id: str | None = None
+    # Serialize top-level player-driven chat chains per Run.  This prevents a
+    # second chain from queuing behind AgentRuntime's global model lock and
+    # only reaching the provider after the day-end barrier.
+    chat_pipeline_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def next_conversation_identity(self) -> tuple[str, int]:
