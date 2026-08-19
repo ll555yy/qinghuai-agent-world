@@ -42,6 +42,7 @@ class MemoryQuery(AIContractModel):
     actor_ids: list[str] = Field(default_factory=list, alias="actorIds")
     topic_hints: list[str] = Field(default_factory=list, alias="topicHints")
     goal_ids: list[str] = Field(default_factory=list, alias="goalIds")
+    limit: int = Field(default=8, ge=1, le=8)
 
     @model_validator(mode="after")
     def validate_query(self) -> MemoryQuery:

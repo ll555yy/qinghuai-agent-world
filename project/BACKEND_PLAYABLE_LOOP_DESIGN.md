@@ -80,7 +80,7 @@ decision: accept | refuse
 
 ```text
 result: need_memory | decided
-memoryQuery?: {queryText, actorIds, topicHints, goalIds}
+memoryQuery?: {queryText, actorIds, topicHints, goalIds, limit: 1..8}
 action?: speak | wait | leave_chat
 responseDesire?: 0..3
 targetActorId?: 当前参与者
@@ -91,7 +91,7 @@ relationshipUpdates: [{targetActorId, dimension, direction, reason, evidenceMess
 pendingGoal?: {description, parentGoalId?, targetActorIds, topicHints, importance, evidenceMessageIds}
 ```
 
-`need_memory` 不得同时带行为或草稿变化。同一 NPC、同一触发事件最多召回一次；第二次仍返回 `need_memory` 视为失败。失败为 `decided + wait` 且无变化。
+`need_memory` 不得同时带行为或草稿变化。同一 NPC、同一触发事件最多召回一次；第二次仍返回 `need_memory` 视为失败。失败为 `decided + wait` 且无变化。该分支由共享编译的 LangGraph 和显式只读工具节点执行，`ownerNpcId` 不属于模型可见 Schema，由 Agent Runtime 注入。
 
 ### SpeechGeneration
 

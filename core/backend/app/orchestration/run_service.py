@@ -8,8 +8,10 @@ import math
 import random
 import uuid
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
+from ..agents.models import AgentInvocation, MemoryToolContext
+from ..agents.runtime import NPCAgent, NPCAgentRegistry, NPCAgentRuntime
 from ..ai.decision_service import DecisionService, StructuredCallFailed
 from ..ai.protocols import (
     ChatDecision,
@@ -61,6 +63,14 @@ class RunService:
         self.event_hub = event_hub or EventHub()
         self.text_model = text_model
         self.decisions = DecisionService(text_model)
+        # Five logical NPC Agents share this DecisionService and one compiled
+        # LangGraph.  They receive only invocation snapshots; RunService
+        # remains the authority that applies their semantic decisions.
+        self.agent_runtime = NPCAgentRuntime(self.decisions)
+        self.agents = NPCAgentRegistry(
+            self.agent_runtime,
+            [npc.actor_id for npc in self.registry.npcs],
+        )
         self.seed = seed
 
     async def create_run(self, agenda_id: str | None = None, seed: int | None = None) -> dict[str, Any]:
@@ -845,6 +855,44 @@ class RunService:
             return expected.lower() == str(actual).lower()
         return str(actual) == expected
 
+    def _npc_agent(self, npc_id: str) -> NPCAgent:
+        """Return the logical Agent bound to ``npc_id``.
+
+        The registry owns the binding (and therefore the private tool
+        permission).  Keeping this lookup here makes it explicit that the
+        world service never constructs an Agent per message.
+        """
+
+        return self.agents.get(npc_id)
+
+    def _memory_tool_context(
+        self,
+        run: Run,
+        npc_id: str,
+        conversation_id: str | None = None,
+    ) -> MemoryToolContext:
+        """Build an isolated, read-only snapshot for an Agent invocation."""
+
+        return MemoryToolContext(
+            owner_npc_id=npc_id,
+            run_id=run.run_id,
+            conversation_id=conversation_id,
+            # Foreign private memories never enter this Agent's Graph State.
+            # The tool repeats the owner check as a hard boundary, but the
+            # runtime snapshot is already least-privilege before execution.
+            memories={
+                memory_id: deepcopy(memory)
+                for memory_id, memory in run.memories.items()
+                if memory.get("ownerNpcId") == npc_id
+            },
+            # ScenarioRegistry exposes mappingproxy values; copy into a
+            # plain dict before handing the snapshot to the Agent tool.
+            topics={
+                topic_id: deepcopy(topic)
+                for topic_id, topic in self.registry.topics.items()
+            },
+        )
+
     async def _daily_action_locked(self, run: Run, npc_id: str) -> None:
         actor = self.registry.actor(npc_id)
         if actor is None or actor.kind != "npc":
@@ -885,7 +933,18 @@ class RunService:
             },
         )
         try:
-            decision = await self.decisions.daily_action(prompt)
+            agent_result = await self._npc_agent(npc_id).daily_tick(
+                AgentInvocation(
+                    run_id=run.run_id,
+                    npc_id=npc_id,
+                    event_type="daily_tick",
+                    prompt=prompt,
+                    candidate_actor_ids=tuple(candidates),
+                    memory_cache=tuple(self._initial_memory_ids(run, npc_id, candidates)),
+                    memory_context=self._memory_tool_context(run, npc_id),
+                )
+            )
+            decision = cast(DailyActionDecision, agent_result.decision)
         except StructuredCallFailed:
             decision = DailyActionDecision(action="wait")
         if decision.action == "wait":
@@ -972,7 +1031,20 @@ class RunService:
             },
         )
         try:
-            decision = await self.decisions.invitation(target_prompt)
+            agent_result = await self._npc_agent(target_id).invitation_received(
+                AgentInvocation(
+                    run_id=run.run_id,
+                    npc_id=target_id,
+                    event_type="invitation_received",
+                    prompt=target_prompt,
+                    candidate_actor_ids=(initiator_id,),
+                    memory_cache=tuple(
+                        self._initial_memory_ids(run, target_id, [initiator_id])
+                    ),
+                    memory_context=self._memory_tool_context(run, target_id),
+                )
+            )
+            decision = cast(InvitationDecision, agent_result.decision)
         except StructuredCallFailed:
             decision = InvitationDecision(decision="refuse")
         if decision.decision == "accept":
@@ -1093,7 +1165,7 @@ class RunService:
         intent: str | None = None,
     ) -> None:
         try:
-            speech = await self.decisions.speech(
+            speech = await self._npc_agent(npc_id).generate_speech(
                 self._npc_prompt(
                     run,
                     npc_id,
@@ -1197,7 +1269,7 @@ class RunService:
             return
         winner_id, winner = self._select_speaker(run, conversation, candidates)
         try:
-            speech = await self.decisions.speech(
+            speech = await self._npc_agent(winner_id).generate_speech(
                 self._npc_prompt(
                     run,
                     winner_id,
@@ -1321,7 +1393,7 @@ class RunService:
             return
         winner_id, winner = self._select_speaker(run, conversation, candidates)
         try:
-            speech = await self.decisions.speech(
+            speech = await self._npc_agent(winner_id).generate_speech(
                 self._npc_prompt(
                     run,
                     winner_id,
@@ -1351,25 +1423,75 @@ class RunService:
         if conversation.is_open:
             await self._run_chat_pipeline_locked(run, conversation, message["messageId"], chain_left - 1)
 
-    async def _run_one_chat_decision_locked(self, run: Run, conversation: Conversation, npc_id: str, trigger: str, trigger_message_id: str | None = None) -> ChatDecision:
-        prompt = self._npc_prompt(run, npc_id, "chat_decision", {"conversationId": conversation.conversation_id, "trigger": trigger, "triggerMessageId": trigger_message_id, **self._chat_context(run, conversation, npc_id), "memoryCache": list(run.memory_cache.get((conversation.conversation_id, npc_id), set()))})
+    async def _run_one_chat_decision_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        npc_id: str,
+        trigger: str,
+        trigger_message_id: str | None = None,
+    ) -> ChatDecision:
+        cache_key = (conversation.conversation_id, npc_id)
+        cached_memory_ids = [
+            memory_id
+            for memory_id in run.memory_cache.get(cache_key, set())
+            if run.memories.get(memory_id, {}).get("ownerNpcId") == npc_id
+        ]
+        prompt = self._npc_prompt(
+            run,
+            npc_id,
+            "chat_decision",
+            {
+                "conversationId": conversation.conversation_id,
+                "trigger": trigger,
+                "triggerMessageId": trigger_message_id,
+                **self._chat_context(run, conversation, npc_id),
+                "memoryCache": cached_memory_ids,
+            },
+        )
+
+        def prompt_builder(memory_ids: list[str]) -> str:
+            return self._npc_prompt(
+                run,
+                npc_id,
+                "chat_decision_with_memory",
+                {
+                    "conversationId": conversation.conversation_id,
+                    "trigger": trigger,
+                    "triggerMessageId": trigger_message_id,
+                    **self._chat_context(run, conversation, npc_id),
+                    "memoryCache": list(memory_ids),
+                },
+            )
+
         try:
-            decision = await self.decisions.chat(prompt)
+            agent_result = await self._npc_agent(npc_id).chat_message_received(
+                AgentInvocation(
+                    run_id=run.run_id,
+                    npc_id=npc_id,
+                    event_type="chat_message_received",
+                    prompt=prompt,
+                    conversation_id=conversation.conversation_id,
+                    trigger_message_id=trigger_message_id,
+                    visible_messages=tuple(
+                        self._visible_messages(run, conversation, npc_id)
+                    ),
+                    memory_cache=tuple(cached_memory_ids),
+                    memory_context=self._memory_tool_context(
+                        run,
+                        npc_id,
+                        conversation.conversation_id,
+                    ),
+                    prompt_builder=prompt_builder,
+                )
+            )
+            for memory_id in agent_result.recalled_memory_ids:
+                memory = run.memories.get(memory_id)
+                if memory is not None and memory.get("ownerNpcId") == npc_id:
+                    run.memory_cache.setdefault(cache_key, set()).add(memory_id)
+            decision = cast(ChatDecision, agent_result.decision)
         except StructuredCallFailed:
             decision = ChatDecision(result="decided", action="wait")
-        if decision.result == "need_memory":
-            query = decision.memory_query
-            if query is not None:
-                memory_ids = self._retrieve_memories(run, npc_id, query)
-                run.memory_cache.setdefault((conversation.conversation_id, npc_id), set()).update(memory_ids)
-            # One retry only. A second request is a safe wait, not a loop.
-            prompt = self._npc_prompt(run, npc_id, "chat_decision_with_memory", {"conversationId": conversation.conversation_id, "trigger": trigger, **self._chat_context(run, conversation, npc_id), "memoryCache": list(run.memory_cache.get((conversation.conversation_id, npc_id), set()))})
-            try:
-                decision = await self.decisions.chat(prompt)
-            except StructuredCallFailed:
-                decision = ChatDecision(result="decided", action="wait")
-            if decision.result == "need_memory":
-                decision = ChatDecision(result="decided", action="wait")
         self._apply_chat_drafts(run, conversation, npc_id, decision)
         return decision
 
@@ -1414,23 +1536,6 @@ class RunService:
             for key, value in invitation.items()
             if not key.startswith("_")
         }
-
-    def _retrieve_memories(self, run: Run, owner_npc_id: str, query: Any) -> list[str]:
-        query_tokens = set(str(query.query_text).lower().split())
-        query_topic_ids = set(self._resolve_topic_hints(list(query.topic_hints)))
-        result: list[tuple[int, int, str]] = []
-        for memory_id, memory in run.memories.items():
-            if memory.get("ownerNpcId") != owner_npc_id:
-                continue
-            actor_hit = len(set(query.actor_ids) & set(memory.get("actorIds", [])))
-            topic_hit = len(query_topic_ids & set(memory.get("topicIds", [])))
-            goal_hit = len(set(query.goal_ids) & set(memory.get("goalIds", [])))
-            text_hit = sum(1 for token in query_tokens if token and token in str(memory.get("content", "")).lower())
-            score = actor_hit * 5 + topic_hit * 4 + goal_hit * 4 + text_hit * 2
-            if score or not query_tokens and not query.actor_ids and not query.topic_hints and not query.goal_ids:
-                result.append((score, int(memory.get("importance", 1)), memory_id))
-        result.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-        return [item[2] for item in result[:8]]
 
     def _resolve_topic_hints(self, hints: list[str]) -> list[str]:
         resolved: list[str] = []

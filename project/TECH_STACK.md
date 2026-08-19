@@ -23,6 +23,7 @@
 | 数据访问 | SQLAlchemy 2 Async + psycopg 3 | 常规 CRUD 和事务；递归 CTE 与向量查询使用 SQLAlchemy Core/原生 SQL |
 | 数据迁移 | Alembic | 表结构和索引版本管理 |
 | 模型接口 | 火山方舟 Agent Plan（OpenAI 兼容） | 通过独立适配器调用 Doubao 模型，不进入领域层 |
+| Agent 编排 | LangGraph 1.x `StateGraph` | 编排 NPC 每日行动、邀请响应、聊天决策与只读记忆工具；不拥有世界状态 |
 | 后端测试 | pytest + AnyIO/HTTPX | 领域逻辑、异步 API、WebSocket 和确定性章节模拟 |
 | 前端测试 | Vitest + Playwright | 前端单测和关键 UI 流程 |
 | Python 环境 | Anaconda/Conda + `environment.yml` | Python 解释器、隔离环境与依赖复现 |
@@ -69,7 +70,7 @@
 
 六类 NPC 调用初期全部使用这一小模型，先进行质量、延迟、格式正确率和成本评测。若某类调用明显不达标，再只升级该调用，不提前设计多模型路由。Embedding 模型在数据库与长期记忆阶段另行选择。
 
-暂不使用 Agents SDK、Realtime API 或服务端自动托管的长对话状态。Python 世界编排器必须掌握准确的聊天片段、缓存、Goal 草稿、关系草稿和离场事务；模型只做有边界的决策。方舟返回结果必须经过 Pydantic 校验后才能进入系统。
+不使用通用 ReAct Agent、Agents SDK、Realtime API 或服务端自动托管的长对话状态。当前使用自定义 LangGraph `StateGraph` 编排三个有边界的 NPC Agent 入口和一次只读记忆工具调用；Python 世界编排器继续掌握聊天片段、缓存、Goal 草稿、关系草稿、移动、会话约束和离场事务。方舟返回结果必须经过 Pydantic 校验后才能进入系统。
 
 ## 6. 数据契约策略
 

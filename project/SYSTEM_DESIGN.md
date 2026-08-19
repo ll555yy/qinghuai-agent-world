@@ -100,8 +100,8 @@ creating → opening → active ↔ waiting_ai → idle_pending → closing → 
 ## 7. 新消息处理流水线
 
 1. 把玩家/NPC 消息或参与者事件追加到 Conversation，生成单调递增的 `eventSeq`。
-2. 对当前每名 NPC 组装其实际可见上下文，并并行调用 `ChatDecision`。
-3. 返回 `need_memory` 时，后端按当前 NPC 所有权执行一次混合检索，再针对同一 `eventSeq` 调用第二次决策。
+2. 对当前每名 NPC 组装其实际可见上下文，通过该 NPC 的逻辑 `NPCAgent` 进入共享编译的 LangGraph `chat_message_received` 流程并调用 `ChatDecision`。
+3. 返回 `need_memory` 时，LangGraph 的显式 `retrieve_owned_memories` 工具节点使用运行时注入的 owner 执行一次检索，再针对同一 `eventSeq` 调用第二次决策；`RunService` 不保留另一条手写召回路径。
 4. 校验 `goalUpdates`、`relationshipUpdates` 和 `pendingGoal`，写入当前 NPC 的会话私有草稿。
 5. 先处理立即 `leave_chat` 的 NPC，再从剩余 `speak` 申请中按点名、`responseDesire`、连续发言惩罚和稳定随机种子选一人。
 6. 只有胜出者执行 `SpeechGeneration`；输出文本写入新消息并开始下一轮。
