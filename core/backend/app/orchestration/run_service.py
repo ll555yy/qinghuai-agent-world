@@ -35,8 +35,10 @@ from ..domain.errors import (
     DuplicateCommandError,
     InvalidConversationParticipantsError,
     InvalidInvitationError,
+    InvalidJoinRequestError,
     InvalidMessageError,
     InvitationNotFoundError,
+    JoinRequestNotFoundError,
     PlayerAccessDeniedError,
     RunNotFoundError,
     WorldStepError,
@@ -210,8 +212,11 @@ class RunService:
             self._require_active_run(run)
             self._expire_pending_requests_locked(run)
             self._validate_new_chat_window_locked(run)
-            if len(participant_ids) not in (2, 3) or len(set(participant_ids)) != len(participant_ids):
-                raise InvalidConversationParticipantsError()
+            if len(participant_ids) != 2 or len(set(participant_ids)) != 2:
+                raise InvalidConversationParticipantsError(
+                    "A new conversation must start with exactly two participants; "
+                    "a third participant must use a join request."
+                )
             for actor_id in participant_ids:
                 self._require_actor(actor_id)
                 if run.actor_states.get(actor_id, {}).get("status") == "departed":
@@ -229,6 +234,10 @@ class RunService:
                 ):
                     raise InvalidInvitationError(
                         "The actor must answer or finish the pending invitation first."
+                    )
+                if self._actor_has_pending_join_request(run, actor_id):
+                    raise InvalidJoinRequestError(
+                        "The actor must finish the pending join request first."
                     )
             if len(run.open_conversations()) >= 2:
                 raise ConversationLimitReachedError()
@@ -265,7 +274,7 @@ class RunService:
                 )
             event = run.append_event("conversation_created", {"conversation": conversation.to_public_dict()})
             event_dict = event.to_dict()
-            result = {
+            result: dict[str, Any] = {
                 "conversation": conversation.to_public_dict(),
                 "run": run.to_public_snapshot(self.registry),
             }
@@ -281,35 +290,14 @@ class RunService:
         actor_id: str,
         command_id: str | None = None,
     ) -> dict[str, Any]:
-        run = await self.get_run_entity(run_id)
-        fingerprint = self._fingerprint(
-            "add_participant", {"conversationId": conversation_id, "actorId": actor_id}
+        return await self._request_join_command(
+            run_id,
+            conversation_id,
+            actor_id,
+            command_id,
+            command_name="add_participant",
+            include_player_history=actor_id == self.registry.player_actor_id,
         )
-        events_to_publish: list[dict[str, Any]] = []
-        async with run.lock:
-            previous = self._existing_command(run, command_id, fingerprint)
-            if previous is not None:
-                return deepcopy(previous)
-            self._require_active_run(run)
-            self._expire_pending_requests_locked(run)
-            self._validate_new_chat_window_locked(run)
-            conversation = run.conversations.get(conversation_id)
-            if conversation is None:
-                raise ConversationNotFoundError(details={"conversationId": conversation_id})
-            self._require_actor(actor_id)
-            if run.actor_open_conversation(actor_id) is not None:
-                raise ActorAlreadyInConversationError(details={"actorId": actor_id})
-            before_seq = run.event_seq
-            await self._join_conversation_locked(run, conversation, actor_id)
-            events_to_publish = [event.to_dict() for event in run.events_after(before_seq)]
-            result = {
-                "conversation": conversation.to_public_dict(),
-                "run": run.to_public_snapshot(self.registry),
-            }
-            self._record_command(run, command_id, fingerprint, result)
-        for event_dict in events_to_publish:
-            await self.event_hub.publish(run_id, event_dict)
-        return result
 
     async def remove_participant(
         self,
@@ -343,7 +331,7 @@ class RunService:
             else:
                 await self._remove_player_locked(run, conversation, actor_id)
             events_to_publish = [event.to_dict() for event in run.events_after(before_seq)]
-            result = {
+            result: dict[str, Any] = {
                 "conversation": conversation.to_public_dict(),
                 "run": run.to_public_snapshot(self.registry),
             }
@@ -551,8 +539,33 @@ class RunService:
         conversation_id: str,
         command_id: str | None = None,
     ) -> dict[str, Any]:
+        return await self._request_join_command(
+            run_id,
+            conversation_id,
+            self.registry.player_actor_id,
+            command_id,
+            command_name="player_join",
+            include_player_history=True,
+        )
+
+    async def _request_join_command(
+        self,
+        run_id: str,
+        conversation_id: str,
+        applicant_actor_id: str,
+        command_id: str | None,
+        *,
+        command_name: str,
+        include_player_history: bool,
+    ) -> dict[str, Any]:
         run = await self.get_run_entity(run_id)
-        fingerprint = self._fingerprint("player_join", {"conversationId": conversation_id})
+        fingerprint = self._fingerprint(
+            command_name,
+            {
+                "conversationId": conversation_id,
+                "applicantActorId": applicant_actor_id,
+            },
+        )
         published: list[dict[str, Any]] = []
         async with run.lock:
             previous = self._existing_command(run, command_id, fingerprint)
@@ -562,19 +575,104 @@ class RunService:
             self._expire_pending_requests_locked(run)
             self._validate_new_chat_window_locked(run)
             conversation = self._conversation(run, conversation_id)
-            if len(conversation.participants) >= 3:
-                raise ConversationFullError()
-            if run.actor_open_conversation(self.registry.player_actor_id) is not None:
-                raise ActorAlreadyInConversationError(details={"actorId": self.registry.player_actor_id})
+            self._require_actor(applicant_actor_id)
             before_seq = run.event_seq
-            await self._join_conversation_locked(run, conversation, self.registry.player_actor_id)
+            join_request = await self._request_join_locked(
+                run,
+                conversation,
+                applicant_actor_id,
+            )
             published = [event.to_dict() for event in run.events_after(before_seq)]
-            result = {
+            result: dict[str, Any] = {
+                "joinRequest": self._public_join_request(join_request),
                 "conversation": conversation.to_public_dict(),
-                "messages": self._public_messages(run.messages.get(conversation_id, [])),
                 "run": run.to_public_snapshot(self.registry),
             }
+            if include_player_history and join_request["status"] == "accepted":
+                result["messages"] = self._public_messages(
+                    run.messages.get(conversation_id, [])
+                )
             self._record_command(run, command_id, fingerprint, result)
+        for event in published:
+            await self.event_hub.publish(run_id, event)
+        return result
+
+    async def get_join_request(
+        self,
+        run_id: str,
+        join_request_id: str,
+    ) -> dict[str, Any]:
+        run = await self.get_run_entity(run_id)
+        async with run.lock:
+            self._expire_pending_requests_locked(run)
+            join_request = run.join_requests.get(join_request_id)
+            if join_request is None:
+                raise JoinRequestNotFoundError(
+                    details={"joinRequestId": join_request_id}
+                )
+            return {
+                "joinRequest": self._public_join_request(join_request),
+                "run": run.to_public_snapshot(self.registry),
+            }
+
+    async def respond_join_request(
+        self,
+        run_id: str,
+        join_request_id: str,
+        accepted: bool,
+        command_id: str | None = None,
+    ) -> dict[str, Any]:
+        run = await self.get_run_entity(run_id)
+        fingerprint = self._fingerprint(
+            "respond_join_request",
+            {"joinRequestId": join_request_id, "accepted": accepted},
+        )
+        published: list[dict[str, Any]] = []
+        async with run.lock:
+            previous = self._existing_command(run, command_id, fingerprint)
+            if previous is not None:
+                return deepcopy(previous)
+            self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
+            join_request = run.join_requests.get(join_request_id)
+            if join_request is None:
+                raise JoinRequestNotFoundError(
+                    details={"joinRequestId": join_request_id}
+                )
+            player_id = self.registry.player_actor_id
+            decisions = join_request["approverDecisions"]
+            if (
+                join_request.get("status") != "pending"
+                or player_id not in join_request.get("approverActorIds", [])
+                or decisions.get(player_id) != "pending"
+            ):
+                raise InvalidJoinRequestError(
+                    "This join request is not waiting for the player."
+                )
+            before_seq = run.event_seq
+            decisions[player_id] = "accept" if accepted else "refuse"
+            if accepted:
+                await self._resolve_join_request_locked(run, join_request)
+            else:
+                self._refuse_join_request_locked(run, join_request)
+            conversation = self._conversation(
+                run,
+                str(join_request["conversationId"]),
+            )
+            result: dict[str, Any] = {
+                "joinRequest": self._public_join_request(join_request),
+                "conversation": conversation.to_public_dict(),
+                "run": run.to_public_snapshot(self.registry),
+            }
+            if (
+                join_request["status"] == "accepted"
+                and join_request["applicantActorId"] == player_id
+            ):
+                result["messages"] = self._public_messages(
+                    run.messages.get(conversation.conversation_id, [])
+                )
+            self._record_command(run, command_id, fingerprint, result)
+            published = [event.to_dict() for event in run.events_after(before_seq)]
         for event in published:
             await self.event_hub.publish(run_id, event)
         return result
@@ -906,7 +1004,7 @@ class RunService:
                 continue
             if (
                 run.actor_states.get(npc.actor_id, {}).get("status") in {"chatting", "approaching", "inviting"}
-                or self._actor_has_pending_invitation(run, npc.actor_id)
+                or self._actor_has_pending_request(run, npc.actor_id)
             ):
                 run.append_event(
                     "npc_thought_skipped",
@@ -948,6 +1046,22 @@ class RunService:
             for invitation in run.invitations.values()
         )
 
+    def _actor_has_pending_join_request(self, run: Run, actor_id: str) -> bool:
+        return any(
+            request.get("status") == "pending"
+            and (
+                request.get("applicantActorId") == actor_id
+                or actor_id in request.get("approverActorIds", [])
+            )
+            for request in run.join_requests.values()
+        )
+
+    def _actor_has_pending_request(self, run: Run, actor_id: str) -> bool:
+        return self._actor_has_pending_invitation(
+            run,
+            actor_id,
+        ) or self._actor_has_pending_join_request(run, actor_id)
+
     def _expire_pending_requests_locked(self, run: Run) -> None:
         """Expire all unanswered requests once the daily cutoff is reached."""
 
@@ -979,6 +1093,13 @@ class RunService:
                     "expiredAt": now,
                 },
             )
+        for join_request in run.join_requests.values():
+            if join_request.get("status") == "pending":
+                self._expire_join_request_locked(
+                    run,
+                    join_request,
+                    reason="new_chat_cutoff",
+                )
 
     def _validate_new_chat_window_locked(self, run: Run) -> None:
         """Enforce the backend's 17:00 new-chat cutoff."""
@@ -1158,7 +1279,7 @@ class RunService:
         for candidate in self.registry.actors.values():
             if candidate.actor_id == npc_id or run.actor_states.get(candidate.actor_id, {}).get("status") == "departed":
                 continue
-            if self._actor_has_pending_invitation(run, candidate.actor_id):
+            if self._actor_has_pending_request(run, candidate.actor_id):
                 continue
             candidate_conversation = run.actor_open_conversation(candidate.actor_id)
             if candidate_conversation is not None and len(candidate_conversation.participants) < 3:
@@ -1223,7 +1344,7 @@ class RunService:
         run.append_event("actor_movement_completed", {"actorId": npc_id, "targetActorId": target.actor_id, "position": deepcopy(run.positions[npc_id])})
         open_target = run.actor_open_conversation(target.actor_id)
         if open_target is not None and len(open_target.participants) < 3:
-            await self._join_conversation_locked(run, open_target, npc_id)
+            await self._request_join_locked(run, open_target, npc_id)
             return
         if open_target is not None:
             run.actor_states[npc_id]["status"] = "waiting"
@@ -1320,6 +1441,258 @@ class RunService:
         )
         return invitation
 
+    async def _request_join_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        applicant_actor_id: str,
+    ) -> dict[str, Any]:
+        self._require_active_run(run)
+        self._validate_new_chat_window_locked(run)
+        self._require_actor(applicant_actor_id)
+        if not conversation.is_open:
+            raise InvalidJoinRequestError("Conversation is already closed.")
+        if len(conversation.participants) >= 3:
+            raise ConversationFullError()
+        if applicant_actor_id in conversation.participants:
+            raise ActorAlreadyInConversationError(
+                details={"actorId": applicant_actor_id}
+            )
+        if run.actor_states.get(applicant_actor_id, {}).get("status") == "departed":
+            raise InvalidConversationParticipantsError(
+                "A departed actor cannot request to join."
+            )
+        if run.actor_open_conversation(applicant_actor_id) is not None:
+            raise ActorAlreadyInConversationError(
+                details={"actorId": applicant_actor_id}
+            )
+        if self._actor_has_pending_invitation(run, applicant_actor_id):
+            raise InvalidInvitationError(
+                "The applicant must answer or finish the pending invitation first."
+            )
+        if self._actor_has_pending_join_request(run, applicant_actor_id):
+            raise InvalidJoinRequestError(
+                "The applicant already has a pending join request."
+            )
+        if any(
+            request.get("status") == "pending"
+            and request.get("conversationId") == conversation.conversation_id
+            for request in run.join_requests.values()
+        ):
+            raise InvalidJoinRequestError(
+                "This conversation already has a pending join request."
+            )
+
+        approvers = list(conversation.participants)
+        join_request_id = run.next_join_request_identity()
+        join_request: dict[str, Any] = {
+            "joinRequestId": join_request_id,
+            "conversationId": conversation.conversation_id,
+            "applicantActorId": applicant_actor_id,
+            "status": "pending",
+            "requestedAt": run.clock.as_dict()["label"],
+            "approverActorIds": approvers,
+            "approverDecisions": {
+                actor_id: "pending" for actor_id in approvers
+            },
+        }
+        run.join_requests[join_request_id] = join_request
+        applicant = self.registry.actor(applicant_actor_id)
+        run.actor_states[applicant_actor_id]["status"] = "inviting"
+        run.append_event(
+            "join_request_created",
+            {
+                "joinRequest": self._public_join_request(join_request),
+            },
+        )
+
+        for approver_id in approvers:
+            approver = self.registry.actor(approver_id)
+            if approver is None:
+                self._refuse_join_request_locked(run, join_request)
+                return join_request
+            if approver.kind == "player":
+                continue
+            memory_ids = self._initial_memory_ids(
+                run,
+                approver_id,
+                [applicant_actor_id, *approvers],
+            )
+            prompt = self._npc_prompt(
+                run,
+                approver_id,
+                "join_request",
+                {
+                    "requestKind": "join_request",
+                    "joinRequestId": join_request_id,
+                    "conversationId": conversation.conversation_id,
+                    "applicant": (
+                        self.registry.public_actor(applicant_actor_id)
+                        if applicant is not None
+                        else {"actorId": applicant_actor_id}
+                    ),
+                    "participantActorIds": approvers,
+                    "visibleRequest": True,
+                    "memoryCache": memory_ids,
+                },
+            )
+            try:
+                agent_result = await self._npc_agent(
+                    approver_id
+                ).invitation_received(
+                    AgentInvocation(
+                        run_id=run.run_id,
+                        npc_id=approver_id,
+                        event_type="invitation_received",
+                        prompt=prompt,
+                        conversation_id=conversation.conversation_id,
+                        candidate_actor_ids=(applicant_actor_id,),
+                        memory_cache=tuple(memory_ids),
+                        memory_context=self._memory_tool_context(
+                            run,
+                            approver_id,
+                            conversation.conversation_id,
+                        ),
+                    )
+                )
+                decision = cast(InvitationDecision, agent_result.decision)
+            except StructuredCallFailed:
+                decision = InvitationDecision(decision="refuse")
+            join_request["approverDecisions"][approver_id] = decision.decision
+            if decision.decision == "refuse":
+                self._refuse_join_request_locked(run, join_request)
+                return join_request
+
+        await self._resolve_join_request_locked(run, join_request)
+        return join_request
+
+    async def _resolve_join_request_locked(
+        self,
+        run: Run,
+        join_request: dict[str, Any],
+    ) -> None:
+        if join_request.get("status") != "pending":
+            return
+        decisions = join_request["approverDecisions"]
+        if "refuse" in decisions.values():
+            self._refuse_join_request_locked(run, join_request)
+            return
+        if any(value != "accept" for value in decisions.values()):
+            return
+        if not run.clock.new_chat_allowed:
+            self._expire_join_request_locked(
+                run,
+                join_request,
+                reason="new_chat_cutoff",
+            )
+            return
+        conversation = run.conversations.get(join_request["conversationId"])
+        applicant_id = str(join_request["applicantActorId"])
+        if (
+            conversation is None
+            or not conversation.is_open
+            or len(conversation.participants) >= 3
+            or conversation.participants != join_request["approverActorIds"]
+            or run.actor_open_conversation(applicant_id) is not None
+            or run.actor_states.get(applicant_id, {}).get("status") == "departed"
+        ):
+            self._expire_join_request_locked(
+                run,
+                join_request,
+                reason="request_invalidated",
+            )
+            return
+
+        join_request["status"] = "accepted"
+        join_request["resolvedAt"] = run.clock.as_dict()["label"]
+        run.append_event(
+            "join_request_resolved",
+            {
+                "joinRequestId": join_request["joinRequestId"],
+                "conversationId": conversation.conversation_id,
+                "applicantActorId": applicant_id,
+                "status": "accepted",
+                "resolvedAt": join_request["resolvedAt"],
+            },
+        )
+        await self._join_conversation_locked(run, conversation, applicant_id)
+
+    def _refuse_join_request_locked(
+        self,
+        run: Run,
+        join_request: dict[str, Any],
+    ) -> None:
+        if join_request.get("status") != "pending":
+            return
+        join_request["status"] = "refused"
+        join_request["resolvedAt"] = run.clock.as_dict()["label"]
+        self._reset_join_applicant_locked(run, join_request)
+        run.append_event(
+            "join_request_resolved",
+            {
+                "joinRequestId": join_request["joinRequestId"],
+                "conversationId": join_request["conversationId"],
+                "applicantActorId": join_request["applicantActorId"],
+                "status": "refused",
+                "resolvedAt": join_request["resolvedAt"],
+            },
+        )
+
+    def _expire_join_request_locked(
+        self,
+        run: Run,
+        join_request: dict[str, Any],
+        *,
+        reason: str,
+    ) -> None:
+        if join_request.get("status") != "pending":
+            return
+        join_request["status"] = "expired"
+        join_request["expiredAt"] = run.clock.as_dict()["label"]
+        self._reset_join_applicant_locked(run, join_request)
+        run.append_event(
+            "join_request_resolved",
+            {
+                "joinRequestId": join_request["joinRequestId"],
+                "conversationId": join_request["conversationId"],
+                "applicantActorId": join_request["applicantActorId"],
+                "status": "expired",
+                "reason": reason,
+                "expiredAt": join_request["expiredAt"],
+            },
+        )
+
+    def _expire_join_requests_for_conversation_locked(
+        self,
+        run: Run,
+        conversation_id: str,
+        *,
+        reason: str,
+    ) -> None:
+        for join_request in run.join_requests.values():
+            if (
+                join_request.get("status") == "pending"
+                and join_request.get("conversationId") == conversation_id
+            ):
+                self._expire_join_request_locked(
+                    run,
+                    join_request,
+                    reason=reason,
+                )
+
+    def _reset_join_applicant_locked(
+        self,
+        run: Run,
+        join_request: dict[str, Any],
+    ) -> None:
+        applicant_id = str(join_request["applicantActorId"])
+        actor = self.registry.actor(applicant_id)
+        if actor is None or applicant_id not in run.actor_states:
+            return
+        run.actor_states[applicant_id]["status"] = (
+            "present" if actor.kind == "player" else "waiting"
+        )
+
     def _validate_new_invitation_locked(
         self,
         run: Run,
@@ -1334,6 +1707,13 @@ class RunService:
             raise InvalidInvitationError("The initiator has left the world.")
         if run.actor_states.get(target_id, {}).get("status") == "departed":
             raise InvalidInvitationError("The target has left the world.")
+        if self._actor_has_pending_join_request(
+            run,
+            initiator_id,
+        ) or self._actor_has_pending_join_request(run, target_id):
+            raise InvalidInvitationError(
+                "One of the actors already has a pending join request."
+            )
         if run.actor_open_conversation(initiator_id) is not None:
             raise ActorAlreadyInConversationError(details={"actorId": initiator_id})
         if run.actor_open_conversation(target_id) is not None:
@@ -1901,6 +2281,26 @@ class RunService:
             if not key.startswith("_")
         }
 
+    def _public_join_request(self, join_request: dict[str, Any]) -> dict[str, Any]:
+        player_id = self.registry.player_actor_id
+        result: dict[str, Any] = {
+            "joinRequestId": join_request["joinRequestId"],
+            "conversationId": join_request["conversationId"],
+            "applicantActorId": join_request["applicantActorId"],
+            "status": join_request["status"],
+            "requestedAt": join_request["requestedAt"],
+            "approverActorIds": list(join_request["approverActorIds"]),
+            "pendingPlayerDecision": (
+                join_request["status"] == "pending"
+                and join_request["approverDecisions"].get(player_id) == "pending"
+            ),
+        }
+        if "resolvedAt" in join_request:
+            result["resolvedAt"] = join_request["resolvedAt"]
+        if "expiredAt" in join_request:
+            result["expiredAt"] = join_request["expiredAt"]
+        return result
+
     def _resolve_topic_hints(self, hints: list[str]) -> list[str]:
         resolved: list[str] = []
         for topic in self.registry.topics.values():
@@ -2018,6 +2418,11 @@ class RunService:
             return
         await self._close_current_segment_locked(run, conversation)
         conversation.remove_participant(npc_id)
+        self._expire_join_requests_for_conversation_locked(
+            run,
+            conversation.conversation_id,
+            reason="conversation_participants_changed",
+        )
         run.actor_states[npc_id]["status"] = "waiting"
         run.append_event("conversation_participant_left" if conversation.is_open else "conversation_closed", {"conversation": conversation.to_public_dict(), "actorLeft": npc_id})
         if conversation.is_open:
@@ -2057,6 +2462,11 @@ class RunService:
             raise ActorNotInConversationError(details={"actorId": player_id})
         await self._close_current_segment_locked(run, conversation)
         conversation.remove_participant(player_id)
+        self._expire_join_requests_for_conversation_locked(
+            run,
+            conversation.conversation_id,
+            reason="conversation_participants_changed",
+        )
         run.actor_states[player_id]["status"] = "present"
         run.memory_cache.pop((conversation.conversation_id, player_id), None)
         run.append_event(
@@ -2091,6 +2501,11 @@ class RunService:
 
     async def _close_conversation_locked(self, run: Run, conversation: Conversation, reason: str) -> None:
         was_open = conversation.is_open
+        self._expire_join_requests_for_conversation_locked(
+            run,
+            conversation.conversation_id,
+            reason="conversation_closed",
+        )
         if conversation.is_open:
             await self._close_current_segment_locked(run, conversation)
         for actor_id in list(conversation.participants):

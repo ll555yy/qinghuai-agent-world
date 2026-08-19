@@ -103,6 +103,17 @@ class InvalidInvitationError(DomainError):
     default_message = "The invitation is no longer valid."
 
 
+class JoinRequestNotFoundError(DomainError):
+    code = "join_request_not_found"
+    status_code = 404
+    default_message = "Join request was not found."
+
+
+class InvalidJoinRequestError(DomainError):
+    code = "invalid_join_request"
+    default_message = "The join request is no longer valid."
+
+
 class InvalidMessageError(DomainError):
     code = "invalid_message"
     default_message = "The message is invalid."

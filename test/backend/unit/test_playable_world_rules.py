@@ -75,6 +75,8 @@ class JoinRecordingModel:
         context = json.loads(request.messages[0].content)
         if protocol == "SegmentSummary":
             value = {"claims": []}
+        elif protocol == "InvitationDecision":
+            value = {"decision": "accept"}
         elif protocol == "ChatDecision":
             self.chat_contexts.append(context)
             value = {"result": "decided", "action": "wait"}

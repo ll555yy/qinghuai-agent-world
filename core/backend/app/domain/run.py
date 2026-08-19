@@ -70,6 +70,7 @@ class Run:
     scene_state: dict[str, Any] = field(default_factory=dict)
     current_world_state: dict[str, Any] = field(default_factory=dict)
     invitations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    join_requests: dict[str, dict[str, Any]] = field(default_factory=dict)
     messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     segments: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     conversation_drafts: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
@@ -83,6 +84,7 @@ class Run:
     next_message_seq: int = 0
     next_segment_seq: int = 0
     next_invitation_seq: int = 0
+    next_join_request_seq: int = 0
     next_memory_seq: int = 0
     run_finished: bool = False
     # Ordinary day-end handling is idempotent.  This also prevents a second
@@ -117,6 +119,10 @@ class Run:
     def next_invitation_identity(self) -> str:
         self.next_invitation_seq += 1
         return f"invite_{self.next_invitation_seq:06d}"
+
+    def next_join_request_identity(self) -> str:
+        self.next_join_request_seq += 1
+        return f"join_{self.next_join_request_seq:06d}"
 
     def next_memory_identity(self) -> str:
         self.next_memory_seq += 1

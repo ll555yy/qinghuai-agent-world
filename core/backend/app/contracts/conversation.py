@@ -36,6 +36,11 @@ class InvitationResponseRequest(ContractModel):
     command_id: str | None = Field(default=None, alias="commandId")
 
 
+class JoinRequestResponseRequest(ContractModel):
+    accepted: bool
+    command_id: str | None = Field(default=None, alias="commandId")
+
+
 class PlayerMessageRequest(ContractModel):
     text: str = Field(min_length=1, max_length=2000)
     command_id: str | None = Field(default=None, alias="commandId")
