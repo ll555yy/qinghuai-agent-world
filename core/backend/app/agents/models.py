@@ -51,6 +51,8 @@ class MemoryToolResult:
     """The small, serializable result carried through Graph State."""
 
     memory_ids: tuple[str, ...] = ()
+    vector_hits: int = 0
+    graph_hits: int = 0
 
     @property
     def count(self) -> int:

@@ -21,6 +21,9 @@ from core.backend.app.db.models import (
 )
 from core.backend.app.main import create_app
 from core.backend.app.orchestration.run_service import RunService
+from core.backend.app.orchestration.world_engine import WorldEngine
+from core.backend.app.persistence.embedding_indexer import MemoryEmbeddingIndexer
+from core.backend.app.persistence.indexing_repository import IndexingRunRepository
 from core.backend.app.persistence.memory_retriever import DatabaseMemoryRetriever
 from core.backend.app.persistence.run_repository import RepositoryConflictError
 from core.backend.app.persistence.sqlalchemy_repository import SQLAlchemyRunRepository
@@ -33,8 +36,8 @@ from sqlalchemy.exc import IntegrityError
 
 
 class _FixedEmbedding:
-    dimensions = 384
-    model_name = "test-fixed-384"
+    dimensions = 1024
+    model_name = "test-fixed-1024"
 
     def __init__(self) -> None:
         self.calls = 0
@@ -172,17 +175,20 @@ async def test_postgres_repository_recovers_run_and_durable_events() -> None:
         assert goal_count == len(registry.goals)
         assert len(own_memories) >= 2
         assert other_memory is not None
-        seed_memory, neighbor_memory = own_memories[:2]
+        seed_memory = "memory_seed_001"
+        neighbor_memory = "memory_seed_rel_npc_001_npc_005"
+        assert seed_memory in own_memories
+        assert neighbor_memory in own_memories
         await session.execute(
             update(Memory)
             .where(
                 Memory.run_id == run_id,
-                Memory.memory_id.in_([seed_memory, neighbor_memory, other_memory]),
+                Memory.memory_id.in_([seed_memory, other_memory]),
             )
             .values(
-                embedding=[1.0] * 384,
-                embedding_model="test-fixed-384",
-                embedding_dimensions=384,
+                embedding=[1.0] * 1024,
+                embedding_model="test-fixed-1024",
+                embedding_dimensions=1024,
             )
         )
         await session.execute(
@@ -260,6 +266,8 @@ async def test_postgres_repository_recovers_run_and_durable_events() -> None:
     assert seed_memory in recalled.memory_ids
     assert neighbor_memory in recalled.memory_ids
     assert other_memory not in recalled.memory_ids
+    assert recalled.vector_hits >= 1
+    assert recalled.graph_hits >= 1
     async with second_repository.session_factory() as session:
         recalled_owners = set(
             (
@@ -273,6 +281,78 @@ async def test_postgres_repository_recovers_run_and_durable_events() -> None:
         )
     assert recalled_owners == {"npc_001"}
     await second_repository.close()
+
+
+@pytest.mark.anyio
+async def test_new_memories_are_indexed_after_commit_and_survive_later_save() -> None:
+    database_url = os.getenv("QINGHUAI_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("set QINGHUAI_TEST_DATABASE_URL to run PostgreSQL integration tests")
+    scenario_dir = Path(__file__).resolve().parents[3] / "core" / "scenario"
+    registry = ScenarioLoader(scenario_dir).load()
+    base_repository = SQLAlchemyRunRepository(
+        database_url, chapter_id=registry.chapter_id
+    )
+    await sync_scenario(base_repository.session_factory, registry)
+    embedding = _FixedEmbedding()
+    indexer = MemoryEmbeddingIndexer(
+        base_repository.session_factory,
+        embedding,
+        batch_size=64,
+    )
+    repository = IndexingRunRepository(base_repository, indexer)
+    service = RunService(registry, repository=repository, text_model=None)
+
+    created = await service.create_run(seed=820)
+    run = await service.get_run_entity(created["runId"])
+    expected = len(run.memories)
+    async with base_repository.session_factory() as session:
+        indexed_before = await session.scalar(
+            select(func.count())
+            .select_from(Memory)
+            .where(Memory.run_id == run.run_id, Memory.embedding.is_not(None))
+        )
+    assert indexed_before == expected
+
+    await repository.save(run)
+    async with base_repository.session_factory() as session:
+        indexed_after = await session.scalar(
+            select(func.count())
+            .select_from(Memory)
+            .where(Memory.run_id == run.run_id, Memory.embedding.is_not(None))
+        )
+    assert indexed_after == expected
+    repeated = await indexer.index_missing(run_id=run.run_id)
+    assert repeated.indexed == 0
+    assert repeated.failed == 0
+    assert repeated.skipped == expected
+    await repository.close()
+
+
+@pytest.mark.anyio
+async def test_postgres_offline_world_reaches_day7_without_partial_commit() -> None:
+    database_url = os.getenv("QINGHUAI_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("set QINGHUAI_TEST_DATABASE_URL to run PostgreSQL integration tests")
+    scenario_dir = Path(__file__).resolve().parents[3] / "core" / "scenario"
+    registry = ScenarioLoader(scenario_dir).load()
+    repository = SQLAlchemyRunRepository(
+        database_url, chapter_id=registry.chapter_id
+    )
+    await sync_scenario(repository.session_factory, registry)
+    service = RunService(registry, repository=repository, text_model=None)
+    engine = WorldEngine(service)
+
+    created = await service.create_run(seed=821)
+    await engine.step(created["runId"], 540, command_id="postgres_day1_end")
+    for day in range(2, 8):
+        await engine.step(created["runId"], 1, command_id=f"postgres_day{day}_start")
+        await engine.step(created["runId"], 599, command_id=f"postgres_day{day}_end")
+    run = await service.get_run_entity(created["runId"])
+
+    assert run.clock.as_dict()["label"] == "Day7 18:00"
+    assert run.chapter_resolution is not None
+    await repository.close()
 
 
 @pytest.mark.anyio

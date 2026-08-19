@@ -153,6 +153,7 @@ class ScenarioLoader:
         goals = self._load_goals(files["INITIAL_GOALS.yaml"], actors, topics)
         relationships = self._load_relationships(files["INITIAL_RELATIONSHIPS.yaml"], actors)
         memories = self._load_memories(files["INITIAL_MEMORIES.yaml"], actors, topics)
+        self._validate_relationship_memories(relationships, memories)
         chapter, events = self._load_events(files["WORLD_EVENTS_DAY1_7.yaml"], actors, topics)
         agendas = self._load_agendas(files["CHAPTER_AGENDAS.yaml"], actors, goals, chapter["chapter_id"])
 
@@ -178,6 +179,33 @@ class ScenarioLoader:
             active_end_minutes=chapter["active_end_minutes"],
             virtual_hours_per_real_minute=chapter["virtual_hours_per_real_minute"],
         )
+
+    @staticmethod
+    def _validate_relationship_memories(
+        relationships: Mapping[tuple[str, str], RelationshipDefinition],
+        memories: Mapping[str, MemoryDefinition],
+    ) -> None:
+        """Require a private opening belief for every directed relationship.
+
+        Relationship numbers remain authoritative state.  This invariant only
+        guarantees that the owning NPC can also recall its subjective view of
+        the target through the Memory tool.
+        """
+
+        covered = {
+            (memory.owner_npc_id, target_actor_id)
+            for memory in memories.values()
+            if memory.source == "scenario_seed"
+            for target_actor_id in memory.actor_ids
+        }
+        missing = sorted(set(relationships) - covered)
+        if missing:
+            source, target = missing[0]
+            raise ScenarioValidationError(
+                f"missing scenario_seed memory for directed relationship {source}->{target}",
+                file="INITIAL_MEMORIES.yaml",
+                field="memories",
+            )
 
     @staticmethod
     def _load_actors(

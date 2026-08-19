@@ -6,7 +6,7 @@
 - `test/`：所有测试、模拟和测试数据。
 - `project/`：已确认的设计文档与一致性审计。
 
-当前已完成无需前端即可运行的七天后端可玩闭环：世界时间与事件、NPC 错峰行动、移动和邀请、最多三人聊天、玩家加入与自由发言、私有 Memory Graph 召回、离场沉淀、D-065 自动收束、长聊天滚动摘要以及 Day7 固定结算。真实模型通过火山方舟 `doubao-seed-2.0-lite` 接入；未设置密钥时使用不编造剧情的安全结果。
+当前已完成无需前端即可运行的七天后端闭环：世界时间与事件、NPC 错峰行动、移动和邀请、最多三人聊天、玩家加入与自由发言、私有 Memory Graph 召回、离场沉淀、D-065 自动收束、长聊天滚动摘要以及 Day7 固定结算。火山方舟文本模型与 Embedding 的代码路径已经接入；真实模型质量仍须用本机密钥完成六协议和三局七日验收，未验收前不宣称后端可玩性完成。
 
 权威状态可选择进程内存或 Docker PostgreSQL + pgvector。数据库模式会持久化 Run、消息、Goal、关系、Memory Graph 和章节状态，后端重启后可以继续运行；React/Phaser 前端尚未开发。权威玩法见 `project/PROJECT_DESIGN.md`，数据库阶段设计与验收见 `project/DATABASE_BACKEND_DESIGN.md` 和 `project/DATABASE_BACKEND_IMPLEMENTATION_REPORT.md`。
 
@@ -48,13 +48,38 @@ python -m mypy --config-file core/backend/pyproject.toml core/backend/app
 python -m uvicorn core.backend.app.main:app --reload
 ```
 
-需要真实模型时，复制 `.env.example` 到本机 `.env`，填写已经轮换的新 `ARK_API_KEY`，并使用：
+需要真实模型时，复制 `.env.example` 到本机 `.env`，填写已经轮换的新 `ARK_API_KEY`。应用和验收脚本会自动读取仓库根目录的 `.env`；不要把它加入 Git。
+
+先验证六类文本协议（默认命令只做 dry-run）：
 
 ```powershell
-python -m uvicorn core.backend.app.main:app --reload --env-file .env
+python core/backend/scripts/check_ark_connection.py
+python core/backend/scripts/check_ark_connection.py --live
 ```
 
-不要把 `.env` 加入 Git。
+再在 `.env` 中填写一个实际返回 1024 维的 `ARK_EMBEDDING_MODEL` 或推理接入点 ID，先用固定公开文本探测真实维度：
+
+```powershell
+python core/backend/scripts/check_ark_embedding.py
+python core/backend/scripts/check_ark_embedding.py --live
+```
+
+探测通过后，按指定 Run 幂等回填 Memory；不写 `--live` 不会产生调用：
+
+```powershell
+cd core/backend
+python scripts/backfill_embeddings.py --run-id run_xxx
+python scripts/backfill_embeddings.py --live --run-id run_xxx --limit 100 --batch-size 32
+cd ../..
+```
+
+真实七日模拟必须使用 PostgreSQL。默认依次运行旁观、支持林慧兰和支持赵磊三条路线，每局最多 600 次模型适配器调用、总计最多 1800 次；报告只保存指标和结构化结果：
+
+```powershell
+python core/backend/scripts/run_seven_day_simulation.py --real --backend postgres --route all --runs 1 --output simulation_reports
+```
+
+加 `--keep-runs` 才保留模拟 Run；否则在完成 Repository 重启恢复验证后清理这些模拟数据。真实报告目录不要提交，完成三局后按 `project/REAL_AI_EMBEDDING_SIMULATION_ACCEPTANCE.md` 记录结果和调参证据。
 
 若确实要清空本机开发数据库（会删除全部本地 Run，无法恢复）：
 

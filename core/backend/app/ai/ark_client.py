@@ -64,6 +64,10 @@ class ArkClient:
         self._api_key = self.settings.api_key
         self._configured = bool(self._api_key)
         self._client = client
+        self._provider_attempts = 0
+        self._provider_retries = 0
+        self._completed_requests = 0
+        self._failed_requests = 0
         self._timeout = httpx.Timeout(
             self.settings.request_timeout_seconds,
             connect=self.settings.connect_timeout_seconds,
@@ -90,6 +94,16 @@ class ArkClient:
             "baseUrlHost": self.settings.base_url_host,
         }
 
+    def metrics_snapshot(self) -> dict[str, int]:
+        """Return cumulative, content-free adapter counters for acceptance runs."""
+
+        return {
+            "providerAttempts": self._provider_attempts,
+            "providerRetries": self._provider_retries,
+            "completedRequests": self._completed_requests,
+            "failedRequests": self._failed_requests,
+        }
+
     async def generate(self, request: TextGenerationRequest) -> TextGenerationResult:
         request_id = request.request_id or f"req_{uuid.uuid4().hex}"
         if not self.configured or self._client is None:
@@ -103,6 +117,7 @@ class ArkClient:
         attempts = 2
         for attempt in range(attempts):
             try:
+                self._provider_attempts += 1
                 response = await self._client.chat.completions.create(
                     model=self.settings.model,
                     messages=messages,
@@ -113,17 +128,21 @@ class ArkClient:
             except Exception as exc:
                 error = self._map_provider_error(exc, request_id)
                 if error.retryable and attempt == 0:
+                    self._provider_retries += 1
                     await asyncio.sleep(0)
                     continue
                 self._log_failure(request_id, started, error)
+                self._failed_requests += 1
                 raise error from None
 
             try:
                 result = self._parse_response(response, request_id)
             except AIError as error:
                 self._log_failure(request_id, started, error)
+                self._failed_requests += 1
                 raise
             self._log_success(request_id, started, result)
+            self._completed_requests += 1
             return result
         raise AssertionError("unreachable")
 

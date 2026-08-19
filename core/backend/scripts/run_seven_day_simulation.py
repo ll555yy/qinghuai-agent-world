@@ -1,0 +1,260 @@
+"""Opt-in CLI for one bounded seven-day simulation.
+
+Examples (run from the repository root)::
+
+    python core/backend/scripts/run_seven_day_simulation.py --route observer
+    python core/backend/scripts/run_seven_day_simulation.py --real --route pro_lin
+
+The second form is the only form that may call Ark, and it still refuses
+before creating a Run when ``ARK_API_KEY`` is absent.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+# Direct script execution puts ``core/backend/scripts`` on sys.path rather
+# than the repository root.  Add only this known workspace root so the CLI is
+# also usable without installing the package.
+_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(_ROOT / ".env", override=False)
+sys.path.insert(0, str(_ROOT))
+
+from core.backend.app.scenario.loader import ScenarioLoader  # noqa: E402
+from core.backend.app.simulation.runner import (  # noqa: E402
+    DEFAULT_SIMULATION_SEED,
+    SevenDaySimulationRunner,
+)
+
+
+def _args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--route",
+        choices=("all", "observer", "pro_lin", "pro_zhao"),
+        default="all",
+        help="all runs observer, pro_lin and pro_zhao once per --runs cycle",
+    )
+    parser.add_argument("--seed", type=int, default=DEFAULT_SIMULATION_SEED)
+    parser.add_argument("--real", action="store_true", help="explicitly allow configured Ark calls")
+    parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--max-calls-per-run", type=int, default=600)
+    parser.add_argument("--max-total-calls", type=int, default=1800)
+    parser.add_argument(
+        "--keep-runs",
+        action="store_true",
+        help="reuse one service/repository for the batch; Postgres rows remain durable either way",
+    )
+    parser.add_argument("--backend", choices=("memory", "postgres"), default="memory")
+    parser.add_argument("--database-url", default=None)
+    parser.add_argument("--output", type=Path, default=Path("simulation_reports"))
+    return parser.parse_args()
+
+
+async def _main() -> int:
+    args = _args()
+    if args.runs <= 0:
+        raise SystemExit("--runs must be positive")
+    if args.max_calls_per_run is not None and args.max_calls_per_run <= 0:
+        raise SystemExit("--max-calls-per-run must be positive")
+    if args.max_total_calls is not None and args.max_total_calls <= 0:
+        raise SystemExit("--max-total-calls must be positive")
+    registry = ScenarioLoader(_ROOT / "core" / "scenario").load()
+    client = None
+    if args.real and os.environ.get("ARK_API_KEY", "").strip():
+        from core.backend.app.ai.ark_client import ArkClient
+
+        client = ArkClient()
+    service = None
+    repository = None
+    base_repository = None
+    database_url = args.database_url or os.environ.get("DATABASE_URL")
+    retriever = None
+    embedding_client = None
+    if (
+        args.backend == "postgres"
+        and (not args.real or client is not None)
+        and not database_url
+    ):
+        raise SystemExit("DATABASE_URL is required for the PostgreSQL simulation backend")
+    if (
+        args.backend == "postgres"
+        and database_url
+        and (not args.real or bool(os.environ.get("ARK_API_KEY", "").strip()))
+    ):
+        from core.backend.app.db.bootstrap import sync_scenario
+        from core.backend.app.orchestration.run_service import RunService
+        from core.backend.app.persistence.embedding_indexer import MemoryEmbeddingIndexer
+        from core.backend.app.persistence.indexing_repository import IndexingRunRepository
+        from core.backend.app.persistence.memory_retriever import DatabaseMemoryRetriever
+        from core.backend.app.persistence.sqlalchemy_repository import SQLAlchemyRunRepository
+
+        base_repository = SQLAlchemyRunRepository(
+            database_url, chapter_id=registry.chapter_id
+        )
+        if not await base_repository.healthcheck():
+            raise SystemExit("Postgres healthcheck failed; apply migrations first")
+        await sync_scenario(base_repository.session_factory, registry)
+        if args.real and os.environ.get("ARK_EMBEDDING_MODEL", "").strip() and client is not None:
+            from core.backend.app.ai.ark_embedding import ArkEmbeddingClient, ArkEmbeddingSettings
+
+            embedding_base_url = os.environ.get("ARK_EMBEDDING_BASE_URL", "").strip()
+            embedding_client = ArkEmbeddingClient(
+                ArkEmbeddingSettings(
+                    model=os.environ["ARK_EMBEDDING_MODEL"].strip(),
+                    api_key=os.environ.get("ARK_API_KEY", "").strip(),
+                    **({"base_url": embedding_base_url} if embedding_base_url else {}),
+                )
+            )
+        retriever = DatabaseMemoryRetriever(
+            base_repository.session_factory,
+            embedding_port=embedding_client,
+        )
+        repository = base_repository
+        if embedding_client is not None:
+            embedding_indexer = MemoryEmbeddingIndexer(
+                base_repository.session_factory,
+                embedding_client,
+            )
+            repository = IndexingRunRepository(base_repository, embedding_indexer)
+        service = RunService(
+            registry,
+            repository=repository,
+            text_model=client,
+            memory_retriever=retriever,
+            seed=args.seed,
+        )
+    if args.keep_runs and service is None:
+        from core.backend.app.orchestration.run_service import RunService
+
+        service = RunService(registry, text_model=client, seed=args.seed)
+
+    reports = []
+    total_calls = 0
+    route_cycle = (
+        ("observer", "pro_lin", "pro_zhao")
+        if args.route == "all"
+        else (args.route,)
+    )
+    requested_run_count = args.runs * len(route_cycle)
+    for index in range(requested_run_count):
+        route = route_cycle[index % len(route_cycle)]
+        remaining = None
+        if args.max_total_calls is not None:
+            remaining = args.max_total_calls - total_calls
+            if remaining <= 0:
+                break
+        per_run_limit = args.max_calls_per_run
+        if remaining is not None:
+            per_run_limit = (
+                remaining
+                if per_run_limit is None
+                else min(per_run_limit, remaining)
+            )
+        run_service = service
+        if not args.keep_runs and args.backend == "memory":
+            run_service = None
+        report = await SevenDaySimulationRunner(
+            registry,
+            seed=args.seed + index,
+            max_calls_per_run=per_run_limit,
+        ).run(
+            route=route,
+            mode="real" if args.real else "offline",
+            text_model=client,
+            service=run_service,
+            memory_retriever=retriever,
+            allow_network=args.real and args.backend == "postgres",
+        )
+        reports.append(report)
+        total_calls += sum(report.metrics.provider_calls.values())
+
+    if embedding_client is not None:
+        await embedding_client.close()
+    if repository is not None:
+        await repository.close()
+        repository = None
+    if base_repository is not None and database_url:
+        from core.backend.app.db.models import ChapterRun
+        from core.backend.app.persistence.sqlalchemy_repository import (
+            SQLAlchemyRunRepository,
+        )
+        from sqlalchemy import delete
+
+        recovered_repository = SQLAlchemyRunRepository(
+            database_url, chapter_id=registry.chapter_id
+        )
+        run_ids = [report.run_id for report in reports if report.run_id]
+        for report in reports:
+            if report.run_id:
+                report.metrics.repository_recovered = (
+                    await recovered_repository.get(report.run_id)
+                ) is not None
+        if run_ids and not args.keep_runs:
+            async with recovered_repository.session_factory() as session:
+                async with session.begin():
+                    await session.execute(
+                        delete(ChapterRun).where(ChapterRun.run_id.in_(run_ids))
+                    )
+        await recovered_repository.close()
+
+    payload = {
+        "route": args.route,
+        "mode": "real" if args.real else "offline",
+        "seed": args.seed,
+        "runsRequested": requested_run_count,
+        "runsCompleted": len(reports),
+        "keepRuns": args.keep_runs,
+        "backend": args.backend,
+        "maxCallsPerRun": args.max_calls_per_run,
+        "maxTotalCalls": args.max_total_calls,
+        "totalProviderCalls": total_calls,
+        "reports": [report.to_dict() for report in reports],
+    }
+    args.output.mkdir(parents=True, exist_ok=True)
+    json_path = args.output / "seven_day_simulation_batch.json"
+    markdown_path = args.output / "seven_day_simulation_batch.md"
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    markdown_lines = [
+        "# Qinghuai seven-day simulation batch",
+        "",
+        f"- Route: `{args.route}`",
+        f"- Mode: `{'real' if args.real else 'offline'}`",
+        f"- Runs: `{len(reports)}/{requested_run_count}`",
+        f"- Backend: `{args.backend}`",
+        f"- Provider calls: `{total_calls}`",
+        "",
+        "| Run | Route | Final time | Day7 branch | Provider calls | Rejected |",
+        "|---:|---|---|---|---:|---|",
+    ]
+    for index, report in enumerate(reports, start=1):
+        metrics = report.metrics.to_dict()
+        markdown_lines.append(
+            f"| {index} | `{report.route}` | `{metrics['finalWorldTime'] or 'n/a'}` "
+            f"| `{metrics['day7Branch'] or 'n/a'}` "
+            f"| {sum(metrics['providerCalls'].values())} "
+            f"| `{metrics['rejected']}` |"
+        )
+    markdown_path.write_text("\n".join(markdown_lines) + "\n", encoding="utf-8")
+    if client is not None:
+        await client.close()
+    print(f"JSON report: {json_path}")
+    print(f"Markdown report: {markdown_path}")
+    if reports and any(report.metrics.rejected for report in reports):
+        print(f"Simulation rejected safely: {reports[-1].metrics.rejection_reason}")
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_main()))

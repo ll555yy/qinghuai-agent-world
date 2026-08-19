@@ -7,6 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
+
+from .ai.embedding import MEMORY_EMBEDDING_DIMENSIONS
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(_REPOSITORY_ROOT / ".env", override=False)
+
 PersistenceBackend = Literal["memory", "postgres"]
 
 
@@ -42,7 +49,9 @@ class Settings:
     persistence_backend: PersistenceBackend = "memory"
     database_url: str | None = None
     database_echo: bool = False
-    memory_embedding_dimensions: int = 384
+    memory_embedding_dimensions: int = MEMORY_EMBEDDING_DIMENSIONS
+    embedding_model: str | None = None
+    embedding_base_url: str | None = None
     segment_summary_threshold: int = 20
     segment_recent_messages: int = 8
 
@@ -67,14 +76,23 @@ class Settings:
             raise ValueError(
                 "SEGMENT_RECENT_MESSAGES must be less than SEGMENT_SUMMARY_THRESHOLD"
             )
+        embedding_dimensions = _positive_int(
+            "ARK_EMBEDDING_DIMENSIONS", MEMORY_EMBEDDING_DIMENSIONS
+        )
+        if embedding_dimensions != MEMORY_EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                "ARK_EMBEDDING_DIMENSIONS must be 1024 until an explicit migration is applied"
+            )
+        embedding_model = os.environ.get("ARK_EMBEDDING_MODEL", "").strip() or None
+        embedding_base_url = os.environ.get("ARK_EMBEDDING_BASE_URL", "").strip() or None
         return cls(
             scenario_dir=Path(configured) if configured else default_dir,
             persistence_backend=backend,
             database_url=database_url,
             database_echo=_boolean("DATABASE_ECHO"),
-            memory_embedding_dimensions=_positive_int(
-                "MEMORY_EMBEDDING_DIMENSIONS", 384
-            ),
+            memory_embedding_dimensions=embedding_dimensions,
+            embedding_model=embedding_model,
+            embedding_base_url=embedding_base_url,
             segment_summary_threshold=summary_threshold,
             segment_recent_messages=recent_messages,
         )

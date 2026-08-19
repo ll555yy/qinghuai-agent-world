@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
+MEMORY_EMBEDDING_DIMENSIONS = 1024
+
 
 class EmbeddingPort(Protocol):
     """Produce one vector without exposing a provider to the domain layer."""
@@ -16,4 +18,4 @@ class EmbeddingPort(Protocol):
         """Return the embedding for ``text`` or raise a provider-specific error."""
 
 
-__all__ = ["EmbeddingPort"]
+__all__ = ["EmbeddingPort", "MEMORY_EMBEDDING_DIMENSIONS"]

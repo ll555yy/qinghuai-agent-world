@@ -15,6 +15,14 @@ def test_eight_real_yaml_files_load(registry) -> None:
     assert len(registry.agendas) == 5
     assert len(registry.events) == 7
     assert len(registry.npc_personas) == 5
+    assert len(registry.relationships) == 25
+    covered_relationships = {
+        (memory.owner_npc_id, target_actor_id)
+        for memory in registry.memories.values()
+        if memory.source == "scenario_seed"
+        for target_actor_id in memory.actor_ids
+    }
+    assert set(registry.relationships) <= covered_relationships
     assert registry.npc_personas["npc_001"].core_secrets
     registry.validate_copy_isolated()
 

@@ -34,6 +34,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from ..ai.embedding import MEMORY_EMBEDDING_DIMENSIONS
 from .base import Base
 
 
@@ -358,7 +359,6 @@ class CommandRecord(Base):
         ForeignKeyConstraint(
             ["run_id"], ["chapter_runs.run_id"], ondelete="CASCADE", name="fk_command_records_run"
         ),
-        UniqueConstraint("run_id", "fingerprint", name="uq_command_records_fingerprint"),
         Index("ix_command_records_created", "run_id", "created_at"),
     )
 
@@ -1116,7 +1116,9 @@ class Memory(Base):
     occurred_world_minute: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     last_recalled_world_day: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     last_recalled_world_minute: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(384), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(MEMORY_EMBEDDING_DIMENSIONS), nullable=True
+    )
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     embedding_dimensions: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
@@ -1187,7 +1189,7 @@ class Memory(Base):
         ),
         CheckConstraint(
             "(embedding IS NULL AND embedding_dimensions IS NULL AND embedding_model IS NULL) "
-            "OR (embedding IS NOT NULL AND embedding_dimensions = 384)",
+            "OR (embedding IS NOT NULL AND embedding_dimensions = 1024 AND embedding_model IS NOT NULL)",
             name="ck_memories_embedding_metadata",
         ),
         Index("ix_memories_owner_time", "run_id", "owner_npc_id", "created_world_day", "created_world_minute"),

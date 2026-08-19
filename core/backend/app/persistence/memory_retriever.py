@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from sqlalchemy import or_, select
 
 from ..agents.models import MemoryToolResult
-from ..ai.embedding import EmbeddingPort
+from ..ai.embedding import MEMORY_EMBEDDING_DIMENSIONS, EmbeddingPort
 from ..ai.protocols import MemoryQuery
 from ..db.models import (
     Memory,
@@ -59,9 +59,13 @@ class DatabaseMemoryRetriever:
         session_factory: Any,
         *,
         embedding_port: EmbeddingPort | None = None,
-        vector_dimensions: int = 384,
+        vector_dimensions: int = MEMORY_EMBEDDING_DIMENSIONS,
         candidate_limit: int = 48,
     ) -> None:
+        if vector_dimensions != MEMORY_EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"memory retriever requires {MEMORY_EMBEDDING_DIMENSIONS}-dimension vectors"
+            )
         self._session_factory = session_factory
         self._embedding_port = embedding_port
         self._vector_dimensions = vector_dimensions
@@ -176,7 +180,18 @@ class DatabaseMemoryRetriever:
                 )
                 ranked.append((score, item.memory_id))
             ranked.sort(key=lambda pair: (pair[0], pair[1]), reverse=True)
-            return MemoryToolResult(tuple(memory_id for _, memory_id in ranked[: query.limit]))
+            selected_ids = tuple(memory_id for _, memory_id in ranked[: query.limit])
+            return MemoryToolResult(
+                selected_ids,
+                vector_hits=sum(
+                    1 for memory_id in selected_ids if by_id[memory_id].vector_score > 0
+                ),
+                graph_hits=sum(
+                    1
+                    for memory_id in selected_ids
+                    if by_id[memory_id].graph_distance is not None
+                ),
+            )
 
     async def _owned_candidates(
         self,

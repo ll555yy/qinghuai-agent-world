@@ -48,19 +48,10 @@ class StructuredCallFailed(RuntimeError):
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
-    """Extract one JSON object from plain or markdown-wrapped model output."""
+    """Parse exactly one plain JSON object with no wrapper or trailing text."""
 
     stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        stripped = "\n".join(lines[1:-1]).strip()
-    try:
-        value = json.loads(stripped)
-    except json.JSONDecodeError:
-        start = stripped.find("{")
-        if start < 0:
-            raise
-        value, _ = json.JSONDecoder().raw_decode(stripped[start:])
+    value = json.loads(stripped)
     if not isinstance(value, dict):
         raise ValueError("structured output must be a JSON object")
     return value

@@ -11,11 +11,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .ai.ark_client import ArkClient
+from .ai.ark_embedding import ArkEmbeddingClient, ArkEmbeddingSettings
 from .api.router import router as api_router
 from .db.bootstrap import sync_scenario
 from .domain.errors import DomainError
 from .orchestration.run_service import RunService
+from .persistence.embedding_indexer import MemoryEmbeddingIndexer
 from .persistence.in_memory import InMemoryRunRepository
+from .persistence.indexing_repository import IndexingRunRepository
 from .persistence.memory_retriever import DatabaseMemoryRetriever
 from .persistence.run_repository import RunRepository
 from .persistence.sqlalchemy_repository import SQLAlchemyRunRepository
@@ -39,22 +42,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise RuntimeError(f"Scenario startup validation failed: {exc}") from exc
         application.state.scenario_registry = registry
         application.state.ai_client = ArkClient()
+        application.state.embedding_client = None
+        application.state.embedding_indexer = None
         repository: RunRepository
         if runtime_settings.persistence_backend == "postgres":
-            repository = SQLAlchemyRunRepository(
+            base_repository = SQLAlchemyRunRepository(
                 runtime_settings.database_url,
                 chapter_id=registry.chapter_id,
                 echo=runtime_settings.database_echo,
             )
-            if not await repository.healthcheck():
-                await repository.close()
+            if not await base_repository.healthcheck():
+                await base_repository.close()
                 raise RuntimeError(
                     "PostgreSQL is unavailable or not migrated; run `alembic upgrade head`."
                 )
-            await sync_scenario(repository.session_factory, registry)
+            await sync_scenario(base_repository.session_factory, registry)
+            embedding_port = None
+            if runtime_settings.embedding_model:
+                embedding_settings = (
+                    ArkEmbeddingSettings(
+                        model=runtime_settings.embedding_model,
+                        base_url=runtime_settings.embedding_base_url,
+                    )
+                    if runtime_settings.embedding_base_url
+                    else ArkEmbeddingSettings(model=runtime_settings.embedding_model)
+                )
+                application.state.embedding_client = ArkEmbeddingClient(embedding_settings)
+                embedding_port = application.state.embedding_client
+                application.state.embedding_indexer = MemoryEmbeddingIndexer(
+                    base_repository.session_factory,
+                    embedding_port,
+                    dimensions=runtime_settings.memory_embedding_dimensions,
+                )
             memory_retriever = DatabaseMemoryRetriever(
-                repository.session_factory,
+                base_repository.session_factory,
+                embedding_port=embedding_port,
                 vector_dimensions=runtime_settings.memory_embedding_dimensions,
+            )
+            repository = (
+                IndexingRunRepository(
+                    base_repository, application.state.embedding_indexer
+                )
+                if application.state.embedding_indexer is not None
+                else base_repository
             )
         else:
             repository = InMemoryRunRepository()
@@ -72,6 +102,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             await application.state.ai_client.close()
+            if application.state.embedding_client is not None:
+                await application.state.embedding_client.close()
             await application.state.run_repository.close()
 
     application = FastAPI(title=runtime_settings.app_name, version="0.1.0", lifespan=lifespan)

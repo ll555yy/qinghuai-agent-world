@@ -42,6 +42,22 @@ async def replace_normalized_projection(session: Any, run: Run, metadata: Any) -
 
     table = metadata.tables
     run_id = run.run_id
+    memory_table = table["memories"]
+    existing_embeddings: dict[str, dict[str, Any]] = {}
+    existing_result = await session.execute(
+        memory_table.select()
+        .with_only_columns(
+            memory_table.c.memory_id,
+            memory_table.c.owner_npc_id,
+            memory_table.c.content,
+            memory_table.c.embedding,
+            memory_table.c.embedding_model,
+            memory_table.c.embedding_dimensions,
+        )
+        .where(memory_table.c.run_id == run_id)
+    )
+    for row in existing_result.mappings():
+        existing_embeddings[str(row["memory_id"])] = dict(row)
     delete_order = (
         "chapter_resolutions",
         "chapter_agenda_stances",
@@ -78,7 +94,11 @@ async def replace_normalized_projection(session: Any, run: Run, metadata: Any) -
     await _insert(session, table["conversation_idle_states"], _idle_rows(run))
     await _insert(session, table["goals"], _goal_rows(run))
     await _insert(session, table["relationships"], _relationship_rows(run))
-    await _insert(session, table["memories"], _memory_rows(run))
+    await _insert(
+        session,
+        memory_table,
+        _memory_rows(run, existing_embeddings=existing_embeddings),
+    )
     memory_ids = set(run.memories)
     message_ids = {
         str(message.get("messageId"))
@@ -284,7 +304,11 @@ def _relationship_rows(run: Run) -> list[dict[str, Any]]:
     ]
 
 
-def _memory_rows(run: Run) -> list[dict[str, Any]]:
+def _memory_rows(
+    run: Run,
+    *,
+    existing_embeddings: Mapping[str, Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     rows = []
     segment_ids = {
         str(segment["segmentId"])
@@ -294,6 +318,13 @@ def _memory_rows(run: Run) -> list[dict[str, Any]]:
     for memory_id, memory in run.memories.items():
         day, minute = _time(memory.get("createdAt"), run)
         segment_id = memory.get("segmentId")
+        existing = (existing_embeddings or {}).get(memory_id)
+        preserve_embedding = bool(
+            existing
+            and existing.get("owner_npc_id") == memory.get("ownerNpcId")
+            and existing.get("content") == memory.get("content", "")
+        )
+        embedding_source = existing if preserve_embedding and existing is not None else {}
         rows.append(
             {
                 "run_id": run.run_id,
@@ -315,9 +346,13 @@ def _memory_rows(run: Run) -> list[dict[str, Any]]:
                 "occurred_world_minute": None,
                 "last_recalled_world_day": None,
                 "last_recalled_world_minute": None,
-                "embedding": None,
-                "embedding_model": None,
-                "embedding_dimensions": None,
+                "embedding": embedding_source.get("embedding"),
+                "embedding_model": (
+                    embedding_source.get("embedding_model")
+                ),
+                "embedding_dimensions": (
+                    embedding_source.get("embedding_dimensions")
+                ),
             }
         )
     return rows
