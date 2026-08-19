@@ -4,7 +4,10 @@ import json
 
 import pytest
 from core.backend.app.ai.models import TextGenerationResult
-from core.backend.app.simulation.runner import SevenDaySimulationRunner
+from core.backend.app.simulation.runner import (
+    SevenDaySimulationRunner,
+    real_quality_gate_failures,
+)
 
 
 class OfflineWaitModel:
@@ -77,6 +80,29 @@ async def test_route_script_uses_public_player_commands(registry) -> None:
     assert report.metrics.scripted_actions["invite_sent"] == 1
     assert report.metrics.scripted_actions["message_sent"] == 1
     assert report.metrics.player_speech_count == 1
+    projected = report.metrics.to_dict()
+    assert "byNpc" in projected["speech"]
+    assert projected["conversations"]["items"]
+    assert projected["worldEvents"]["firedIds"]
+    assert projected["schema"]["firstSuccessRate"] == 1.0
+
+
+@pytest.mark.anyio
+async def test_real_quality_gate_reports_missing_playable_evidence(registry) -> None:
+    report = await SevenDaySimulationRunner(registry, seed=37).run(
+        route="observer",
+        mode="offline",
+        text_model=OfflineWaitModel(),
+    )
+    report.metrics.repository_recovered = True
+
+    failures = real_quality_gate_failures(report)
+
+    assert "day7_not_reached" not in failures
+    assert "no_conversation" in failures
+    assert "no_exit_consolidation" in failures
+    assert "no_memory_retrieval" in failures
+    assert "embedding_not_enabled" in failures
 
 
 class UnconfiguredModel:

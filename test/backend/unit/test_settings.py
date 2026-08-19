@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from core.backend.app.ai.embedding import MEMORY_EMBEDDING_DIMENSIONS
 from core.backend.app.settings import Settings
 
 
@@ -47,7 +48,9 @@ def test_database_and_summary_settings_are_parsed(
         "postgresql+psycopg://qinghuai:secret@127.0.0.1:5432/qinghuai",
     )
     monkeypatch.setenv("DATABASE_ECHO", "true")
-    monkeypatch.setenv("ARK_EMBEDDING_DIMENSIONS", "1024")
+    monkeypatch.setenv(
+        "ARK_EMBEDDING_DIMENSIONS", str(MEMORY_EMBEDDING_DIMENSIONS)
+    )
     monkeypatch.setenv("ARK_EMBEDDING_MODEL", "ep-test")
     monkeypatch.setenv("ARK_EMBEDDING_BASE_URL", "https://example.invalid/api/v3")
     monkeypatch.setenv("SEGMENT_SUMMARY_THRESHOLD", "24")
@@ -57,7 +60,7 @@ def test_database_and_summary_settings_are_parsed(
 
     assert settings.persistence_backend == "postgres"
     assert settings.database_echo is True
-    assert settings.memory_embedding_dimensions == 1024
+    assert settings.memory_embedding_dimensions == MEMORY_EMBEDDING_DIMENSIONS
     assert settings.embedding_model == "ep-test"
     assert settings.embedding_base_url == "https://example.invalid/api/v3"
     assert settings.segment_summary_threshold == 24
@@ -79,5 +82,5 @@ def test_embedding_dimension_must_match_current_schema(
 ) -> None:
     monkeypatch.setenv("ARK_EMBEDDING_DIMENSIONS", "384")
 
-    with pytest.raises(ValueError, match="must be 1024"):
+    with pytest.raises(ValueError, match="must be 2048"):
         Settings.from_environment()

@@ -453,7 +453,7 @@
 - 周慎之：通过观察和交谈决定是否接受四人的方案、继续经营并把书店与古籍托付给谁，同时处理林周两家的旧怨和未归还古籍。
 - 初始关系：五名 NPC 的全部 10 组人物对均具有合作、偏见、愧疚、欣赏、回避或试探关系，并按照 D-026 的有向离散关系等级建立 20 条初始关系边。
 - 数据文件：规范化人设保存于 `../core/scenario/NPC_PERSONAS.yaml`，预置 Topic 保存于 `../core/scenario/INITIAL_TOPICS.yaml`，长期 Goal 保存于 `../core/scenario/INITIAL_GOALS.yaml`，有向初始关系保存于 `../core/scenario/INITIAL_RELATIONSHIPS.yaml`。
-- 待细化：把初始关系文字依据拆成每个 NPC 私有的原子初始 Memory，以及五人在游戏第一天最先掌握的共同事件。
+- 已实现：25 条有向关系均已拆成 owner 私有的原子 `scenario_seed` Memory；Day1 共同事件及后续可见性由世界事件配置和加载校验负责。
 
 ### D-036：玩家是旧书店兼职帮手，并被五名 NPC 以不同方式理解
 
@@ -546,7 +546,7 @@
 - 离场沉淀：`ExitConsolidation` 在单个 NPC 离场或章节截止强制收束时调用，根据其亲历记录及已验证的会话草稿，整理 `memories`、`goalUpdates`、`relationshipUpdates`、`newShortGoals` 和 `chapterEffects`；Goal 与关系输出只用于形成可追溯记忆，正式状态按会话草稿提交一次，后端校验通过后才持久化。
 - 调用链：新消息依次经过 `ChatDecision`、可选的后端记忆检索与第二次 `ChatDecision`、会话草稿更新、发言竞争和胜出者的 `SpeechGeneration`；NPC 离场后执行 `ExitConsolidation`。共享原文达到条件时独立执行 `SegmentSummary`。
 - 回应意愿：`ChatDecision.responseDesire` 第一版使用 `0 | 1 | 2 | 3`，分别表示不想回应、可以回应、明确想回应和必须立即回应；后端在此基础上应用连续发言惩罚等调度规则并选出唯一发言者。
-- 待细化：六类调用的正式 JSON Schema、完整输入上下文、台词长度上限、摘要触发阈值和模型失败时的最小处理。
+- 已实现：六类正式 Pydantic Schema、输入上下文、输出上限、摘要阈值和最多一次格式重试均已落地；真实六协议已通过，质量调参仍以七日模拟报告为准。
 
 ### D-042：世界最多同时存在两场独立聊天
 

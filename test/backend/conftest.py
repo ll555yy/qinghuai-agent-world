@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+# A developer's ignored root .env may enable PostgreSQL and real providers.
+# Keep ordinary pytest hermetic before importing the application singleton;
+# dedicated persistence tests construct their PostgreSQL repository explicitly.
+os.environ["QINGHUAI_PERSISTENCE_BACKEND"] = "memory"
+os.environ["ARK_API_KEY"] = ""
+
 from core.backend.app.main import app
 from core.backend.app.scenario.loader import ScenarioLoader
 from core.backend.app.scenario.models import ScenarioRegistry

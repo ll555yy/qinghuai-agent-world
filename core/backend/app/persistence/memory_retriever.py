@@ -13,7 +13,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from sqlalchemy import or_, select
+from pgvector.sqlalchemy import HALFVEC
+from sqlalchemy import cast, or_, select
 
 from ..agents.models import MemoryToolResult
 from ..ai.embedding import MEMORY_EMBEDDING_DIMENSIONS, EmbeddingPort
@@ -204,7 +205,12 @@ class DatabaseMemoryRetriever:
         vector_distance = None
         columns: list[Any] = [Memory]
         if vector is not None:
-            vector_distance = Memory.embedding.cosine_distance(list(vector)).label("vector_distance")
+            # Ark Agent Plan returns 2048 values. pgvector HNSW indexes
+            # float32 vector only through 2000 dimensions, so preserve the
+            # full stored vector and search the matching halfvec expression.
+            vector_distance = cast(
+                Memory.embedding, HALFVEC(MEMORY_EMBEDDING_DIMENSIONS)
+            ).cosine_distance(list(vector)).label("vector_distance")
             columns.append(vector_distance)
         statement = select(*columns).where(
             Memory.run_id == run_id,

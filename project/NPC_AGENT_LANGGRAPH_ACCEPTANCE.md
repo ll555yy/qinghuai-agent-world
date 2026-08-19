@@ -1,5 +1,7 @@
 # NPC Agent 化与 LangGraph 工具式记忆召回验收报告
 
+> 历史阶段记录：本文第 6 节的 PostgreSQL/Embedding 延后边界已经被后续阶段完成或替代。当前状态以 `EMBEDDING_MODEL_2048_DESIGN.md` 和前端门禁报告为准。
+
 状态：主会话验收通过
 
 日期：2026-08-19

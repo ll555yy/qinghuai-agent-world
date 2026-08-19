@@ -81,7 +81,7 @@ class Settings:
         )
         if embedding_dimensions != MEMORY_EMBEDDING_DIMENSIONS:
             raise ValueError(
-                "ARK_EMBEDDING_DIMENSIONS must be 1024 until an explicit migration is applied"
+                "ARK_EMBEDDING_DIMENSIONS must be 2048 until an explicit migration is applied"
             )
         embedding_model = os.environ.get("ARK_EMBEDDING_MODEL", "").strip() or None
         embedding_base_url = os.environ.get("ARK_EMBEDDING_BASE_URL", "").strip() or None

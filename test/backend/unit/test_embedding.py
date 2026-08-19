@@ -37,6 +37,17 @@ class _FakeClient:
         self.embeddings = _FakeEmbeddings()
 
 
+class _InvalidEmbeddings:
+    def __init__(self, vector: list[float]) -> None:
+        self.vector = vector
+
+    async def create(self, **_kwargs: object) -> object:
+        return SimpleNamespace(
+            data=[SimpleNamespace(index=0, embedding=self.vector)],
+            usage=None,
+        )
+
+
 @pytest.mark.anyio
 async def test_ark_embedding_uses_explicit_model_and_standard_endpoint() -> None:
     fake = _FakeClient()
@@ -74,9 +85,62 @@ async def test_ark_embedding_batches_inputs_in_one_provider_call() -> None:
     assert fake.embeddings.kwargs["input"] == ["旧书店", "公益文社"]
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "vector",
+    (
+        [0.1] * (MEMORY_EMBEDDING_DIMENSIONS - 1),
+        [float("nan")] * MEMORY_EMBEDDING_DIMENSIONS,
+        [float("inf")] * MEMORY_EMBEDDING_DIMENSIONS,
+    ),
+)
+async def test_ark_embedding_rejects_wrong_dimension_and_non_finite_values(
+    vector: list[float],
+) -> None:
+    fake = SimpleNamespace(embeddings=_InvalidEmbeddings(vector))
+    provider = ArkEmbeddingClient(
+        ArkEmbeddingSettings(model="ep-test", api_key="not-reported"),
+        client=fake,
+    )
+
+    with pytest.raises(ValueError, match="dimensions"):
+        await provider.embed("书店计划")
+
+
+@pytest.mark.anyio
+async def test_ark_embedding_rejects_empty_and_oversized_batches() -> None:
+    provider = ArkEmbeddingClient(
+        ArkEmbeddingSettings(model="ep-test", api_key="not-reported"),
+        client=_FakeClient(),
+    )
+
+    with pytest.raises(ValueError, match="1..256"):
+        await provider.embed_many([])
+    with pytest.raises(ValueError, match="1..256"):
+        await provider.embed_many(["x"] * 257)
+
+
 def test_ark_embedding_model_is_required() -> None:
     with pytest.raises(ValueError, match="ARK_EMBEDDING_MODEL"):
         ArkEmbeddingSettings(model="", api_key="not-reported")
+
+
+def test_embedding_probe_provider_failure_projection_is_safe() -> None:
+    class BadRequestError(Exception):
+        status_code = 400
+        code = "InvalidParameter"
+        body = {"message": "must never be projected"}
+        response = SimpleNamespace(headers={"x-request-id": "safe-request-id"})
+
+    report = check_ark_embedding._safe_provider_failure(BadRequestError("secret text"))
+
+    assert report == {
+        "exceptionType": "BadRequestError",
+        "httpStatus": 400,
+        "providerErrorCode": "InvalidParameter",
+        "providerRequestId": "safe-request-id",
+    }
+    assert "secret" not in str(report)
 
 
 @pytest.mark.anyio

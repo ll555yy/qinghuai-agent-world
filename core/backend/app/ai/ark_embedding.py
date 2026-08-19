@@ -1,4 +1,4 @@
-"""OpenAI-compatible Volcengine Ark text embedding adapter."""
+"""OpenAI-compatible Volcengine Ark Coding Plan embedding adapter."""
 
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from openai import AsyncOpenAI
 
 from .embedding import MEMORY_EMBEDDING_DIMENSIONS, EmbeddingPort
 
-DEFAULT_ARK_EMBEDDING_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+DEFAULT_ARK_EMBEDDING_BASE_URL = "https://ark.cn-beijing.volces.com/api/plan/v3"
 
 
 @dataclass(frozen=True, slots=True)
 class ArkEmbeddingSettings:
-    """Configuration for the standard Ark ``/embeddings`` endpoint."""
+    """Configuration for the Agent Plan ``/embeddings`` endpoint."""
 
     model: str
     base_url: str = field(

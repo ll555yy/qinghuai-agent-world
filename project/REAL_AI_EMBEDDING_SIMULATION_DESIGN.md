@@ -22,9 +22,11 @@
 
 ## 3. Embedding 边界
 
-- 文本生成继续使用 Agent Plan 地址；Embedding 使用方舟标准 `/api/v3/embeddings` 地址，二者独立配置。
-- Embedding 模型必须显式配置。数据库向量维度、配置维度和模型实际返回维度必须完全一致；禁止截断、补零和伪向量。
-- 第一版数据库统一采用 1024 维。变更模型或维度必须经过 Alembic migration，并全量重建向量。
+- 文本生成与 Embedding 都使用 Agent Plan 的 OpenAI 兼容 `/api/plan/v3` 地址，但保持独立环境变量，便于未来替换提供方。
+- 已确认使用 `doubao-embedding-vision`。2026-08-20 的真实探测解析为 `doubao-embedding-vision-251215`，实际返回 2048 维。
+- 数据库向量维度、配置维度和模型实际返回维度必须完全一致；禁止截断、补零和伪向量。
+- 第一版数据库统一采用 `vector(2048)` 保存完整 float32 向量。pgvector HNSW 的 `vector` opclass 最多索引 2000 维，因此使用 `embedding::halfvec(2048)` 表达式索引与同表达式查询；不丢失数据库中的原向量。
+- 变更模型或维度必须经过 Alembic migration，并全量重建向量。
 - Memory 权威文本先提交数据库，网络调用在事务外进行；成功后定向更新该 Memory 的向量、模型和维度。
 - 普通世界存档不能清空内容未变化的向量。Memory 内容改变时旧向量失效，等待重新生成。
 - Embedding 失败时该 Memory 保持 `NULL`，检索回退到关键词、Actor/Goal/Topic 种子和 Graph 邻居；禁止写零向量。
@@ -84,4 +86,3 @@ ScenarioLoader → RunService → WorldEngine.step → Run/Event → MetricsColl
 - 三条七日路线均完成，或报告明确说明可复现的产品问题并已调整复跑；
 - 全量离线测试、PostgreSQL 集成测试、迁移检查和敏感信息扫描通过；
 - 项目文档与实际实现一致。
-

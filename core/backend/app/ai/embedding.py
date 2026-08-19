@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-MEMORY_EMBEDDING_DIMENSIONS = 1024
+MEMORY_EMBEDDING_DIMENSIONS = 2048
 
 
 class EmbeddingPort(Protocol):

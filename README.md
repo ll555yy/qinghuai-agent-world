@@ -57,7 +57,7 @@ python core/backend/scripts/check_ark_connection.py
 python core/backend/scripts/check_ark_connection.py --live
 ```
 
-再在 `.env` 中填写一个实际返回 1024 维的 `ARK_EMBEDDING_MODEL` 或推理接入点 ID，先用固定公开文本探测真实维度：
+Embedding 已选择 Agent Plan 的 `doubao-embedding-vision`。真实探测返回 2048 维，配置示例已包含对应 Base URL；仍可用固定公开文本复验当前账号：
 
 ```powershell
 python core/backend/scripts/check_ark_embedding.py

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from core.backend.app.ai.ark_client import ArkClient
+from core.backend.app.ai.embedding import MEMORY_EMBEDDING_DIMENSIONS
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.ai.protocols import MemoryQuery
 from core.backend.app.db.bootstrap import sync_scenario
@@ -36,8 +37,8 @@ from sqlalchemy.exc import IntegrityError
 
 
 class _FixedEmbedding:
-    dimensions = 1024
-    model_name = "test-fixed-1024"
+    dimensions = MEMORY_EMBEDDING_DIMENSIONS
+    model_name = "test-fixed-2048"
 
     def __init__(self) -> None:
         self.calls = 0
@@ -186,9 +187,9 @@ async def test_postgres_repository_recovers_run_and_durable_events() -> None:
                 Memory.memory_id.in_([seed_memory, other_memory]),
             )
             .values(
-                embedding=[1.0] * 1024,
-                embedding_model="test-fixed-1024",
-                embedding_dimensions=1024,
+                embedding=[1.0] * MEMORY_EMBEDDING_DIMENSIONS,
+                embedding_model="test-fixed-2048",
+                embedding_dimensions=MEMORY_EMBEDDING_DIMENSIONS,
             )
         )
         await session.execute(

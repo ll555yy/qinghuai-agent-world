@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -31,6 +32,52 @@ _FIXED_TEXTS = (
 )
 
 
+def _safe_provider_failure(exc: Exception) -> dict[str, object]:
+    """Project provider diagnostics without exception text or request data."""
+
+    exception_name = type(exc).__name__
+    allowed_exception_names = {
+        "APIConnectionError",
+        "APIStatusError",
+        "APITimeoutError",
+        "AuthenticationError",
+        "BadRequestError",
+        "InternalServerError",
+        "NotFoundError",
+        "PermissionDeniedError",
+        "RateLimitError",
+    }
+    status_code = getattr(exc, "status_code", None)
+    provider_code = getattr(exc, "code", None)
+    body = getattr(exc, "body", None)
+    if provider_code is None and isinstance(body, dict):
+        provider_code = body.get("code")
+        nested = body.get("error")
+        if provider_code is None and isinstance(nested, dict):
+            provider_code = nested.get("code")
+    if not isinstance(provider_code, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,80}", provider_code
+    ):
+        provider_code = None
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", {})
+    provider_request_id = None
+    if hasattr(headers, "get"):
+        provider_request_id = headers.get("x-request-id") or headers.get(
+            "x-tt-logid"
+        )
+    return {
+        "exceptionType": (
+            exception_name
+            if exception_name in allowed_exception_names
+            else "ProviderError"
+        ),
+        "httpStatus": status_code if isinstance(status_code, int) else None,
+        "providerErrorCode": provider_code,
+        "providerRequestId": provider_request_id,
+    }
+
+
 async def run_probe(*, live: bool) -> tuple[dict[str, object], int]:
     if not live:
         return {"live": False, "requestSent": False, "status": "dry_run"}, 0
@@ -46,18 +93,20 @@ async def run_probe(*, live: bool) -> tuple[dict[str, object], int]:
     client = ArkEmbeddingClient(settings)
     started = time.perf_counter()
     error_code = None
+    failure_details: dict[str, object] = {}
     success = False
     try:
         vectors = await client.embed_many(_FIXED_TEXTS)
         success = len(vectors) == len(_FIXED_TEXTS)
     except ValueError:
         error_code = "embedding_dimension_mismatch"
-    except Exception:
+    except Exception as exc:
         error_code = "embedding_provider_error"
+        failure_details = _safe_provider_failure(exc)
     finally:
         await client.close()
     metadata = client.last_metadata
-    return {
+    report = {
         "live": True,
         "requestSent": True,
         "status": "completed" if success else "failed",
@@ -72,7 +121,9 @@ async def run_probe(*, live: bool) -> tuple[dict[str, object], int]:
         "totalTokens": metadata.get("totalTokens"),
         "latencyMs": int((time.perf_counter() - started) * 1000),
         "errorCode": error_code,
-    }, 0 if success else 1
+    }
+    report.update(failure_details)
+    return report, 0 if success else 1
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,5 +1,7 @@
 # 火山方舟 AI 适配器子智能体自审
 
+> 历史阶段记录：本文描述适配器刚完成时的状态。当前六类协议已接入 NPC 主循环并通过真实方舟验证，现状以 `REAL_TEXT_MODEL_INTEGRATION_REPORT.md` 为准。
+
 - 实现范围：`core/backend/app/ai`、AI 状态路由、`.env.example`、本地连通性脚本和 Mock 测试
 - 设计依据：`ARK_AI_INTEGRATION_DESIGN.md`、`PROJECT_DESIGN.md` 的 D-055/D-056、`PROJECT_RULES.md`
 - SDK：本机已安装 `openai 2.54.0`

@@ -29,6 +29,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    literal_column,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -1189,16 +1190,19 @@ class Memory(Base):
         ),
         CheckConstraint(
             "(embedding IS NULL AND embedding_dimensions IS NULL AND embedding_model IS NULL) "
-            "OR (embedding IS NOT NULL AND embedding_dimensions = 1024 AND embedding_model IS NOT NULL)",
+            f"OR (embedding IS NOT NULL AND embedding_dimensions = {MEMORY_EMBEDDING_DIMENSIONS} "
+            "AND embedding_model IS NOT NULL)",
             name="ck_memories_embedding_metadata",
         ),
         Index("ix_memories_owner_time", "run_id", "owner_npc_id", "created_world_day", "created_world_minute"),
         Index("ix_memories_owner_type", "run_id", "owner_npc_id", "memory_type"),
         Index(
             "ix_memories_embedding_hnsw",
-            "embedding",
+            literal_column(
+                f"(embedding::halfvec({MEMORY_EMBEDDING_DIMENSIONS}))"
+            ).label("embedding"),
             postgresql_using="hnsw",
-            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_ops={"embedding": "halfvec_cosine_ops"},
             postgresql_where=text("embedding IS NOT NULL"),
         ),
     )

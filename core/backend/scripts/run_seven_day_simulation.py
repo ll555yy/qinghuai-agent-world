@@ -33,7 +33,9 @@ sys.path.insert(0, str(_ROOT))
 from core.backend.app.scenario.loader import ScenarioLoader  # noqa: E402
 from core.backend.app.simulation.runner import (  # noqa: E402
     DEFAULT_SIMULATION_SEED,
+    ROUTE_AGENDAS,
     SevenDaySimulationRunner,
+    real_quality_gate_failures,
 )
 
 
@@ -46,10 +48,18 @@ def _args() -> argparse.Namespace:
         help="all runs observer, pro_lin and pro_zhao once per --runs cycle",
     )
     parser.add_argument("--seed", type=int, default=DEFAULT_SIMULATION_SEED)
+    parser.add_argument(
+        "--selected-agenda-id",
+        choices=tuple(value for value in ROUTE_AGENDAS.values() if value is not None),
+        default=None,
+        help="select the matching support route explicitly; mutually exclusive with --route all",
+    )
     parser.add_argument("--real", action="store_true", help="explicitly allow configured Ark calls")
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--max-calls-per-run", type=int, default=600)
     parser.add_argument("--max-total-calls", type=int, default=1800)
+    parser.add_argument("--step-timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--run-timeout-seconds", type=float, default=600.0)
     parser.add_argument(
         "--keep-runs",
         action="store_true",
@@ -69,6 +79,23 @@ async def _main() -> int:
         raise SystemExit("--max-calls-per-run must be positive")
     if args.max_total_calls is not None and args.max_total_calls <= 0:
         raise SystemExit("--max-total-calls must be positive")
+    if args.step_timeout_seconds <= 0 or args.run_timeout_seconds <= 0:
+        raise SystemExit("simulation timeouts must be positive")
+    if args.real and args.backend != "postgres":
+        raise SystemExit("real seven-day simulations require --backend postgres")
+    embedding_model = os.environ.get("ARK_EMBEDDING_MODEL", "").strip()
+    if args.real and not embedding_model:
+        raise SystemExit("ARK_EMBEDDING_MODEL is required for real seven-day simulations")
+    if args.selected_agenda_id is not None:
+        if args.route == "all":
+            raise SystemExit("--selected-agenda-id cannot be combined with --route all")
+        expected_route = next(
+            route
+            for route, agenda_id in ROUTE_AGENDAS.items()
+            if agenda_id == args.selected_agenda_id
+        )
+        if args.route != expected_route:
+            raise SystemExit("--selected-agenda-id does not match --route")
     registry = ScenarioLoader(_ROOT / "core" / "scenario").load()
     client = None
     if args.real and os.environ.get("ARK_API_KEY", "").strip():
@@ -81,6 +108,7 @@ async def _main() -> int:
     database_url = args.database_url or os.environ.get("DATABASE_URL")
     retriever = None
     embedding_client = None
+    embedding_preflight: dict[str, object] | None = None
     if (
         args.backend == "postgres"
         and (not args.real or client is not None)
@@ -105,17 +133,24 @@ async def _main() -> int:
         if not await base_repository.healthcheck():
             raise SystemExit("Postgres healthcheck failed; apply migrations first")
         await sync_scenario(base_repository.session_factory, registry)
-        if args.real and os.environ.get("ARK_EMBEDDING_MODEL", "").strip() and client is not None:
+        if args.real and embedding_model and client is not None:
             from core.backend.app.ai.ark_embedding import ArkEmbeddingClient, ArkEmbeddingSettings
 
             embedding_base_url = os.environ.get("ARK_EMBEDDING_BASE_URL", "").strip()
             embedding_client = ArkEmbeddingClient(
                 ArkEmbeddingSettings(
-                    model=os.environ["ARK_EMBEDDING_MODEL"].strip(),
+                    model=embedding_model,
                     api_key=os.environ.get("ARK_API_KEY", "").strip(),
                     **({"base_url": embedding_base_url} if embedding_base_url else {}),
                 )
             )
+            try:
+                await embedding_client.embed("青槐老巷七日模拟向量预检")
+            except Exception as exc:
+                raise SystemExit(
+                    f"embedding preflight failed safely: {type(exc).__name__}"
+                ) from None
+            embedding_preflight = embedding_client.last_metadata
         retriever = DatabaseMemoryRetriever(
             base_repository.session_factory,
             embedding_port=embedding_client,
@@ -168,6 +203,8 @@ async def _main() -> int:
             registry,
             seed=args.seed + index,
             max_calls_per_run=per_run_limit,
+            step_timeout_seconds=args.step_timeout_seconds,
+            run_timeout_seconds=args.run_timeout_seconds,
         ).run(
             route=route,
             mode="real" if args.real else "offline",
@@ -177,7 +214,9 @@ async def _main() -> int:
             allow_network=args.real and args.backend == "postgres",
         )
         reports.append(report)
-        total_calls += sum(report.metrics.provider_calls.values())
+        total_calls += report.metrics.physical_provider_requests or sum(
+            report.metrics.provider_calls.values()
+        )
 
     if embedding_client is not None:
         await embedding_client.close()
@@ -208,6 +247,10 @@ async def _main() -> int:
                     )
         await recovered_repository.close()
 
+    if args.real:
+        for report in reports:
+            report.metrics.quality_gate_failures = real_quality_gate_failures(report)
+
     payload = {
         "route": args.route,
         "mode": "real" if args.real else "offline",
@@ -218,7 +261,10 @@ async def _main() -> int:
         "backend": args.backend,
         "maxCallsPerRun": args.max_calls_per_run,
         "maxTotalCalls": args.max_total_calls,
+        "stepTimeoutSeconds": args.step_timeout_seconds,
+        "runTimeoutSeconds": args.run_timeout_seconds,
         "totalProviderCalls": total_calls,
+        "embeddingPreflight": embedding_preflight,
         "reports": [report.to_dict() for report in reports],
     }
     args.output.mkdir(parents=True, exist_ok=True)
@@ -250,8 +296,13 @@ async def _main() -> int:
         await client.close()
     print(f"JSON report: {json_path}")
     print(f"Markdown report: {markdown_path}")
-    if reports and any(report.metrics.rejected for report in reports):
-        print(f"Simulation rejected safely: {reports[-1].metrics.rejection_reason}")
+    if reports and any(
+        report.metrics.rejected
+        or report.metrics.abnormal_termination is not None
+        or report.metrics.quality_gate_failures
+        for report in reports
+    ):
+        print("Simulation batch did not pass its acceptance gates; inspect the safe report.")
         return 2
     return 0
 

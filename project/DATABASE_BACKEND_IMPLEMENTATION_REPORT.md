@@ -1,5 +1,7 @@
 # PostgreSQL + pgvector 后端阶段实施报告
 
+> 阶段更新（2026-08-20）：数据库链已扩展到 revision `a07d8e9f0123`。真实 Agent Plan Embedding 返回 2048 维，当前使用 `vector(2048)` 保存完整向量，并以 `embedding::halfvec(2048)` 建立 HNSW 表达式索引。下文的 384 维和旧 head 数字是最初数据库阶段的历史验收值。
+
 - 日期：2026-08-19
 - 状态：完成并通过验收
 - 对应设计：`DATABASE_BACKEND_DESIGN.md`
@@ -9,7 +11,7 @@
 
 - `compose.yaml` 只运行固定版本 `pgvector/pgvector:0.8.1-pg17-bookworm`，带持久卷和健康检查；FastAPI 继续在 Conda 环境本地运行。
 - SQLAlchemy 2 Async、psycopg 3、Alembic、pgvector 依赖和 Windows Selector event loop 兼容已接入。
-- 两个 Alembic revision 建立规范化 Run、会话、Message、Goal、关系、Memory、Graph 边、章节状态、事件、幂等命令和恢复辅助表；`vector(384)` 使用 embedding 非空的部分 HNSW 索引。
+- Alembic revision 链建立规范化 Run、会话、Message、Goal、关系、Memory、Graph 边、章节状态、事件、幂等命令和恢复辅助表；当前 `vector(2048)` 使用 embedding 非空的 `halfvec(2048)` HNSW 表达式索引。
 - PostgreSQL `RunRepository` 支持事务保存、存储 revision 乐观并发、持久事件补取、进程内聚合 identity cache 和重启反序列化；Lock 与在途模型计数不会进入数据库。
 - 每个有效公共命令返回前保存；聊天模型等待前先形成检查点，数据库事务不会跨模型等待持有。
 - 静态 YAML Actor、NPC 人设、Topic、Goal definition、Agenda 在应用启动时同步，表结构仍只由 Alembic 管理。
@@ -34,7 +36,7 @@ alembic upgrade head
 结果：
 
 - 容器 `qinghuai-chat-database-1` 为 `healthy`，端口 `5432`。
-- 空库能从 base 升级到 `34039a40f40d`。
+- 空库能从 base 升级到当前 head `a07d8e9f0123`。
 - `34039a40f40d -> 0001_initial_schema -> base` 降级成功，再升级成功。
 - `alembic check` 返回 `No new upgrade operations detected`。
 - `vector` extension、规范化表、外键、范围 CHECK、普通索引和部分 HNSW 索引均由 migration 建立。

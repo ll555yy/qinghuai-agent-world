@@ -1,5 +1,7 @@
 # 七天 NPC 聊天世界后端可玩闭环验收
 
+> 历史阶段记录：本文的“未纳入数据库/真实模型”和“下一阶段先做前端”只适用于当时。当前 PostgreSQL、pgvector、Agent、真实模型和七日模拟门禁状态以 `PRE_FRONTEND_BACKEND_ACCEPTANCE.md` 为准。
+
 - 状态：主会话验收通过
 - 日期：2026-08-19
 - 运行范围：FastAPI、内存 Run、火山方舟 TextModel 端口、REST/WebSocket、自动测试

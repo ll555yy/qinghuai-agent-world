@@ -135,6 +135,15 @@ class SimulationMetrics:
     player_result: Any = None
     npc_speech_count: int = 0
     player_speech_count: int = 0
+    npc_speech_by_actor: Counter[str] = field(default_factory=Counter)
+    npc_active_actions_by_actor: Counter[str] = field(default_factory=Counter)
+    conversation_summaries: list[dict[str, Any]] = field(default_factory=list)
+    fired_world_event_ids: list[str] = field(default_factory=list)
+    skipped_world_event_ids: list[str] = field(default_factory=list)
+    chapter_stance_changes: int = 0
+    schema_first_attempts: int = 0
+    schema_first_successes: int = 0
+    quality_gate_failures: list[str] = field(default_factory=list)
     repository_recovered: bool | None = None
 
     def record_protocol_call(self, protocol: str) -> None:
@@ -167,6 +176,7 @@ class SimulationMetrics:
         run: Any,
         initial_relationships: dict[tuple[str, str], dict[str, Any]] | None = None,
         initial_goals: dict[str, dict[str, Any]] | None = None,
+        configured_event_ids: set[str] | None = None,
     ) -> None:
         self.events = Counter(event.event_type for event in run.events)
         self.conversations_created = self.events["conversation_created"]
@@ -174,12 +184,48 @@ class SimulationMetrics:
         self.messages = sum(len(items) for items in run.messages.values())
         self.npc_speech_count = 0
         self.player_speech_count = 0
+        self.npc_speech_by_actor = Counter()
         for items in run.messages.values():
             for message in items:
-                if str(message.get("authorActorId", "")).startswith("npc_"):
+                author_id = str(message.get("authorActorId", ""))
+                if author_id.startswith("npc_"):
                     self.npc_speech_count += 1
-                elif str(message.get("authorActorId", "")) == "player_001":
+                    self.npc_speech_by_actor[author_id] += 1
+                elif author_id == "player_001":
                     self.player_speech_count += 1
+        thought_started = Counter(
+            str(event.payload.get("actorId"))
+            for event in run.events
+            if event.event_type == "npc_thought_started"
+            and str(event.payload.get("actorId", "")).startswith("npc_")
+        )
+        waited = Counter(
+            str(event.payload.get("actorId"))
+            for event in run.events
+            if event.event_type == "npc_waited"
+            and str(event.payload.get("actorId", "")).startswith("npc_")
+        )
+        self.npc_active_actions_by_actor = Counter(
+            {
+                actor_id: max(0, count - waited[actor_id])
+                for actor_id, count in thought_started.items()
+            }
+        )
+        self.conversation_summaries = [
+            {
+                "conversationId": conversation.conversation_id,
+                "participants": sorted(conversation.participant_history()),
+                "messageCount": len(run.messages.get(conversation.conversation_id, [])),
+                "status": conversation.status,
+                "closeReason": conversation.close_reason,
+            }
+            for conversation in sorted(
+                run.conversations.values(), key=lambda item: item.creation_seq
+            )
+        ]
+        self.fired_world_event_ids = sorted(run.fired_event_ids)
+        all_event_ids = configured_event_ids or set()
+        self.skipped_world_event_ids = sorted(all_event_ids - run.fired_event_ids)
         self.memories_total = len(run.memories)
         self.memories_by_source = Counter(
             str(memory.get("source", "unknown")) for memory in run.memories.values()
@@ -211,6 +257,9 @@ class SimulationMetrics:
                     {"goalId": goal_id, "before": before, "after": after}
                 )
         self.chapter_stances = dict(getattr(run, "chapter_actor_stances", {}))
+        self.chapter_stance_changes = sum(
+            1 for stance in self.chapter_stances.values() if stance != "unknown"
+        )
         self.chapter_stances["zhouAuthorization"] = getattr(
             run, "zhou_authorization", "unknown"
         )
@@ -252,6 +301,10 @@ class SimulationMetrics:
             "latencyMs": latencies,
             "tokens": counters(self.tokens),
             "events": counters(self.events),
+            "worldEvents": {
+                "firedIds": self.fired_world_event_ids,
+                "skippedIds": self.skipped_world_event_ids,
+            },
             "invitations": {
                 "requested": self.events["invitation_requested"],
                 "accepted": self.events["invitation_accepted"],
@@ -261,6 +314,7 @@ class SimulationMetrics:
             "conversations": {
                 "created": self.conversations_created,
                 "closed": self.conversations_closed,
+                "items": self.conversation_summaries,
             },
             "messages": self.messages,
             "memories": {
@@ -292,21 +346,36 @@ class SimulationMetrics:
                     if self.schema_attempts
                     else None
                 ),
+                "firstAttempts": self.schema_first_attempts,
+                "firstSuccesses": self.schema_first_successes,
+                "firstSuccessRate": (
+                    self.schema_first_successes / self.schema_first_attempts
+                    if self.schema_first_attempts
+                    else None
+                ),
                 "p95LatencyMs": self._p95_latency(),
             },
             "safeResults": self.safe_results,
             "physicalProviderRequests": self.physical_provider_requests,
             "providerRetries": self.provider_retries,
             "goalChanges": self.goal_changes,
+            "goalChangeCount": len(self.goal_changes),
             "relationshipChangeDetails": self.relationship_change_details,
             "chapterStances": self.chapter_stances,
+            "chapterStanceChangeCount": self.chapter_stance_changes,
             "agendaResults": self.agenda_results,
             "playerResult": self.player_result,
             "repositoryRecovered": self.repository_recovered,
             "speech": {
                 "npc": self.npc_speech_count,
                 "player": self.player_speech_count,
+                "byNpc": counters(self.npc_speech_by_actor),
             },
+            "npcActiveActions": {
+                "total": sum(self.npc_active_actions_by_actor.values()),
+                "byNpc": counters(self.npc_active_actions_by_actor),
+            },
+            "qualityGateFailures": list(self.quality_gate_failures),
         }
 
     def _p95_latency(self) -> dict[str, float | None]:
@@ -335,6 +404,7 @@ class SimulationReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "route": self.route,
+            "selectedAgendaId": ROUTE_AGENDAS[self.route],
             "mode": self.mode,
             "seed": self.seed,
             "runId": self.run_id,
@@ -457,11 +527,12 @@ class _CountingModel:
     async def generate(self, request: TextGenerationRequest) -> TextGenerationResult:
         protocol = self._protocol(request)
         request_key = id(request)
+        first_attempt = request_key != self._last_request_id
         self._request_objects.setdefault(request_key, request)
         if self.total_limit is not None and sum(self.metrics.provider_calls.values()) >= self.total_limit:
             self.metrics.budget_exhausted = True
             raise SimulationBudgetExceeded("total")
-        if request_key != self._last_request_id:
+        if first_attempt:
             if protocol and self.metrics.protocol_calls[protocol] >= self.budget.for_protocol(protocol):
                 self.metrics.budget_exhausted = True
                 raise SimulationBudgetExceeded(protocol)
@@ -484,6 +555,8 @@ class _CountingModel:
             )
             raise
         self.metrics.schema_attempts += 1
+        if first_attempt:
+            self.metrics.schema_first_attempts += 1
         schema = self._schemas.get(protocol)
         schema_ok = False
         if schema is not None:
@@ -496,6 +569,8 @@ class _CountingModel:
                 self.metrics.safe_results += 1
         if schema_ok:
             self.metrics.schema_successes += 1
+            if first_attempt:
+                self.metrics.schema_first_successes += 1
         self.metrics.record_provider_result(
             protocol, (time.perf_counter() - started) * 1000, result
         )
@@ -685,7 +760,12 @@ class SevenDaySimulationRunner:
             metrics.failures[f"runner:{type(exc).__name__}"] += 1
             metrics.abnormal_termination = type(exc).__name__
         finally:
-            metrics.observe_run(run, initial_relationships, initial_goals)
+            metrics.observe_run(
+                run,
+                initial_relationships,
+                initial_goals,
+                {event.event_id for event in self.registry.events},
+            )
             snapshot = getattr(original_model, "metrics_snapshot", None)
             if before_provider_metrics is not None and callable(snapshot):
                 after = snapshot()
@@ -793,6 +873,40 @@ class SevenDaySimulationRunner:
         return SimulationReport(route, mode, self.seed, metrics, self.budget)
 
 
+def real_quality_gate_failures(report: SimulationReport) -> list[str]:
+    """Return evidence gaps that prevent a real run from counting as accepted."""
+
+    metrics = report.metrics
+    failures: list[str] = []
+    if metrics.rejected:
+        failures.append("run_rejected")
+    if metrics.abnormal_termination is not None:
+        failures.append("abnormal_termination")
+    if metrics.budget_exhausted:
+        failures.append("budget_exhausted")
+    if metrics.final_world_time != "Day7 18:00":
+        failures.append("day7_not_reached")
+    if metrics.final_day7_branch is None:
+        failures.append("day7_not_resolved")
+    if metrics.events["world_event_occurred"] < 7:
+        failures.append("world_events_incomplete")
+    if metrics.conversations_created < 1:
+        failures.append("no_conversation")
+    if metrics.conversations_closed < 1:
+        failures.append("no_closed_conversation")
+    if metrics.messages < 1:
+        failures.append("no_messages")
+    if metrics.protocol_calls["ExitConsolidation"] < 1:
+        failures.append("no_exit_consolidation")
+    if metrics.memory_retrieval_calls < 1:
+        failures.append("no_memory_retrieval")
+    if metrics.memory_vector_status != "enabled":
+        failures.append("embedding_not_enabled")
+    if metrics.repository_recovered is not True:
+        failures.append("repository_not_recovered")
+    return failures
+
+
 __all__ = [
     "DEFAULT_SIMULATION_SEED",
     "SimulationBudget",
@@ -801,4 +915,5 @@ __all__ = [
     "SimulationReport",
     "SimulationRoute",
     "SevenDaySimulationRunner",
+    "real_quality_gate_failures",
 ]
