@@ -1,0 +1,103 @@
+version: 1
+status: confirmed
+
+goals:
+  - goalId: goal_001_public
+    ownerNpcId: npc_001
+    horizon: long_term
+    disclosure: shareable
+    description: "通过聊天获得周慎之开放书店场地的许可，并获得沈星遥、陈月和赵磊参与青槐文社的明确承诺。"
+    targetActorIds: [npc_002, npc_003, npc_004, npc_005]
+    topicIds: [topic_bookstore_survival, topic_qinghuai_literary_society]
+    importance: 4
+    status: active
+
+  - goalId: goal_001_deep
+    ownerNpcId: npc_001
+    horizon: long_term
+    disclosure: guarded
+    description: "以文社为纽带协调另外四人的分歧，获得他们对自己能力的认可，并与周慎之谈开父辈旧怨。"
+    targetActorIds: [npc_002, npc_003, npc_004, npc_005]
+    topicIds: [topic_qinghuai_literary_society, topic_lin_zhou_old_grudge]
+    importance: 5
+    status: active
+
+  - goalId: goal_002_public
+    ownerNpcId: npc_002
+    horizon: long_term
+    disclosure: shareable
+    description: "通过聊天获得另外四人同意自己记录他们的故事，并从每个人那里了解足以支撑《巷口五人》创作的真实经历。"
+    targetActorIds: [npc_001, npc_003, npc_004, npc_005]
+    topicIds: [topic_five_people_picture_book, topic_bookstore_survival]
+    importance: 4
+    status: active
+
+  - goalId: goal_002_deep
+    ownerNpcId: npc_002
+    horizon: long_term
+    disclosure: guarded
+    description: "通过主动走近另外四人克服对深入社交的回避，在彼此坦诚的交谈中确认自己属于青槐巷。"
+    targetActorIds: [npc_001, npc_003, npc_004, npc_005]
+    topicIds: [topic_five_people_picture_book]
+    importance: 5
+    status: active
+
+  - goalId: goal_003_public
+    ownerNpcId: npc_003
+    horizon: long_term
+    disclosure: shareable
+    description: "说服周慎之授权自己运营青槐巷邻里文创，并获得林慧兰、沈星遥和陈月参与合作的明确承诺。"
+    targetActorIds: [npc_001, npc_002, npc_004, npc_005]
+    topicIds: [topic_neighborhood_cultural_operation, topic_bookstore_survival]
+    importance: 5
+    status: active
+
+  - goalId: goal_003_deep
+    ownerNpcId: npc_003
+    horizon: long_term
+    disclosure: guarded
+    description: "让另外四人，尤其是林慧兰和陈月，明确认可自己的能力和价值，不再只把自己视为油滑的推销者。"
+    targetActorIds: [npc_001, npc_002, npc_004, npc_005]
+    topicIds: [topic_neighborhood_cultural_operation]
+    importance: 4
+    status: active
+
+  - goalId: goal_004_public
+    ownerNpcId: npc_004
+    horizon: long_term
+    disclosure: shareable
+    description: "通过聊天获得周慎之设置青槐健康角的许可，以及林慧兰、沈星遥和赵磊提供讲座、插画与物资协助的承诺。"
+    targetActorIds: [npc_001, npc_002, npc_003, npc_005]
+    topicIds: [topic_health_corner, topic_bookstore_survival]
+    importance: 4
+    status: active
+
+  - goalId: goal_004_deep
+    ownerNpcId: npc_004
+    horizon: long_term
+    disclosure: guarded
+    description: "通过获得另外四人对健康角和自己专业判断的信任，重建职业信心，并在适当时机向林慧兰坦白过去的用药失误。"
+    targetActorIds: [npc_001, npc_002, npc_003, npc_005]
+    topicIds: [topic_health_corner]
+    importance: 5
+    status: active
+
+  - goalId: goal_005_public
+    ownerNpcId: npc_005
+    horizon: long_term
+    disclosure: shareable
+    description: "通过与另外四人的交谈判断是否接受他们的合作方案，并决定是否继续经营和守住慎之旧书店。"
+    targetActorIds: [npc_001, npc_002, npc_003, npc_004]
+    topicIds: [topic_bookstore_survival, topic_bookstore_legacy]
+    importance: 5
+    status: active
+
+  - goalId: goal_005_deep
+    ownerNpcId: npc_005
+    horizon: long_term
+    disclosure: guarded
+    description: "观察另外四人的品性，判断谁真正值得托付书店与古籍，并与林慧兰解开父辈旧怨、决定如何归还林家遗留古籍。"
+    targetActorIds: [npc_001, npc_002, npc_003, npc_004]
+    topicIds: [topic_bookstore_legacy, topic_lin_zhou_old_grudge, topic_valuable_ancient_book]
+    importance: 5
+    status: active

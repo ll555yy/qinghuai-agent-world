@@ -1,0 +1,48 @@
+version: 1
+status: confirmed
+
+chapterId: chapter_01_proposal_deadline
+
+agendas:
+  - agendaId: agenda_001_literary_society
+    ownerNpcId: npc_001
+    publicGoalId: goal_001_public
+    title: "青槐文社"
+    publicSummary: "以公益书法课和老街故事会为核心，为街坊保留文化落脚地。"
+
+  - agendaId: agenda_002_picture_book
+    ownerNpcId: npc_002
+    publicGoalId: goal_002_public
+    title: "《巷口五人》绘本与故事记录"
+    publicSummary: "记录青槐巷人物与旧书店故事，并将其作为书店文化内容的一部分。"
+
+  - agendaId: agenda_003_cultural_operation
+    ownerNpcId: npc_003
+    publicGoalId: goal_003_public
+    title: "青槐巷邻里文创运营"
+    publicSummary: "通过品牌、文创和资源合作为旧书店建立可持续的经营方式。"
+
+  - agendaId: agenda_004_health_corner
+    ownerNpcId: npc_004
+    publicGoalId: goal_004_public
+    title: "青槐健康角"
+    publicSummary: "在书店设置面向街坊的基础健康监测与科普空间。"
+
+  - agendaId: agenda_005_bookstore_preservation
+    ownerNpcId: npc_005
+    publicGoalId: goal_005_public
+    title: "旧书与书店传承底线"
+    publicSummary: "保留旧书店的核心性质，保护旧书与古籍，不让经营方案破坏其传承价值。"
+
+resolution:
+  statuses: [core_adopted, partially_adopted, not_adopted]
+  noSubmissionResult: all_not_adopted
+  coreAdopted:
+    ownerStance: support
+    zhouStance: support
+    supportCountMin: 4
+  partiallyAdopted:
+    ownerStance: [support, conditional]
+    zhouStance: [support, conditional]
+    positiveCountMin: 2
+    negativeCountMax: 1
