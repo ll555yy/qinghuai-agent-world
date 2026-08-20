@@ -17,6 +17,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 from dotenv import load_dotenv
 
@@ -35,6 +36,7 @@ from core.backend.app.simulation.runner import (  # noqa: E402
     DEFAULT_SIMULATION_SEED,
     ROUTE_AGENDAS,
     SevenDaySimulationRunner,
+    SimulationRoute,
     real_quality_gate_failures,
 )
 
@@ -103,7 +105,7 @@ async def _main() -> int:
 
         client = ArkClient()
     service = None
-    repository = None
+    repository: Any = None
     base_repository = None
     database_url = args.database_url or os.environ.get("DATABASE_URL")
     retriever = None
@@ -134,14 +136,18 @@ async def _main() -> int:
             raise SystemExit("Postgres healthcheck failed; apply migrations first")
         await sync_scenario(base_repository.session_factory, registry)
         if args.real and embedding_model and client is not None:
-            from core.backend.app.ai.ark_embedding import ArkEmbeddingClient, ArkEmbeddingSettings
+            from core.backend.app.ai.ark_embedding import (
+                DEFAULT_ARK_EMBEDDING_BASE_URL,
+                ArkEmbeddingClient,
+                ArkEmbeddingSettings,
+            )
 
             embedding_base_url = os.environ.get("ARK_EMBEDDING_BASE_URL", "").strip()
             embedding_client = ArkEmbeddingClient(
                 ArkEmbeddingSettings(
                     model=embedding_model,
                     api_key=os.environ.get("ARK_API_KEY", "").strip(),
-                    **({"base_url": embedding_base_url} if embedding_base_url else {}),
+                    base_url=embedding_base_url or DEFAULT_ARK_EMBEDDING_BASE_URL,
                 )
             )
             try:
@@ -160,6 +166,7 @@ async def _main() -> int:
             embedding_indexer = MemoryEmbeddingIndexer(
                 base_repository.session_factory,
                 embedding_client,
+                batch_size=8,
             )
             repository = IndexingRunRepository(base_repository, embedding_indexer)
         service = RunService(
@@ -183,7 +190,7 @@ async def _main() -> int:
     )
     requested_run_count = args.runs * len(route_cycle)
     for index in range(requested_run_count):
-        route = route_cycle[index % len(route_cycle)]
+        route = cast(SimulationRoute, route_cycle[index % len(route_cycle)])
         remaining = None
         if args.max_total_calls is not None:
             remaining = args.max_total_calls - total_calls

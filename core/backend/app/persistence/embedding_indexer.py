@@ -28,7 +28,7 @@ class MemoryEmbeddingIndexer:
         session_factory: Any,
         embedding_port: EmbeddingPort,
         *,
-        batch_size: int = 32,
+        batch_size: int = 8,
         dimensions: int = MEMORY_EMBEDDING_DIMENSIONS,
     ) -> None:
         if dimensions != MEMORY_EMBEDDING_DIMENSIONS:

@@ -64,7 +64,12 @@ def main() -> None:
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--limit", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="provider batch size; 8 is the verified Ark-safe project default",
+    )
     parser.add_argument(
         "--force",
         action="store_true",

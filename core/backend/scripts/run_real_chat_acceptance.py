@@ -151,7 +151,7 @@ async def _main() -> int:
         report["embeddingPreflight"] = embedding_client.last_metadata
 
         indexer = MemoryEmbeddingIndexer(
-            base_repository.session_factory, embedding_client, batch_size=64
+            base_repository.session_factory, embedding_client, batch_size=8
         )
         repository = IndexingRunRepository(base_repository, indexer)
         retriever = DatabaseMemoryRetriever(
