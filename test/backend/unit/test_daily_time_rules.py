@@ -7,7 +7,7 @@ import pytest
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.clock import WorldTime
 from core.backend.app.domain.errors import InvalidInvitationError
-from core.backend.app.orchestration.run_service import RunService
+from core.backend.app.orchestration.run_service import INITIAL_MEMORY_CACHE_LIMIT, RunService
 
 
 class RecordingWaitModel:
@@ -44,6 +44,39 @@ class RecordingWaitModel:
 
 
 @pytest.mark.anyio
+async def test_initial_memory_cache_is_bounded_and_prior_partners_are_counted(
+    registry,
+) -> None:
+    service = RunService(registry, text_model=None)
+    created = await service.create_run()
+    run = await service.get_run_entity(created["runId"])
+    await service.create_conversation(
+        run.run_id,
+        ["npc_001", registry.player_actor_id],
+    )
+    async with run.lock:
+        for index in range(10):
+            memory_id = f"memory_test_cache_{index}"
+            run.memories[memory_id] = {
+                "memoryId": memory_id,
+                "ownerNpcId": "npc_001",
+                "actorIds": [registry.player_actor_id],
+                "topicIds": [],
+                "importance": 1,
+            }
+
+        selected = service._initial_memory_ids(
+            run,
+            "npc_001",
+            [registry.player_actor_id],
+        )
+        counts = service._prior_conversation_counts(run, "npc_001")
+
+    assert len(selected) == INITIAL_MEMORY_CACHE_LIMIT
+    assert counts == {registry.player_actor_id: 1}
+
+
+@pytest.mark.anyio
 async def test_seeded_schedule_rotates_left_with_compressed_slots(registry) -> None:
     first_service = RunService(registry, text_model=None, seed=37)
     first_snapshot = await first_service.create_run()
@@ -64,7 +97,7 @@ async def test_seeded_schedule_rotates_left_with_compressed_slots(registry) -> N
         shift = (day - 1) % len(baseline)
         assert order == baseline[shift:] + baseline[:shift]
 
-    await first_service.world_step(first.run_id, 600)
+    await first_service.world_step(first.run_id, 1200)
     day_two_thoughts = [
         event
         for event in first.events
@@ -87,7 +120,7 @@ async def test_busy_npc_skips_its_only_daily_action_without_catchup(registry) ->
         [busy_npc, registry.player_actor_id],
     )
 
-    await service.world_step(run.run_id, 9 * 60)
+    await service.world_step(run.run_id, 9 * 60 * 2)
 
     skipped = [
         event
@@ -131,7 +164,7 @@ async def test_time_policy_changes_without_creating_an_extra_daily_call(registry
         "closingSoon": False,
     }
 
-    await service.world_step(run.run_id, 1)
+    await service.world_step(run.run_id, 2)
     assert model.calls == []
     async with run.lock:
         at_cutoff = json.loads(
@@ -166,8 +199,12 @@ async def test_chat_and_exit_model_calls_receive_current_time_policy(registry) -
     assert chat_policy["remainingMinutes"] == 50
     assert chat_policy["newChatAllowed"] is False
     assert chat_policy["closingSoon"] is True
+    chat_chapter = model.calls[0][1]["chapterContext"]
+    assert len(chat_chapter["agendas"]) == 5
+    assert set(chat_chapter["ownAgendaStances"].values()) == {"unknown"}
+    assert chat_chapter["canSetZhouAuthorization"] is False
 
-    await service.world_step(run.run_id, 50)
+    await service.world_step(run.run_id, 100)
     exit_context = next(
         context for protocol, context in model.calls if protocol == "ExitConsolidation"
     )
@@ -179,6 +216,8 @@ async def test_chat_and_exit_model_calls_receive_current_time_policy(registry) -
         "newChatAllowed": False,
         "closingSoon": True,
     }
+    assert len(exit_context["chapterContext"]["agendas"]) == 5
+    assert exit_context["chapterContext"]["ownOverallStance"] == "unknown"
 
 
 @pytest.mark.anyio
@@ -198,7 +237,7 @@ async def test_cutoff_expires_pending_player_response_without_relation_change(re
         )
         relations_before = deepcopy(run.relationships)
 
-    await service.world_step(run.run_id, 1)
+    await service.world_step(run.run_id, 2)
 
     assert invitation["status"] == "expired"
     assert invitation["expiredAt"] == "Day1 17:00"
@@ -232,7 +271,7 @@ async def test_existing_chat_continues_at_cutoff_and_closes_once_at_day_end(regi
     result = await service.player_message(run.run_id, conversation_id, "今天先把重点说清楚。")
     assert result["conversation"]["status"] == "open"
 
-    await service.world_step(run.run_id, 60)
+    await service.world_step(run.run_id, 120)
     conversation = run.conversations[conversation_id]
     assert conversation.status == "closed"
     assert conversation.close_reason == "day_end"

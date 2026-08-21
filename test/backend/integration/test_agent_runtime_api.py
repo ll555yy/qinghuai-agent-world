@@ -8,7 +8,7 @@ def test_world_step_uses_private_agent_graph_without_exposing_trace(client) -> N
 
     stepped = client.post(
         f"/api/runs/{run_id}/world/step",
-        json={"realSeconds": 540},
+        json={"realSeconds": 1080},
     )
     assert stepped.status_code == 200
 

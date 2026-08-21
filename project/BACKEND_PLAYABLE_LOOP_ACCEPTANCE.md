@@ -21,7 +21,7 @@
 
 ## 2. 需求对应证据
 
-1. **时间和行动**：现实 1 秒映射世界 1 分钟；08:00 至 18:00 为 600 秒。五名 NPC 每日分别在 09/11/13/15/17 点思考一次，Day1 公告先于首个思考。
+1. **时间和行动**：此历史验收使用加速步进验证 600 个世界分钟；正式游玩节奏现已由 D-029 更新为现实 2 秒映射世界 1 分钟、08:00 至 18:00 共 20 分钟。五名 NPC 每日错峰思考一次，Day1 公告先于首个思考。
 2. **移动和邀请**：顺序为 `actor_movement_started → actor_movement_completed → invitation_requested → invitation_request_cleared → accepted/refused`；拒绝不创建聊天。
 3. **聊天人数和加入**：世界最多两场聊天，每场最多三人。第三名 NPC 直接加入，原成员收到 `actor_joined` 决策上下文；新 NPC 看不到加入前消息，玩家主动加入后得到整场历史。
 4. **聊天决策和离开**：`ChatDecision` 只使用 `speak | wait | leave_chat`，可同时产生 Goal、多个关系维度、待创建短期 Goal 和章节立场草稿；所有 Goal 终结后 NPC 标记为 `departed`。
@@ -71,7 +71,7 @@ Success: no issues found in 41 source files
 ## 6. 当前明确边界
 
 - Run 仍在单进程内存中，服务重启后丢失。
-- 无前端时由 `world/step` 驱动时间，不在后台真实等待 70 分钟。
+- 无前端时由 `world/step` 加速驱动时间，不在后台真实等待约 138 分钟。
 - observed 事件第一版以书店中心固定半径判断，没有逐帧寻路或复杂场景遮挡。
 - Graph v1 是 owner 过滤后的内存节点和链接检索，没有 pgvector 与 Embedding 排序。
 - 真实方舟效果、延迟和费用尚未测试；必须先轮换聊天中暴露过的旧 Key，再在本机设置新 Key。

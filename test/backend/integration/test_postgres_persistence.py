@@ -8,7 +8,7 @@ import pytest
 from core.backend.app.ai.ark_client import ArkClient
 from core.backend.app.ai.embedding import MEMORY_EMBEDDING_DIMENSIONS
 from core.backend.app.ai.models import TextGenerationResult
-from core.backend.app.ai.protocols import MemoryQuery
+from core.backend.app.ai.protocols import ExitConsolidation, MemoryQuery
 from core.backend.app.db.bootstrap import sync_scenario
 from core.backend.app.db.models import (
     ChapterResolution,
@@ -16,6 +16,7 @@ from core.backend.app.db.models import (
     Memory,
     MemoryActorLink,
     MemoryEdge,
+    MemoryEvidenceMessage,
     MemoryGoalLink,
     MemoryTopicLink,
     Message,
@@ -46,6 +47,59 @@ class _FixedEmbedding:
     async def embed(self, _text: str) -> list[float]:
         self.calls += 1
         return [1.0] * self.dimensions
+
+
+@pytest.mark.anyio
+async def test_postgres_projection_deduplicates_memory_evidence() -> None:
+    database_url = os.getenv("QINGHUAI_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("set QINGHUAI_TEST_DATABASE_URL to run PostgreSQL integration tests")
+    scenario_dir = Path(__file__).resolve().parents[3] / "core" / "scenario"
+    registry = ScenarioLoader(scenario_dir).load()
+    repository = SQLAlchemyRunRepository(
+        database_url, chapter_id=registry.chapter_id
+    )
+    await sync_scenario(repository.session_factory, registry)
+    service = RunService(registry, repository=repository, text_model=None)
+    created = await service.create_run(seed=20260821)
+    opened = await service.create_conversation(
+        created["runId"], ["npc_001", registry.player_actor_id]
+    )
+    conversation_id = opened["conversation"]["conversationId"]
+    await service.player_message(created["runId"], conversation_id, "我愿意帮忙。")
+    run = await service.get_run_entity(created["runId"])
+    message_id = run.messages[conversation_id][0]["messageId"]
+    consolidation = ExitConsolidation.model_validate(
+        {
+            "memories": [
+                {
+                    "ref": "duplicate_evidence",
+                    "type": "event",
+                    "content": "玩家明确表示愿意帮忙。",
+                    "evidenceMessageIds": [message_id, message_id],
+                }
+            ]
+        }
+    )
+    service._store_memories(
+        run,
+        "npc_001",
+        consolidation,
+        run.messages[conversation_id],
+    )
+
+    await repository.save(run)
+    async with repository.session_factory() as session:
+        evidence_count = await session.scalar(
+            select(func.count())
+            .select_from(MemoryEvidenceMessage)
+            .where(
+                MemoryEvidenceMessage.run_id == run.run_id,
+                MemoryEvidenceMessage.message_id == message_id,
+            )
+        )
+    assert evidence_count == 1
+    await repository.close()
 
 
 def test_postgres_fastapi_startup_and_restart_recovery() -> None:
@@ -345,15 +399,43 @@ async def test_postgres_offline_world_reaches_day7_without_partial_commit() -> N
     engine = WorldEngine(service)
 
     created = await service.create_run(seed=821)
-    await engine.step(created["runId"], 540, command_id="postgres_day1_end")
+    await engine.step(created["runId"], 1080, command_id="postgres_day1_end")
     for day in range(2, 8):
-        await engine.step(created["runId"], 1, command_id=f"postgres_day{day}_start")
-        await engine.step(created["runId"], 599, command_id=f"postgres_day{day}_end")
+        await engine.step(created["runId"], 2, command_id=f"postgres_day{day}_start")
+        await engine.step(created["runId"], 1198, command_id=f"postgres_day{day}_end")
     run = await service.get_run_entity(created["runId"])
 
     assert run.clock.as_dict()["label"] == "Day7 18:00"
     assert run.chapter_resolution is not None
     await repository.close()
+
+
+@pytest.mark.anyio
+async def test_postgres_persists_confirmed_achieved_goal_status() -> None:
+    database_url = os.getenv("QINGHUAI_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("set QINGHUAI_TEST_DATABASE_URL to run PostgreSQL integration tests")
+    scenario_dir = Path(__file__).resolve().parents[3] / "core" / "scenario"
+    registry = ScenarioLoader(scenario_dir).load()
+    repository = SQLAlchemyRunRepository(database_url, chapter_id=registry.chapter_id)
+    await sync_scenario(repository.session_factory, registry)
+    service = RunService(registry, repository=repository, text_model=None)
+    created = await service.create_run(seed=700)
+    run = await service.get_run_entity(str(created["runId"]))
+    goal_id = next(iter(run.goals))
+    async with run.lock:
+        run.goals[goal_id]["status"] = "achieved"
+        await repository.save(run)
+    await repository.close()
+
+    recovered_repository = SQLAlchemyRunRepository(
+        database_url,
+        chapter_id=registry.chapter_id,
+    )
+    recovered = await recovered_repository.get(run.run_id)
+    assert recovered is not None
+    assert recovered.goals[goal_id]["status"] == "achieved"
+    await recovered_repository.close()
 
 
 @pytest.mark.anyio
@@ -374,7 +456,7 @@ async def test_postgres_failed_transition_rolls_back_all_normalized_state() -> N
     original_goal_status = run.goals[goal_id]["status"]
     original_trust = run.relationships[relationship_key]["trust"]
     async with run.lock:
-        run.goals[goal_id]["status"] = "completed"
+        run.goals[goal_id]["status"] = "achieved"
         run.relationships[relationship_key]["trust"] = 99
         run.chapter_actor_stances["npc_001"] = "support"
         with pytest.raises(IntegrityError):

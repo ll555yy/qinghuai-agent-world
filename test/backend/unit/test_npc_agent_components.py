@@ -261,7 +261,7 @@ async def test_agent_trace_never_enters_public_run_or_event_payload(registry) ->
 
     service = RunService(registry, text_model=None, seed=19)
     created = await service.create_run()
-    await service.world_step(created["runId"], 540)
+    await service.world_step(created["runId"], 1080)
     snapshot = await service.get_run(created["runId"])
     events = await service.get_events(created["runId"])
     public_text = str({"snapshot": snapshot, "events": events})

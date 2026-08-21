@@ -144,7 +144,8 @@ class ScenarioRegistry:
     end_minute: int
     active_start_minutes: int
     active_end_minutes: int
-    virtual_hours_per_real_minute: int
+    virtual_hours_per_real_minute: float
+    real_seconds_per_virtual_minute: int
 
     @property
     def player(self) -> ActorDefinition:
@@ -229,6 +230,7 @@ class ScenarioRegistry:
             active_start_minutes=self.active_start_minutes,
             active_end_minutes=self.active_end_minutes,
             virtual_hours_per_real_minute=self.virtual_hours_per_real_minute,
+            real_seconds_per_virtual_minute=self.real_seconds_per_virtual_minute,
         )
 
     def __deepcopy__(self, _memo: dict[int, Any]) -> ScenarioRegistry:

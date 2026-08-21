@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
@@ -34,6 +35,10 @@ from ..scenario.models import ScenarioRegistry
 SimulationRoute = Literal["observer", "pro_lin", "pro_zhao"]
 SimulationMode = Literal["offline", "real"]
 DEFAULT_SIMULATION_SEED = 20260819
+_SAFE_DATABASE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_HISTORICAL_CUE = re.compile(
+    r"过去|以前|旧事|上次|曾经|当年|承诺|旧怨|来历|父亲|祖父"
+)
 
 ROUTE_AGENDAS: dict[SimulationRoute, str | None] = {
     "observer": None,
@@ -47,9 +52,46 @@ ROUTE_PLAYER_TARGETS: dict[SimulationRoute, str | None] = {
     "pro_zhao": "npc_003",
 }
 
+ROUTE_PLAYER_MESSAGES: dict[SimulationRoute, tuple[str, str] | None] = {
+    "observer": None,
+    "pro_lin": (
+        (
+            "我支持林老师以公益文化为主保住书店。你和周老板一家过去是否有没说开的旧事？"
+            "这会怎样影响你现在推动青槐文社？"
+        ),
+        (
+            "现在到了提交期限。回想这七天里大家对方案说过的具体承诺和仍没解决的分歧，"
+            "你是否愿意支持大家提交联合方案？"
+            "对于青槐文社这项主张，你是支持、附条件支持，还是反对？请把条件和担心直接说清楚。"
+        ),
+    ),
+    "pro_zhao": (
+        (
+            "我支持赵磊提出可持续的商业运营。你和周老板过去是否有没说开的合作或分歧？"
+            "这会怎样影响你现在推动邻里文创运营？"
+        ),
+        (
+            "现在到了提交期限。赵磊，你最终是否愿意支持大家提交联合方案？"
+            "对于邻里文创运营这项主张，你是支持、附条件支持，还是反对？请直接表态并说清底线。"
+        ),
+    ),
+}
+
 
 class SimulationBudgetExceeded(RuntimeError):
     """Raised internally when a model provider budget is exhausted."""
+
+
+def _safe_exception_label(exc: BaseException) -> str:
+    """Return an error type plus an optional non-sensitive constraint name."""
+
+    label = type(exc).__name__
+    original = getattr(exc, "orig", None)
+    diagnostic = getattr(original, "diag", None)
+    constraint = getattr(diagnostic, "constraint_name", None)
+    if isinstance(constraint, str) and _SAFE_DATABASE_IDENTIFIER.fullmatch(constraint):
+        return f"{label}:{constraint}"
+    return label
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +187,9 @@ class SimulationMetrics:
     schema_first_successes: int = 0
     quality_gate_failures: list[str] = field(default_factory=list)
     repository_recovered: bool | None = None
+    temporary_run_deleted: bool | None = None
+    historical_invitation_intents: int = 0
+    historical_topic_messages: int = 0
 
     def record_protocol_call(self, protocol: str) -> None:
         self.protocol_calls[protocol] += 1
@@ -185,14 +230,22 @@ class SimulationMetrics:
         self.npc_speech_count = 0
         self.player_speech_count = 0
         self.npc_speech_by_actor = Counter()
+        self.historical_topic_messages = 0
         for items in run.messages.values():
             for message in items:
                 author_id = str(message.get("authorActorId", ""))
+                if _HISTORICAL_CUE.search(str(message.get("text", ""))):
+                    self.historical_topic_messages += 1
                 if author_id.startswith("npc_"):
                     self.npc_speech_count += 1
                     self.npc_speech_by_actor[author_id] += 1
                 elif author_id == "player_001":
                     self.player_speech_count += 1
+        self.historical_invitation_intents = sum(
+            1
+            for invitation in run.invitations.values()
+            if _HISTORICAL_CUE.search(str(invitation.get("_intent", "")))
+        )
         thought_started = Counter(
             str(event.payload.get("actorId"))
             for event in run.events
@@ -338,6 +391,10 @@ class SimulationMetrics:
                 "vector": self.memory_vector_status,
                 "graph": self.memory_graph_status,
             },
+            "historicalCueCounts": {
+                "invitationIntents": self.historical_invitation_intents,
+                "messages": self.historical_topic_messages,
+            },
             "schema": {
                 "attempts": self.schema_attempts,
                 "successes": self.schema_successes,
@@ -366,6 +423,7 @@ class SimulationMetrics:
             "agendaResults": self.agenda_results,
             "playerResult": self.player_result,
             "repositoryRecovered": self.repository_recovered,
+            "temporaryRunDeleted": self.temporary_run_deleted,
             "speech": {
                 "npc": self.npc_speech_count,
                 "player": self.player_speech_count,
@@ -437,6 +495,13 @@ class SimulationReport:
             f"- Schema success rate: `{data['schema']['successRate']}`",
             f"- Safe results: `{data['safeResults']}`",
             f"- Abnormal termination: `{data['abnormalTermination'] or 'none'}`",
+            f"- Player result: `{data['playerResult'] or 'n/a'}`",
+            f"- Repository recovered: `{data['repositoryRecovered']}`",
+            f"- Temporary Run deleted: `{data['temporaryRunDeleted']}`",
+            f"- Memory retrieval calls: `{data['memoryRetrieval']['calls']}`",
+            f"- Vector/Graph hits: `{data['memoryRetrieval']['vectorHits']}/{data['memoryRetrieval']['graphHits']}`",
+            f"- Fired/skipped world events: `{len(data['worldEvents']['firedIds'])}/{len(data['worldEvents']['skippedIds'])}`",
+            f"- Quality gate failures: `{','.join(data['qualityGateFailures']) or 'none'}`",
             "",
             "## Protocol calls",
             "",
@@ -708,17 +773,27 @@ class SevenDaySimulationRunner:
         initial_relationships = {key: dict(value) for key, value in run.relationships.items()}
         initial_goals = {key: dict(value) for key, value in run.goals.items()}
         try:
-            scripted_sent = False
+            history_sent = False
+            stance_sent = False
             await asyncio.wait_for(
                 self._script_player_action(
-                    run_service, run, route, metrics, already_sent=scripted_sent
+                    run_service,
+                    run,
+                    route,
+                    metrics,
+                    phase="history",
+                    already_sent=history_sent,
                 ),
                 timeout=self._remaining_timeout(deadline),
             )
             self._check_world_budget(run, metrics)
-            scripted_sent = metrics.scripted_actions["message_sent"] > 0
+            history_sent = metrics.scripted_actions["history_message_sent"] > 0
             await asyncio.wait_for(
-                engine.step(created["runId"], 540, command_id="simulation_day1_end"),
+                engine.step(
+                    created["runId"],
+                    int(540 * self.registry.real_seconds_per_virtual_minute),
+                    command_id="simulation_day1_end",
+                ),
                 timeout=self._remaining_timeout(deadline),
             )
             self._check_world_budget(run, metrics)
@@ -726,25 +801,48 @@ class SevenDaySimulationRunner:
                 await asyncio.wait_for(
                     engine.step(
                         created["runId"],
-                        1,
+                        int(self.registry.real_seconds_per_virtual_minute),
                         command_id=f"simulation_day{day}_start",
                     ),
                     timeout=self._remaining_timeout(deadline),
                 )
                 self._check_world_budget(run, metrics)
-                if not scripted_sent:
+                if day < self.registry.end_day and not history_sent:
                     await asyncio.wait_for(
                         self._script_player_action(
-                            run_service, run, route, metrics, already_sent=scripted_sent
+                            run_service,
+                            run,
+                            route,
+                            metrics,
+                            phase="history",
+                            already_sent=history_sent,
                         ),
                         timeout=self._remaining_timeout(deadline),
                     )
                     self._check_world_budget(run, metrics)
-                    scripted_sent = metrics.scripted_actions["message_sent"] > 0
+                    history_sent = (
+                        metrics.scripted_actions["history_message_sent"] > 0
+                    )
+                if day == self.registry.end_day and not stance_sent:
+                    await asyncio.wait_for(
+                        self._script_player_action(
+                            run_service,
+                            run,
+                            route,
+                            metrics,
+                            phase="stance",
+                            already_sent=stance_sent,
+                        ),
+                        timeout=self._remaining_timeout(deadline),
+                    )
+                    self._check_world_budget(run, metrics)
+                    stance_sent = (
+                        metrics.scripted_actions["stance_message_sent"] > 0
+                    )
                 await asyncio.wait_for(
                     engine.step(
                         created["runId"],
-                        599,
+                        int(599 * self.registry.real_seconds_per_virtual_minute),
                         command_id=f"simulation_day{day}_end",
                     ),
                     timeout=self._remaining_timeout(deadline),
@@ -757,8 +855,9 @@ class SevenDaySimulationRunner:
             metrics.failures["runner:timeout"] += 1
             metrics.abnormal_termination = "timeout"
         except Exception as exc:
-            metrics.failures[f"runner:{type(exc).__name__}"] += 1
-            metrics.abnormal_termination = type(exc).__name__
+            safe_label = _safe_exception_label(exc)
+            metrics.failures[f"runner:{safe_label}"] += 1
+            metrics.abnormal_termination = safe_label
         finally:
             metrics.observe_run(
                 run,
@@ -801,6 +900,7 @@ class SevenDaySimulationRunner:
         route: SimulationRoute,
         metrics: SimulationMetrics,
         *,
+        phase: Literal["history", "stance"],
         already_sent: bool,
     ) -> None:
         target_id = ROUTE_PLAYER_TARGETS[route]
@@ -823,7 +923,9 @@ class SevenDaySimulationRunner:
                 result = await service.player_join(
                     run.run_id,
                     conversation.conversation_id,
-                    command_id=f"simulation_player_join_{route}_{run.clock.current.day}",
+                    command_id=(
+                        f"simulation_player_join_{route}_{phase}_{run.clock.current.day}"
+                    ),
                 )
                 status = result.get("joinRequest", {}).get("status")
                 metrics.scripted_actions[
@@ -837,7 +939,9 @@ class SevenDaySimulationRunner:
                 result = await service.player_invite(
                     run.run_id,
                     target_id,
-                    command_id=f"simulation_player_invite_{route}_{run.clock.current.day}",
+                    command_id=(
+                        f"simulation_player_invite_{route}_{phase}_{run.clock.current.day}"
+                    ),
                 )
                 invitation = result.get("invitation", {})
                 if invitation.get("status") != "accepted":
@@ -846,17 +950,20 @@ class SevenDaySimulationRunner:
                     return
                 metrics.scripted_actions["invite_sent"] += 1
                 conversation_id = str(invitation["conversationId"])
+            route_messages = ROUTE_PLAYER_MESSAGES[route]
+            if route_messages is None:
+                return
+            message_text = route_messages[0 if phase == "history" else 1]
             await service.player_message(
                 run.run_id,
                 conversation_id,
-                (
-                    "我支持林老师以公益文化为主保住书店，也想听听大家怎样合作。"
-                    if route == "pro_lin"
-                    else "我支持赵磊提出可持续的商业运营，但希望先说清合作边界。"
+                message_text,
+                command_id=(
+                    f"simulation_player_message_{route}_{phase}_{run.clock.current.day}"
                 ),
-                command_id=f"simulation_player_message_{route}_{run.clock.current.day}",
             )
             metrics.scripted_actions["message_sent"] += 1
+            metrics.scripted_actions[f"{phase}_message_sent"] += 1
         except Exception as exc:
             metrics.scripted_actions["message_not_sent"] += 1
             metrics.failures[f"script:{type(exc).__name__}"] += 1
@@ -888,7 +995,10 @@ def real_quality_gate_failures(report: SimulationReport) -> list[str]:
         failures.append("day7_not_reached")
     if metrics.final_day7_branch is None:
         failures.append("day7_not_resolved")
-    if metrics.events["world_event_occurred"] < 7:
+    # Private/scene events are intentionally absent from the public event
+    # stream when the player did not witness them.  The authoritative
+    # completion evidence is the world engine's fired/skipped event set.
+    if metrics.skipped_world_event_ids:
         failures.append("world_events_incomplete")
     if metrics.conversations_created < 1:
         failures.append("no_conversation")
@@ -904,6 +1014,15 @@ def real_quality_gate_failures(report: SimulationReport) -> list[str]:
         failures.append("embedding_not_enabled")
     if metrics.repository_recovered is not True:
         failures.append("repository_not_recovered")
+    if report.mode == "real" and metrics.temporary_run_deleted is not True:
+        failures.append("temporary_run_not_deleted")
+    if report.route != "observer":
+        if metrics.player_speech_count < 1:
+            failures.append("player_message_not_sent")
+        if metrics.chapter_stance_changes < 1:
+            failures.append("no_chapter_stance_change")
+        if metrics.player_result is None:
+            failures.append("player_result_missing")
     return failures
 
 

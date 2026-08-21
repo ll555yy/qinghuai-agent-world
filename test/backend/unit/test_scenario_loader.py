@@ -16,6 +16,8 @@ def test_eight_real_yaml_files_load(registry) -> None:
     assert len(registry.events) == 7
     assert len(registry.npc_personas) == 5
     assert len(registry.relationships) == 25
+    assert registry.virtual_hours_per_real_minute == 0.5
+    assert registry.real_seconds_per_virtual_minute == 2
     covered_relationships = {
         (memory.owner_npc_id, target_actor_id)
         for memory in registry.memories.values()

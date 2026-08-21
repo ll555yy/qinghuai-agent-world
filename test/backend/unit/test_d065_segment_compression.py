@@ -138,7 +138,7 @@ async def test_18_boundary_closes_without_starting_an_idle_round(registry) -> No
         run.clock.current = WorldTime(day=1, hour=17, minute=59)
         message = service._write_message_locked(run, conversation, "npc_001", "临近收束。")
 
-    await service.world_step(run.run_id, 1)
+    await service.world_step(run.run_id, 2)
 
     assert conversation.close_reason == "day_end"
     assert not any(event.event_type == "conversation_idle" for event in run.events)

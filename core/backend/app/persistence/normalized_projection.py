@@ -277,8 +277,8 @@ def _goal_rows(run: Run) -> list[dict[str, Any]]:
                 "status": status,
                 "created_world_day": day,
                 "created_world_minute": minute,
-                "resolved_world_day": day if status in {"completed", "abandoned"} else None,
-                "resolved_world_minute": minute if status in {"completed", "abandoned"} else None,
+                "resolved_world_day": day if status in {"achieved", "abandoned"} else None,
+                "resolved_world_minute": minute if status in {"achieved", "abandoned"} else None,
                 "resolution_reason": goal.get("resolutionReason"),
             }
         )
@@ -359,8 +359,8 @@ def _memory_rows(
 
 
 def _evidence_rows(run: Run, message_ids: set[str]) -> list[dict[str, Any]]:
-    return [
-        {
+    rows = {
+        (memory_id, message_id): {
             "run_id": run.run_id,
             "memory_id": memory_id,
             "message_id": message_id,
@@ -369,7 +369,8 @@ def _evidence_rows(run: Run, message_ids: set[str]) -> list[dict[str, Any]]:
         for memory_id, memory in run.memories.items()
         for message_id in memory.get("evidenceMessageIds", [])
         if message_id in message_ids
-    ]
+    }
+    return list(rows.values())
 
 
 def _memory_link_rows(

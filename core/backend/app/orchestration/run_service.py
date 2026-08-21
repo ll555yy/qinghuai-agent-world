@@ -57,6 +57,15 @@ from .event_hub import EventHub
 SEGMENT_SUMMARY_TRIGGER_MESSAGES = 20
 SEGMENT_SUMMARY_RECENT_MESSAGES = 8
 
+# A single external trigger should create a short exchange, not an entire
+# self-playing scene. The first real Day1 acceptance produced 17 messages and
+# 90 logical model calls across two conversations with the former depth of 8.
+# Two follow-up speakers keep the conversation legible and leave further turns
+# to the next player/NPC trigger.
+CHAT_RESPONSE_CHAIN_LIMIT = 2
+PARTICIPANT_EVENT_RESPONSE_CHAIN_LIMIT = 1
+INITIAL_MEMORY_CACHE_LIMIT = 1
+
 
 class RunService:
     """Coordinate repository, domain rules, per-Run locks, and event fan-out."""
@@ -400,13 +409,24 @@ class RunService:
         real_seconds: int,
         command_id: str | None = None,
     ) -> dict[str, Any]:
-        """Advance effective world time (one real second equals one minute)."""
+        """Convert active foreground seconds into authoritative world minutes."""
 
         if isinstance(real_seconds, bool) or not isinstance(real_seconds, int) or real_seconds <= 0:
             raise WorldStepError(
                 "realSeconds must be a positive integer.",
                 details={"realSeconds": real_seconds},
             )
+        seconds_per_minute = self.registry.real_seconds_per_virtual_minute
+        virtual_minutes_float = real_seconds / seconds_per_minute
+        if not virtual_minutes_float.is_integer():
+            raise WorldStepError(
+                f"realSeconds must be a multiple of {seconds_per_minute:g}.",
+                details={
+                    "realSeconds": real_seconds,
+                    "realSecondsPerVirtualMinute": seconds_per_minute,
+                },
+            )
+        virtual_minutes = int(virtual_minutes_float)
         run = await self.get_run_entity(run_id)
         fingerprint = self._fingerprint("world_step", {"realSeconds": real_seconds})
         published: list[dict[str, Any]] = []
@@ -415,13 +435,13 @@ class RunService:
             if previous is not None:
                 return deepcopy(previous)
             before_seq = run.event_seq
-            await self._advance_virtual_locked(run, real_seconds)
+            await self._advance_virtual_locked(run, virtual_minutes)
             run.append_event("world_stepped", {"worldTime": run.clock.as_dict(), "realSeconds": real_seconds})
             published = [event_item.to_dict() for event_item in run.events_after(before_seq)]
             result = {
                 "worldTime": run.clock.as_dict(),
                 "run": run.to_public_snapshot(self.registry),
-                "advancedMinutes": real_seconds,
+                "advancedMinutes": virtual_minutes,
             }
             self._record_command(run, command_id, fingerprint, result)
             await self.repository.save(run)
@@ -1339,6 +1359,10 @@ class RunService:
                     actor_id: self._candidate_state(run, actor_id)
                     for actor_id in candidates
                 },
+                "priorConversationCounts": self._prior_conversation_counts(
+                    run,
+                    npc_id,
+                ),
                 "memoryCache": self._initial_memory_ids(run, npc_id, candidates),
             },
         )
@@ -1858,7 +1882,12 @@ class RunService:
             return
         if speech.text.strip():
             message = self._write_message_locked(run, conversation, npc_id, speech.text)
-            await self._run_chat_pipeline_locked(run, conversation, message["messageId"], 8)
+            await self._run_chat_pipeline_locked(
+                run,
+                conversation,
+                message["messageId"],
+                CHAT_RESPONSE_CHAIN_LIMIT,
+            )
 
     async def _join_conversation_locked(self, run: Run, conversation: Conversation, actor_id: str) -> None:
         if not conversation.is_open or len(conversation.participants) >= 3:
@@ -1999,7 +2028,7 @@ class RunService:
                 run,
                 conversation,
                 message["messageId"],
-                7,
+                PARTICIPANT_EVENT_RESPONSE_CHAIN_LIMIT,
                 _allow_idle_reentry=False,
             )
 
@@ -2267,7 +2296,7 @@ class RunService:
         run: Run,
         conversation: Conversation,
         trigger_message_id: str | None,
-        chain_left: int = 8,
+        chain_left: int = CHAT_RESPONSE_CHAIN_LIMIT,
         *,
         _registered: bool = False,
         _allow_idle_reentry: bool = True,
@@ -2656,7 +2685,19 @@ class RunService:
             for _, _, memory_id in candidates
             if memory_id not in ordered
         )
-        return ordered[:8]
+        return ordered[:INITIAL_MEMORY_CACHE_LIMIT]
+
+    @staticmethod
+    def _prior_conversation_counts(run: Run, npc_id: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for conversation in run.conversations.values():
+            participants = conversation.participant_history()
+            if npc_id not in participants:
+                continue
+            for actor_id in participants:
+                if actor_id != npc_id:
+                    counts[actor_id] = counts.get(actor_id, 0) + 1
+        return counts
 
     def _apply_chat_drafts(self, run: Run, conversation: Conversation, npc_id: str, decision: ChatDecision) -> None:
         draft = run.conversation_drafts.setdefault(conversation.conversation_id, {}).setdefault(
@@ -3035,7 +3076,7 @@ class RunService:
         visible_ids = {message["messageId"] for message in messages}
         stored_refs: dict[str, str] = {}
         for item in consolidation.memories:
-            evidence = list(item.evidence_message_ids)
+            evidence = list(dict.fromkeys(item.evidence_message_ids))
             if (
                 item.ref in stored_refs
                 or not evidence
@@ -3291,7 +3332,38 @@ class RunService:
             )
             relationship.setdefault("sessionChangeReasons", []).append(update.get("reason", ""))
         memories = [value for value in run.memories.values() if value.get("ownerNpcId") == npc_id and value.get("memoryId") in set(extra.get("memoryCache", []))]
-        payload = {
+        chapter_context: dict[str, Any] | None = None
+        if protocol in {
+            "chat_decision",
+            "chat_decision_with_memory",
+            "exit_consolidation",
+        }:
+            chapter_context = {
+                "agendas": [
+                    {
+                        "agendaId": agenda.agenda_id,
+                        "ownerNpcId": agenda.owner_npc_id,
+                        "title": agenda.title,
+                        "publicSummary": agenda.public_summary,
+                    }
+                    for agenda in self.registry.public_agendas
+                ],
+                "selectedPlayerAgendaId": run.player_agenda_id,
+                "ownOverallStance": run.chapter_actor_stances.get(
+                    npc_id, "unknown"
+                ),
+                "ownAgendaStances": {
+                    agenda.agenda_id: run.chapter_agenda_stances.get(
+                        (agenda.agenda_id, npc_id), "unknown"
+                    )
+                    for agenda in self.registry.public_agendas
+                },
+                "canSetZhouAuthorization": npc_id == "npc_005",
+                "ownZhouAuthorization": (
+                    run.zhou_authorization if npc_id == "npc_005" else None
+                ),
+            }
+        payload: dict[str, Any] = {
             "protocol": protocol,
             "worldTime": run.clock.as_dict(),
             "timePolicy": run.clock.time_policy(),
@@ -3321,6 +3393,7 @@ class RunService:
                 "chapterEffects": deepcopy(draft.get("chapterEffects", [])),
                 "pendingGoals": deepcopy(draft.get("pendingGoals", [])),
             },
+            **({"chapterContext": chapter_context} if chapter_context is not None else {}),
             "context": extra,
         }
         return json.dumps(payload, ensure_ascii=False, default=str)

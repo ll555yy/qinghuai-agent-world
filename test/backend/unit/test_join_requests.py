@@ -327,7 +327,7 @@ async def test_cutoff_expires_pending_join_without_refusal_or_relation_change(
         if "npc_002" in key
     }
 
-    await service.world_step(created["runId"], 1)
+    await service.world_step(created["runId"], 2)
 
     join_request_id = pending["joinRequest"]["joinRequestId"]
     assert run.join_requests[join_request_id]["status"] == "expired"
@@ -440,7 +440,7 @@ async def test_daily_action_targeting_a_chat_creates_join_request(registry) -> N
         participants[0],
     )
 
-    await service.world_step(created["runId"], 60)
+    await service.world_step(created["runId"], 120)
 
     conversation = run.conversations[opened["conversation"]["conversationId"]]
     assert applicant_id in conversation.participants

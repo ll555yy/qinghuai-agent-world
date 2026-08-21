@@ -1025,7 +1025,7 @@ class Goal(Base):
             "disclosure IN ('shareable', 'guarded')", name="ck_goals_disclosure"
         ),
         CheckConstraint(
-            "status IN ('active', 'blocked', 'completed', 'abandoned', 'departed')",
+            "status IN ('active', 'blocked', 'achieved', 'abandoned')",
             name="ck_goals_status",
         ),
         CheckConstraint("created_world_day BETWEEN 1 AND 7", name="ck_goals_created_day"),

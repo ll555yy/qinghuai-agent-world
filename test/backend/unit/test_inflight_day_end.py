@@ -85,7 +85,7 @@ async def test_pre_boundary_speech_may_land_once_then_day_end_closes(registry) -
     )
     await asyncio.wait_for(model.started.wait(), timeout=2)
 
-    stepped = await asyncio.wait_for(service.world_step(run.run_id, 1), timeout=2)
+    stepped = await asyncio.wait_for(service.world_step(run.run_id, 2), timeout=2)
     assert stepped["worldTime"]["label"] == "Day1 18:00"
     assert run.pending_day_end == (1, "day_end")
     assert run.conversations[conversation_id].is_open
@@ -125,7 +125,7 @@ async def test_day7_waits_for_inflight_decision_before_consolidation_and_resolut
     )
     await asyncio.wait_for(model.started.wait(), timeout=2)
 
-    stepped = await asyncio.wait_for(service.world_step(run.run_id, 1), timeout=2)
+    stepped = await asyncio.wait_for(service.world_step(run.run_id, 2), timeout=2)
     assert stepped["worldTime"]["label"] == "Day7 18:00"
     assert run.chapter_resolution is None
     assert run.pending_chapter_event_id == "event_day7_proposal_deadline"
@@ -147,4 +147,3 @@ async def test_day7_waits_for_inflight_decision_before_consolidation_and_resolut
     assert consolidated_seq < resolved_seq
     assert run.pending_day_end is None
     assert run.pending_chapter_event_id is None
-

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -78,6 +79,23 @@ def _int(value: Any, *, file: str, field: str, minimum: int | None = None, maxim
     if maximum is not None and value > maximum:
         raise ScenarioValidationError(f"must be <= {maximum}", file=file, field=field)
     return value
+
+
+def _number(
+    value: Any,
+    *,
+    file: str,
+    field: str,
+    minimum: float | None = None,
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ScenarioValidationError("must be a number", file=file, field=field)
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ScenarioValidationError("must be finite", file=file, field=field)
+    if minimum is not None and parsed < minimum:
+        raise ScenarioValidationError(f"must be >= {minimum}", file=file, field=field)
+    return parsed
 
 
 def _enum(value: Any, allowed: set[str], *, file: str, field: str) -> str:
@@ -178,6 +196,9 @@ class ScenarioLoader:
             active_start_minutes=chapter["active_start_minutes"],
             active_end_minutes=chapter["active_end_minutes"],
             virtual_hours_per_real_minute=chapter["virtual_hours_per_real_minute"],
+            real_seconds_per_virtual_minute=chapter[
+                "real_seconds_per_virtual_minute"
+            ],
         )
 
     @staticmethod
@@ -598,7 +619,18 @@ class ScenarioLoader:
                 "end_minute": end_minute,
                 "active_start_minutes": active_start,
                 "active_end_minutes": active_end,
-                "virtual_hours_per_real_minute": _int(chapter.get("virtualHoursPerRealMinute"), file=filename, field="chapter.virtualHoursPerRealMinute", minimum=1),
+                "virtual_hours_per_real_minute": _number(
+                    chapter.get("virtualHoursPerRealMinute"),
+                    file=filename,
+                    field="chapter.virtualHoursPerRealMinute",
+                    minimum=0.01,
+                ),
+                "real_seconds_per_virtual_minute": _int(
+                    chapter.get("realSecondsPerVirtualMinute"),
+                    file=filename,
+                    field="chapter.realSecondsPerVirtualMinute",
+                    minimum=1,
+                ),
             },
             tuple(events),
         )

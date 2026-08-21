@@ -72,8 +72,8 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--seed", type=int, default=20260820)
     parser.add_argument("--max-model-calls", type=int, default=120)
-    parser.add_argument("--step-timeout-seconds", type=float, default=120.0)
-    parser.add_argument("--run-timeout-seconds", type=float, default=600.0)
+    parser.add_argument("--step-timeout-seconds", type=float, default=300.0)
+    parser.add_argument("--run-timeout-seconds", type=float, default=1200.0)
     parser.add_argument("--keep-run", action="store_true")
     parser.add_argument(
         "--output",
@@ -140,6 +140,8 @@ async def _main() -> int:
         "errorCode": None,
     }
     run_id: str | None = None
+    stage = "preflight"
+    temporary_run_deleted = False
     started = time.perf_counter()
     try:
         if not await base_repository.healthcheck():
@@ -166,8 +168,10 @@ async def _main() -> int:
             seed=args.seed,
         )
         engine = WorldEngine(service)
+        stage = "create_run"
         created = await service.create_run(seed=args.seed)
         run_id = str(created["runId"])
+        report["runId"] = run_id
         deadline = time.perf_counter() + args.run_timeout_seconds
         joined_conversation_id: str | None = None
         attempted_conversations: set[str] = set()
@@ -179,11 +183,21 @@ async def _main() -> int:
             remaining = deadline - time.perf_counter()
             if remaining <= 0:
                 raise TimeoutError("real chat acceptance timed out")
+            clock_minutes = run.clock.current.clock_minutes
+            step_minutes = (
+                60
+                if joined_conversation_id is not None
+                else 1 if clock_minutes % 60 == 0 else 60 - clock_minutes % 60
+            )
+            stage = f"world_step:{run.clock.as_dict()['label']}"
             await asyncio.wait_for(
                 engine.step(
                     run_id,
-                    60,
-                    command_id=f"real_chat_step_{run.clock.current.clock_minutes}",
+                    int(step_minutes * registry.real_seconds_per_virtual_minute),
+                    command_id=(
+                        f"real_chat_step_{run.clock.current.day}_"
+                        f"{run.clock.current.clock_minutes}_{step_minutes}"
+                    ),
                 ),
                 timeout=min(args.step_timeout_seconds, remaining),
             )
@@ -199,22 +213,31 @@ async def _main() -> int:
             ]
             for conversation in candidates:
                 attempted_conversations.add(conversation.conversation_id)
-                joined = await service.player_join(
-                    run_id,
-                    conversation.conversation_id,
-                    command_id=f"real_chat_join_{conversation.conversation_id}",
+                stage = "player_join"
+                joined = await asyncio.wait_for(
+                    service.player_join(
+                        run_id,
+                        conversation.conversation_id,
+                        command_id=f"real_chat_join_{conversation.conversation_id}",
+                    ),
+                    timeout=min(args.step_timeout_seconds, remaining),
                 )
                 if joined.get("joinRequest", {}).get("status") != "accepted":
                     continue
                 joined_conversation_id = conversation.conversation_id
-                await service.player_message(
-                    run_id,
-                    joined_conversation_id,
-                    "我想听听你们准备怎样合作保住书店，也愿意帮忙协调分歧。",
-                    command_id="real_chat_player_message",
+                stage = "player_message"
+                await asyncio.wait_for(
+                    service.player_message(
+                        run_id,
+                        joined_conversation_id,
+                        "我想听听你们准备怎样合作保住书店，也愿意帮忙协调分歧。",
+                        command_id="real_chat_player_message",
+                    ),
+                    timeout=min(args.step_timeout_seconds, remaining),
                 )
                 break
 
+        stage = "collect_metrics"
         run = await service.get_run_entity(run_id)
         event_counts: dict[str, int] = {}
         for event in run.events:
@@ -271,16 +294,30 @@ async def _main() -> int:
         }
         report["gates"] = gates
         report["status"] = "passed" if all(gates.values()) else "failed"
-        if not args.keep_run:
-            async with recovered_repository.session_factory() as session:
-                async with session.begin():
-                    await session.execute(
-                        delete(ChapterRun).where(ChapterRun.run_id == run_id)
-                    )
         await recovered_repository.close()
     except Exception as exc:
         report["errorCode"] = type(exc).__name__
+        report["errorStage"] = stage
+        report["modelLogicalCalls"] = (
+            bounded_model.calls if "bounded_model" in locals() else 0
+        )
+        report["modelPhysicalRequests"] = text_client.metrics_snapshot()[
+            "providerAttempts"
+        ]
     finally:
+        if run_id is not None and not args.keep_run:
+            try:
+                async with base_repository.session_factory() as session:
+                    async with session.begin():
+                        deleted = await session.execute(
+                            delete(ChapterRun).where(ChapterRun.run_id == run_id)
+                        )
+                temporary_run_deleted = bool(deleted.rowcount)
+            except Exception:
+                report["cleanupError"] = True
+        report["temporaryRunDeleted"] = temporary_run_deleted
+        if run_id is not None and not args.keep_run and not temporary_run_deleted:
+            report["status"] = "failed"
         report["latencyMs"] = int((time.perf_counter() - started) * 1000)
         await embedding_client.close()
         await text_client.close()

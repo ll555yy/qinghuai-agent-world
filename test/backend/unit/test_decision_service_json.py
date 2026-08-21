@@ -3,7 +3,24 @@ from __future__ import annotations
 import json
 
 import pytest
-from core.backend.app.ai.decision_service import extract_json_object
+from core.backend.app.ai.decision_service import PROTOCOL_RULES, extract_json_object
+
+
+def test_chat_rule_distinguishes_cache_use_from_required_recall() -> None:
+    rule = PROTOCOL_RULES["ChatDecision"]
+    assert "必须先返回 need_memory" in rule
+    assert "已有足够内容" in rule
+    assert "chapterEffects" in rule
+    assert "evidenceMessageIds 留空" in rule
+    assert "台词真实生成后绑定" in rule
+
+
+def test_action_and_consolidation_rules_expose_required_semantics() -> None:
+    assert "未解旧事" in PROTOCOL_RULES["DailyActionDecision"]
+    assert "具体问题" in PROTOCOL_RULES["SpeechGeneration"]
+    consolidation = PROTOCOL_RULES["ExitConsolidation"]
+    assert "chapterContext" in consolidation
+    assert "必须" in consolidation
 
 
 def test_extract_json_object_accepts_exact_plain_object() -> None:

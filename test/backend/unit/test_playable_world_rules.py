@@ -6,7 +6,7 @@ import pytest
 from core.backend.app.ai.decision_service import DecisionService, StructuredCallFailed
 from core.backend.app.ai.errors import AIError, AIErrorCode
 from core.backend.app.ai.models import TextGenerationResult
-from core.backend.app.ai.protocols import ChatDecision
+from core.backend.app.ai.protocols import ChatDecision, ExitConsolidation
 from core.backend.app.domain.errors import (
     ActorAlreadyInConversationError,
     ChapterAlreadyEndedError,
@@ -14,6 +14,82 @@ from core.backend.app.domain.errors import (
     InvalidInvitationError,
 )
 from core.backend.app.orchestration.run_service import RunService
+from core.backend.app.persistence.normalized_projection import _evidence_rows
+
+
+@pytest.mark.anyio
+async def test_spoken_chapter_effect_binds_the_generated_message(registry) -> None:
+    service = RunService(registry, text_model=None)
+    created = await service.create_run(agenda_id="agenda_001_literary_society")
+    opened = await service.create_conversation(
+        created["runId"], ["npc_001", registry.player_actor_id]
+    )
+    run = await service.get_run_entity(created["runId"])
+    conversation = run.conversations[opened["conversation"]["conversationId"]]
+    decision = ChatDecision.model_validate(
+        {
+            "result": "decided",
+            "action": "speak",
+            "intent": "明确支持公益文社方案",
+            "chapterEffects": [
+                {
+                    "kind": "agenda_stance",
+                    "agendaId": "agenda_001_literary_society",
+                    "value": "support",
+                    "evidenceMessageIds": [],
+                }
+            ],
+        }
+    )
+
+    service._apply_spoken_chapter_effects(
+        run, conversation, "npc_001", decision, "msg_generated"
+    )
+
+    effect = run.conversation_drafts[conversation.conversation_id]["npc_001"][
+        "chapterEffects"
+    ][0]
+    assert effect["agendaId"] == "agenda_001_literary_society"
+    assert effect["evidenceMessageIds"] == ["msg_generated"]
+
+
+@pytest.mark.anyio
+async def test_duplicate_memory_evidence_is_normalized_before_projection(registry) -> None:
+    service = RunService(registry, text_model=None)
+    created = await service.create_run()
+    opened = await service.create_conversation(
+        created["runId"], ["npc_001", registry.player_actor_id]
+    )
+    conversation_id = opened["conversation"]["conversationId"]
+    await service.player_message(created["runId"], conversation_id, "我愿意帮忙。")
+    run = await service.get_run_entity(created["runId"])
+    message_id = run.messages[conversation_id][0]["messageId"]
+    consolidation = ExitConsolidation.model_validate(
+        {
+            "memories": [
+                {
+                    "ref": "memory_ref",
+                    "type": "event",
+                    "content": "玩家明确表示愿意帮忙。",
+                    "evidenceMessageIds": [message_id, message_id],
+                }
+            ]
+        }
+    )
+
+    service._store_memories(
+        run,
+        "npc_001",
+        consolidation,
+        run.messages[conversation_id],
+    )
+    stored = next(
+        memory
+        for memory in run.memories.values()
+        if memory.get("content") == "玩家明确表示愿意帮忙。"
+    )
+    assert stored["evidenceMessageIds"] == [message_id]
+    assert len(_evidence_rows(run, {message_id})) == 1
 
 
 class InvalidModel:
@@ -143,7 +219,7 @@ class ConsolidationModel:
 async def test_each_npc_thinks_once_and_after_day1_event(registry) -> None:
     service = RunService(registry, text_model=None, seed=7)
     created = await service.create_run()
-    await service.world_step(created["runId"], 540)
+    await service.world_step(created["runId"], 1080)
     run = await service.get_run_entity(created["runId"])
     event_seq = next(
         event.event_seq
@@ -186,7 +262,7 @@ async def test_observed_event_only_enters_witness_private_memory(registry) -> No
         for actor_id in run.positions:
             run.positions[actor_id] = {"x": 100, "y": 100}
         run.positions["npc_001"] = {"x": 0, "y": 0}
-    await service.world_step(created["runId"], 541)
+    await service.world_step(created["runId"], 1082)
     public = await service.get_run(created["runId"])
     assert "event_day2_bookstore_leak" not in {
         event["eventId"] for event in public["worldEvents"]

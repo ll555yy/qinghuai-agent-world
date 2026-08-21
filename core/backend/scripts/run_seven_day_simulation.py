@@ -60,8 +60,8 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--max-calls-per-run", type=int, default=600)
     parser.add_argument("--max-total-calls", type=int, default=1800)
-    parser.add_argument("--step-timeout-seconds", type=float, default=120.0)
-    parser.add_argument("--run-timeout-seconds", type=float, default=600.0)
+    parser.add_argument("--step-timeout-seconds", type=float, default=900.0)
+    parser.add_argument("--run-timeout-seconds", type=float, default=5400.0)
     parser.add_argument(
         "--keep-runs",
         action="store_true",
@@ -252,6 +252,11 @@ async def _main() -> int:
                     await session.execute(
                         delete(ChapterRun).where(ChapterRun.run_id.in_(run_ids))
                     )
+            for report in reports:
+                if report.run_id:
+                    report.metrics.temporary_run_deleted = (
+                        await recovered_repository.get(report.run_id)
+                    ) is None
         await recovered_repository.close()
 
     if args.real:
@@ -286,17 +291,22 @@ async def _main() -> int:
         f"- Runs: `{len(reports)}/{requested_run_count}`",
         f"- Backend: `{args.backend}`",
         f"- Provider calls: `{total_calls}`",
+        f"- Temporary Runs deleted: `{all(report.metrics.temporary_run_deleted is True for report in reports if report.run_id) if not args.keep_runs else 'kept by request'}`",
         "",
-        "| Run | Route | Final time | Day7 branch | Provider calls | Rejected |",
-        "|---:|---|---|---|---:|---|",
+        "| Run | Route | Final time | Day7 branch | Player result | Recall | Vector/Graph | Recovered | Deleted | Gates |",
+        "|---:|---|---|---|---|---:|---:|---|---|---|",
     ]
     for index, report in enumerate(reports, start=1):
         metrics = report.metrics.to_dict()
         markdown_lines.append(
             f"| {index} | `{report.route}` | `{metrics['finalWorldTime'] or 'n/a'}` "
             f"| `{metrics['day7Branch'] or 'n/a'}` "
-            f"| {sum(metrics['providerCalls'].values())} "
-            f"| `{metrics['rejected']}` |"
+            f"| `{metrics['playerResult'] or 'n/a'}` "
+            f"| {metrics['memoryRetrieval']['calls']} "
+            f"| {metrics['memoryRetrieval']['vectorHits']}/{metrics['memoryRetrieval']['graphHits']} "
+            f"| `{metrics['repositoryRecovered']}` "
+            f"| `{metrics['temporaryRunDeleted']}` "
+            f"| `{','.join(metrics['qualityGateFailures']) or 'none'}` |"
         )
     markdown_path.write_text("\n".join(markdown_lines) + "\n", encoding="utf-8")
     if client is not None:

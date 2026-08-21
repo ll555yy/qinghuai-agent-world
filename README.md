@@ -6,7 +6,7 @@
 - `test/`：所有测试、模拟和测试数据。
 - `project/`：已确认的设计文档与一致性审计。
 
-当前已完成无需前端即可运行的七天后端闭环：世界时间与事件、NPC 错峰行动、移动和邀请、最多三人聊天、玩家加入与自由发言、私有 Memory Graph 召回、离场沉淀、D-065 自动收束、长聊天滚动摘要以及 Day7 固定结算。火山方舟文本模型与 Embedding 的代码路径已经接入；真实模型质量仍须用本机密钥完成六协议和三局七日验收，未验收前不宣称后端可玩性完成。
+当前已完成无需前端即可运行的七天后端闭环：世界时间与事件、NPC 错峰行动、移动和邀请、最多三人聊天、玩家加入与自由发言、私有 Memory Graph 召回、离场沉淀、D-065 自动收束、长聊天滚动摘要以及 Day7 固定结算。火山方舟六类文本协议、2048 维 Embedding、真实 Day1 闭环以及 observer / pro_lin / pro_zhao 三条真实七日路线均已通过验收；后端前端门禁已解除。
 
 权威状态可选择进程内存或 Docker PostgreSQL + pgvector。数据库模式会持久化 Run、消息、Goal、关系、Memory Graph 和章节状态，后端重启后可以继续运行；React/Phaser 前端尚未开发。权威玩法见 `project/PROJECT_DESIGN.md`，数据库阶段设计与验收见 `project/DATABASE_BACKEND_DESIGN.md` 和 `project/DATABASE_BACKEND_IMPLEMENTATION_REPORT.md`。
 
@@ -37,10 +37,14 @@ python -m uvicorn core.backend.app.main:app --reload
 在 Conda 环境 `qinghuai-chat` 中，从仓库根目录运行：
 
 ```powershell
-python -m pytest -q
-python -m ruff check --config core/backend/pyproject.toml core/backend/app test/backend
-python -m mypy --config-file core/backend/pyproject.toml core/backend/app
+python -m pytest -c core/backend/pyproject.toml -q
+cd core/backend
+python -m ruff check app scripts migrations ../../test/backend
+python -m mypy
+cd ../..
 ```
+
+要包含 PostgreSQL 集成测试，先把 `QINGHUAI_TEST_DATABASE_URL` 指向专用测试库；不要让测试连接开发库或生产库。
 
 需要启动 API 时：
 
@@ -86,7 +90,7 @@ python core/backend/scripts/run_real_chat_acceptance.py --live
 python core/backend/scripts/run_seven_day_simulation.py --real --backend postgres --route all --runs 1 --output simulation_reports
 ```
 
-加 `--keep-runs` 才保留模拟 Run；否则在完成 Repository 重启恢复验证后清理这些模拟数据。真实报告目录不要提交，完成三局后按 `project/REAL_AI_EMBEDDING_SIMULATION_ACCEPTANCE.md` 记录结果和调参证据。
+加 `--keep-runs` 才保留模拟 Run；否则在完成 Repository 重启恢复验证后清理这些模拟数据，并在安全报告中记录删除结果。真实报告目录不要提交；当前三路线结果见 `project/REAL_SEVEN_DAY_SIMULATION_RESULTS.md`，完整调参依据见 `project/PROMPT_GAMEPLAY_TUNING_LOG.md`。
 
 若确实要清空本机开发数据库（会删除全部本地 Run，无法恢复）：
 

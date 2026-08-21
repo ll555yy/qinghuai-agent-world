@@ -16,6 +16,7 @@ class WorldEngine:
         self.service = service
 
     async def step(self, run_id: str, real_seconds: int, command_id: str | None = None) -> dict[str, Any]:
+        """Advance foreground time; the service applies the scenario ratio."""
         return await self.service.world_step(run_id, real_seconds, command_id)
 
 
