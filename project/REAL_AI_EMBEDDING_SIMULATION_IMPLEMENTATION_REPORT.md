@@ -21,7 +21,7 @@
 
 - PostgreSQL 与测试数据库均已迁移到最新版本，Alembic 未发现模型漂移。
 - Fake 模型可以让三条路线推进到 Day7 18:00；PostgreSQL 模式完成后可重新打开 Repository 恢复 Run。
-- 全量测试：155 passed，包含 PostgreSQL 集成测试。
+- 全量测试：D-066 上下文压缩更新后为 158 passed，包含 PostgreSQL 集成测试。
 - Ruff：通过。
 - mypy：61 个源码文件通过。
 - Git diff whitespace 与敏感信息扫描：通过。

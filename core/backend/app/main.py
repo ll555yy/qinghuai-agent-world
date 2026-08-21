@@ -96,6 +96,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             repository=repository,
             text_model=application.state.ai_client,
             memory_retriever=memory_retriever,
+            segment_summary_trigger_messages=(
+                runtime_settings.segment_summary_threshold
+            ),
+            segment_summary_trigger_tokens=(
+                runtime_settings.segment_summary_token_threshold
+            ),
+            segment_summary_recent_messages=(
+                runtime_settings.segment_recent_messages
+            ),
+            segment_boundary_carryover_messages=(
+                runtime_settings.segment_boundary_carryover_messages
+            ),
         )
         application.state.scenario_loaded = True
         try:

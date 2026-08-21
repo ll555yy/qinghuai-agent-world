@@ -92,11 +92,11 @@ creating → opening → active ↔ waiting_ai → idle_pending → closing → 
 ```
 
 - NPC 发起并获接受时，由发起 NPC 生成开场台词；玩家发起并获接受时，由玩家输入第一句话。
-- 每次参与者集合变化立即关闭当前 ConversationSegment，创建新 Segment；新加入 NPC 只读取新 Segment，玩家 UI 可以读取 Conversation 全历史。
+- 每次参与者集合变化立即关闭当前 ConversationSegment，创建新 Segment；继续参与者读取旧 Segment 摘要和最近 4 条边界原文，新加入 NPC 只读取新 Segment，玩家 UI 可以读取 Conversation 全历史。
 - NPC `leave_chat` 时先关闭其共同可见区间，再执行该 NPC 的 `ExitConsolidation`；其他参与者可以继续。
 - 玩家离开只产生参与者事件和 Segment 边界，不强制剩余 NPC 立即沉淀。若剩余不足两人，Conversation 关闭，剩余 NPC 执行沉淀。
 - 所有 NPC 选择等待后进入 `idle_pending`。达到空闲阈值触发一次 `conversation_idle`；仍无人发言则关闭会话。
-- Conversation 关闭或参与者变化时，需要摘要的已结束 Segment 进入 `SegmentSummary` 队列；摘要只属于可见集合，不带单一 `ownerNpcId`。
+- Conversation 关闭或参与者变化时，已结束 Segment 执行 `SegmentSummary`；摘要只属于可见集合，不带单一 `ownerNpcId`。
 
 ## 7. 新消息处理流水线
 
@@ -123,7 +123,8 @@ creating → opening → active ↔ waiting_ai → idle_pending → closing → 
 
 ## 9. 长短期上下文
 
-- 原始消息永久保存，模型上下文只使用“较早可见 Segment 摘要 + 最近可见原文”。
+- 原始消息永久保存。稳定参与者集合内使用“较早可见 Segment 摘要 + 最近 8 条可见原文”；参与者变化后的继续参与者再获得上一 Segment 最近 4 条边界原文，新加入者不获得。
+- 滚动摘要由“未摘要消息超过 20 条”或“存在可压缩前缀且本地估算超过约 2400 Token”任一条件触发；游标只在摘要成功后推进。
 - NPC 进入 Conversation 时以在场人物、当前 Goal 和开场 Topic 初始化私有 Memory 缓存。
 - 新消息只有在现有缓存不足时允许一次新增召回；无结果时角色表现为不知道或不确定。
 - 召回先由 Actor/Goal/Topic/已知 Memory 多种子生成 Graph 候选，再由当前 NPC 私有向量候选补充；排序后扩展有限前因、矛盾和取代关系。

@@ -6,9 +6,11 @@ import pytest
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.clock import WorldTime
 from core.backend.app.orchestration.run_service import (
+    SEGMENT_BOUNDARY_CARRYOVER_MESSAGES,
     SEGMENT_SUMMARY_RECENT_MESSAGES,
     RunService,
 )
+from core.backend.app.persistence.codec import deserialize_run, serialize_run
 
 
 class WaitAndSummaryModel:
@@ -173,6 +175,33 @@ async def test_rolling_summary_keeps_eight_raw_messages_and_advances_cursor(regi
 
 
 @pytest.mark.anyio
+async def test_token_budget_can_roll_before_message_count_threshold(registry) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(
+        registry,
+        text_model=model,
+        segment_summary_trigger_tokens=300,
+    )
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+    async with run.lock:
+        for index in range(9):
+            service._write_message_locked(
+                run,
+                conversation,
+                "npc_001" if index % 2 == 0 else "npc_002",
+                "青槐巷" * 12,
+            )
+        await service._maybe_roll_segment_summary_locked(run, conversation)
+        segment = run.segments[conversation.conversation_id][-1]
+        context = service._chat_context(run, conversation, "npc_001")
+
+    assert segment["summaryThroughMessageId"] == "msg_000001"
+    assert len(context["messages"]) == SEGMENT_SUMMARY_RECENT_MESSAGES
+    assert len(model.segment_prompts) == 1
+    assert model.segment_prompts[0]["mode"] == "rolling"
+
+
+@pytest.mark.anyio
 async def test_final_summary_is_incremental_and_failure_does_not_advance_cursor(registry) -> None:
     model = WaitAndSummaryModel()
     service = RunService(registry, text_model=model)
@@ -223,9 +252,66 @@ async def test_joiner_cannot_read_previous_segment_summary(registry) -> None:
     async with run.lock:
         await service._maybe_roll_segment_summary_locked(run, conversation)
         await service._join_conversation_locked(run, conversation, "npc_003")
+        continuing_context = service._chat_context(run, conversation, "npc_001")
         joiner_context = service._chat_context(run, conversation, "npc_003")
 
     assert service._visible_messages(run, conversation, "npc_003") == []
+    assert [
+        item["messageId"] for item in continuing_context["boundaryMessages"]
+    ] == [
+        f"msg_{index:06d}"
+        for index in range(
+            22 - SEGMENT_BOUNDARY_CARRYOVER_MESSAGES,
+            22,
+        )
+    ]
     assert joiner_context["messages"] == []
+    assert joiner_context["boundaryMessages"] == []
     assert joiner_context["segmentSummaries"] == []
     assert len(run.messages[conversation.conversation_id]) == 21
+
+
+@pytest.mark.anyio
+async def test_short_segment_join_summarizes_and_carries_tail_for_old_members_only(
+    registry,
+) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(registry, text_model=model)
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+    await _write_messages(service, run, conversation, 6)
+
+    async with run.lock:
+        await service._join_conversation_locked(run, conversation, "npc_003")
+        continuing_context = service._chat_context(run, conversation, "npc_002")
+        joiner_context = service._chat_context(run, conversation, "npc_003")
+
+    assert model.segment_prompts[0]["mode"] == "final"
+    assert [
+        item["messageId"] for item in continuing_context["boundaryMessages"]
+    ] == ["msg_000003", "msg_000004", "msg_000005", "msg_000006"]
+    assert continuing_context["segmentSummaries"][0]["summary"]["claims"] == [
+        "滚动摘要已生成"
+    ]
+    assert joiner_context == {
+        "segmentSummaries": [],
+        "boundaryMessages": [],
+        "messages": [],
+    }
+
+    restored = deserialize_run(serialize_run(run))
+    restored_conversation = restored.conversations[conversation.conversation_id]
+    restored_continuing_context = service._chat_context(
+        restored,
+        restored_conversation,
+        "npc_001",
+    )
+    restored_joiner_context = service._chat_context(
+        restored,
+        restored_conversation,
+        "npc_003",
+    )
+    assert [
+        item["messageId"]
+        for item in restored_continuing_context["boundaryMessages"]
+    ] == ["msg_000003", "msg_000004", "msg_000005", "msg_000006"]
+    assert restored_joiner_context["boundaryMessages"] == []

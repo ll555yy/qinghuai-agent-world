@@ -55,7 +55,9 @@ from .event_hub import EventHub
 # The source messages remain authoritative; these values only control what is
 # supplied to the next private model prompt.
 SEGMENT_SUMMARY_TRIGGER_MESSAGES = 20
+SEGMENT_SUMMARY_TRIGGER_TOKENS = 2400
 SEGMENT_SUMMARY_RECENT_MESSAGES = 8
+SEGMENT_BOUNDARY_CARRYOVER_MESSAGES = 4
 
 # A single external trigger should create a short exchange, not an entire
 # self-playing scene. The first real Day1 acceptance produced 17 messages and
@@ -78,7 +80,28 @@ class RunService:
         text_model: Any | None = None,
         memory_retriever: MemoryRetriever | None = None,
         seed: int = 1,
+        segment_summary_trigger_messages: int = SEGMENT_SUMMARY_TRIGGER_MESSAGES,
+        segment_summary_trigger_tokens: int = SEGMENT_SUMMARY_TRIGGER_TOKENS,
+        segment_summary_recent_messages: int = SEGMENT_SUMMARY_RECENT_MESSAGES,
+        segment_boundary_carryover_messages: int = SEGMENT_BOUNDARY_CARRYOVER_MESSAGES,
     ) -> None:
+        if segment_summary_recent_messages >= segment_summary_trigger_messages:
+            raise ValueError(
+                "segment_summary_recent_messages must be less than "
+                "segment_summary_trigger_messages"
+            )
+        if min(
+            segment_summary_trigger_messages,
+            segment_summary_trigger_tokens,
+            segment_summary_recent_messages,
+            segment_boundary_carryover_messages,
+        ) <= 0:
+            raise ValueError("segment context limits must be positive")
+        if segment_boundary_carryover_messages > segment_summary_recent_messages:
+            raise ValueError(
+                "segment_boundary_carryover_messages must not exceed "
+                "segment_summary_recent_messages"
+            )
         self.registry = registry
         self.repository = repository or InMemoryRunRepository()
         self.event_hub = event_hub or EventHub()
@@ -101,6 +124,12 @@ class RunService:
             [npc.actor_id for npc in self.registry.npcs],
         )
         self.seed = seed
+        self.segment_summary_trigger_messages = segment_summary_trigger_messages
+        self.segment_summary_trigger_tokens = segment_summary_trigger_tokens
+        self.segment_summary_recent_messages = segment_summary_recent_messages
+        self.segment_boundary_carryover_messages = (
+            segment_boundary_carryover_messages
+        )
 
     async def create_run(self, agenda_id: str | None = None, seed: int | None = None) -> dict[str, Any]:
         if agenda_id is not None and self.registry.agenda(agenda_id) is None:
@@ -2141,6 +2170,32 @@ class RunService:
         # source set.  It is safer to repeat input than to silently hide it.
         return list(messages)
 
+    @staticmethod
+    def _approximate_message_tokens(messages: list[dict[str, Any]]) -> int:
+        """Estimate prompt tokens without adding a provider-specific tokenizer.
+
+        CJK characters are conservatively counted one-for-one. Other text is
+        estimated at four characters per token, plus a small per-message
+        envelope for role and metadata. Exact provider token accounting is not
+        required here: this threshold exists to summarize unusually long
+        messages before the deterministic message-count threshold is reached.
+        """
+
+        total = 0
+        for message in messages:
+            text = str(message.get("text", ""))
+            cjk_count = sum(
+                1
+                for character in text
+                if (
+                    "\u3400" <= character <= "\u4dbf"
+                    or "\u4e00" <= character <= "\u9fff"
+                    or "\uf900" <= character <= "\ufaff"
+                )
+            )
+            total += cjk_count + math.ceil((len(text) - cjk_count) / 4) + 3
+        return total
+
     def _segment_summary_entries(
         self,
         run: Run,
@@ -2165,9 +2220,10 @@ class RunService:
         """Compress the current Segment once its un-summarized tail is long.
 
         The model sees the prior neutral summary plus the older part of the
-        uncompressed tail, while the newest eight source messages remain
-        verbatim.  A failed call leaves both the summary and its cursor
-        untouched so a later message can retry it.
+        uncompressed tail, while the configured recent source messages remain
+        verbatim. The roll is triggered by either message count or an
+        approximate token budget. A failed call leaves both the summary and
+        its cursor untouched so a later message can retry it.
         """
 
         segments = run.segments.get(conversation.conversation_id, [])
@@ -2181,9 +2237,17 @@ class RunService:
             source_messages,
             segment.get("summaryThroughMessageId"),
         )
-        if len(unsummarized) <= SEGMENT_SUMMARY_TRIGGER_MESSAGES:
+        message_limit_reached = (
+            len(unsummarized) > self.segment_summary_trigger_messages
+        )
+        token_limit_reached = (
+            len(unsummarized) > self.segment_summary_recent_messages
+            and self._approximate_message_tokens(unsummarized)
+            > self.segment_summary_trigger_tokens
+        )
+        if not message_limit_reached and not token_limit_reached:
             return
-        to_compress = unsummarized[:-SEGMENT_SUMMARY_RECENT_MESSAGES]
+        to_compress = unsummarized[: -self.segment_summary_recent_messages]
         if not to_compress:
             return
         segment_id = segment.get("segmentId")
@@ -2542,6 +2606,41 @@ class RunService:
     def _visible_messages(self, run: Run, conversation: Conversation, npc_id: str) -> list[dict[str, Any]]:
         return [deepcopy(message) for message in run.messages.get(conversation.conversation_id, []) if npc_id in message.get("visibleToNpcIds", [])]
 
+    def _boundary_carryover_messages(
+        self,
+        run: Run,
+        conversation: Conversation,
+        npc_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return the previous Segment tail only to continuing participants."""
+
+        segments = run.segments.get(conversation.conversation_id, [])
+        if len(segments) < 2:
+            return []
+        previous_segment, current_segment = segments[-2:]
+        if (
+            npc_id not in previous_segment.get("participants", [])
+            or npc_id not in current_segment.get("participants", [])
+        ):
+            return []
+        visible_ids = {
+            message["messageId"]
+            for message in self._visible_messages(run, conversation, npc_id)
+            if message.get("segmentId") == previous_segment.get("segmentId")
+        }
+        visible_previous_messages = [
+            message
+            for message in self._segment_messages(
+                run,
+                conversation,
+                previous_segment,
+            )
+            if message.get("messageId") in visible_ids
+        ]
+        return visible_previous_messages[
+            -self.segment_boundary_carryover_messages :
+        ]
+
     def _chat_context(
         self,
         run: Run,
@@ -2568,7 +2667,15 @@ class RunService:
         # small-chat behaviour.  After compression the cursor, rather than a
         # hard slice, decides which raw tail is still needed; this ensures a
         # failed summary never hides source evidence from the Agent.
-        return {"segmentSummaries": summaries, "messages": messages}
+        return {
+            "segmentSummaries": summaries,
+            "boundaryMessages": self._boundary_carryover_messages(
+                run,
+                conversation,
+                npc_id,
+            ),
+            "messages": messages,
+        }
 
     def _consolidation_prompt_messages(
         self,
@@ -2591,10 +2698,10 @@ class RunService:
             if segment.get("summaryThroughMessageId"):
                 # ExitConsolidation still needs a bounded evidence tail for
                 # validating Memory/Goal/Effect references.  The shared
-                # summary carries the older context; the latest eight raw
-                # messages retain concrete evidence without re-expanding the
+                # The summary carries the older context; the configured raw
+                # tail retains concrete evidence without re-expanding the
                 # whole segment prompt.
-                projected = segment_messages[-SEGMENT_SUMMARY_RECENT_MESSAGES:]
+                projected = segment_messages[-self.segment_summary_recent_messages :]
             else:
                 projected = segment_messages
             result.extend(

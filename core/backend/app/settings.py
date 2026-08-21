@@ -53,7 +53,9 @@ class Settings:
     embedding_model: str | None = None
     embedding_base_url: str | None = None
     segment_summary_threshold: int = 20
+    segment_summary_token_threshold: int = 2400
     segment_recent_messages: int = 8
+    segment_boundary_carryover_messages: int = 4
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -71,10 +73,21 @@ class Settings:
         if backend == "postgres" and not database_url:
             raise ValueError("DATABASE_URL is required when PostgreSQL persistence is enabled")
         summary_threshold = _positive_int("SEGMENT_SUMMARY_THRESHOLD", 20)
+        summary_token_threshold = _positive_int(
+            "SEGMENT_SUMMARY_TOKEN_THRESHOLD", 2400
+        )
         recent_messages = _positive_int("SEGMENT_RECENT_MESSAGES", 8)
+        boundary_carryover_messages = _positive_int(
+            "SEGMENT_BOUNDARY_CARRYOVER_MESSAGES", 4
+        )
         if recent_messages >= summary_threshold:
             raise ValueError(
                 "SEGMENT_RECENT_MESSAGES must be less than SEGMENT_SUMMARY_THRESHOLD"
+            )
+        if boundary_carryover_messages > recent_messages:
+            raise ValueError(
+                "SEGMENT_BOUNDARY_CARRYOVER_MESSAGES must not exceed "
+                "SEGMENT_RECENT_MESSAGES"
             )
         embedding_dimensions = _positive_int(
             "ARK_EMBEDDING_DIMENSIONS", MEMORY_EMBEDDING_DIMENSIONS
@@ -94,5 +107,7 @@ class Settings:
             embedding_model=embedding_model,
             embedding_base_url=embedding_base_url,
             segment_summary_threshold=summary_threshold,
+            segment_summary_token_threshold=summary_token_threshold,
             segment_recent_messages=recent_messages,
+            segment_boundary_carryover_messages=boundary_carryover_messages,
         )

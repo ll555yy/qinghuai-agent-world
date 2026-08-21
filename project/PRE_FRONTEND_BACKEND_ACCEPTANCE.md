@@ -24,7 +24,7 @@
 
 - 三条路线均使用真实方舟文本模型与真实 Embedding；Graph 扩展命中为 0，表示向量种子已直接满足本次查询，不影响 owner-safe 混合检索验收。
 - Prompt/玩法参数已依据真实样本完成调优并复跑：连续回复链为 2、参与者变化链为 1、初始 Memory cache 为 1；支持路线采用 Day1 调查旧事、Day7 明确询问最终立场的两阶段玩家输入。
-- 最终自动化验收：155 passed（含 PostgreSQL 集成测试）、Ruff 全范围通过、mypy 61 个源文件通过；开发库与测试库均在 Alembic head `b18e9f0a1234`。
+- 最终自动化验收：D-066 上下文压缩更新后为 158 passed（含 PostgreSQL 集成测试）、Ruff 全范围通过、mypy 61 个源文件通过；开发库与测试库均在 Alembic head `b18e9f0a1234`。
 
 ## 非阻塞边界
 

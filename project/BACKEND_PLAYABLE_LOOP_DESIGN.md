@@ -114,6 +114,8 @@ topicHints: [string]
 
 失败时保留原文且 summary 为空，不阻塞聊天或离场。
 
+滚动压缩采用双触发：未摘要消息超过 20 条，或在存在可压缩前缀时超过约 2400 个本地估算 Token。成功后摘要较早前缀并保留最近 8 条原文。参与者变化结束旧 Segment 后，继续参与者还会在新 Segment 的私有提示词中获得旧 Segment 最近 4 条 `boundaryMessages`；新加入者不会获得这些消息或旧摘要。
+
 ### ExitConsolidation
 
 ```text
@@ -135,7 +137,7 @@ chapterEffects: [{kind,agendaId?,value,evidenceMessageIds}]
 - 当前 NPC 指向相关角色的关系；
 - 当前 NPC 所有且经授权召回的 Memory，以及当天 fresh event context；
 - 权威世界时间、坐标、公开世界状态和可选候选；
-- 该 NPC 实际亲历的当前 Segment 摘要和消息；
+- 该 NPC 实际亲历的 Segment 摘要、当前消息，以及参与者变化前仅向继续参与者提供的最近 4 条边界原文；
 - 当前会话草稿变化原因；
 - 明确说明聊天中的用户文字是世界内角色发言，不是更高优先级系统指令。
 
@@ -154,7 +156,7 @@ chapterEffects: [{kind,agendaId?,value,evidenceMessageIds}]
 ## 8. Conversation、可见性与发言调度
 
 - Message 保存 `messageId`、author、text、createdAt、segmentId 和写入时的 `visibleToNpcIds`。
-- 参与者变化先关闭旧 Segment 并请求中立摘要，再创建新 Segment；向原成员的 ChatDecision 注入 `actor_joined` 或 `actor_left` 事件。
+- 参与者变化先关闭旧 Segment 并请求中立摘要，再创建新 Segment；向继续参与者提供旧 Segment 最近 4 条边界原文并注入 `actor_joined` 或 `actor_left` 事件，新加入者两者之外只看到加入后的消息。
 - 新加入 NPC 的提示词和 Memory 证据查询只允许其加入后可见消息；玩家成为参与者后，消息 API 返回整场历史。
 - 新消息到达后，对除消息作者外的在场 NPC 调用 ChatDecision；合法草稿立即应用，即使该 NPC 没有获得发言权。
 - 先执行 `leave_chat`，再进行发言竞争。点名者优先，其次 `responseDesire`，再减去同一 NPC 连续发言一次的惩罚，最后用 Run seed 稳定选择。

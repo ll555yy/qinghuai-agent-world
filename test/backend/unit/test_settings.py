@@ -54,7 +54,9 @@ def test_database_and_summary_settings_are_parsed(
     monkeypatch.setenv("ARK_EMBEDDING_MODEL", "ep-test")
     monkeypatch.setenv("ARK_EMBEDDING_BASE_URL", "https://example.invalid/api/v3")
     monkeypatch.setenv("SEGMENT_SUMMARY_THRESHOLD", "24")
+    monkeypatch.setenv("SEGMENT_SUMMARY_TOKEN_THRESHOLD", "2600")
     monkeypatch.setenv("SEGMENT_RECENT_MESSAGES", "10")
+    monkeypatch.setenv("SEGMENT_BOUNDARY_CARRYOVER_MESSAGES", "5")
 
     settings = Settings.from_environment()
 
@@ -64,7 +66,9 @@ def test_database_and_summary_settings_are_parsed(
     assert settings.embedding_model == "ep-test"
     assert settings.embedding_base_url == "https://example.invalid/api/v3"
     assert settings.segment_summary_threshold == 24
+    assert settings.segment_summary_token_threshold == 2600
     assert settings.segment_recent_messages == 10
+    assert settings.segment_boundary_carryover_messages == 5
 
 
 def test_recent_message_window_must_be_smaller_than_summary_threshold(
@@ -74,6 +78,16 @@ def test_recent_message_window_must_be_smaller_than_summary_threshold(
     monkeypatch.setenv("SEGMENT_RECENT_MESSAGES", "8")
 
     with pytest.raises(ValueError, match="must be less"):
+        Settings.from_environment()
+
+
+def test_boundary_carryover_must_fit_inside_recent_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEGMENT_RECENT_MESSAGES", "4")
+    monkeypatch.setenv("SEGMENT_BOUNDARY_CARRYOVER_MESSAGES", "5")
+
+    with pytest.raises(ValueError, match="must not exceed"):
         Settings.from_environment()
 
 
