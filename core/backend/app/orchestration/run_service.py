@@ -3342,11 +3342,26 @@ class RunService:
         if run.player_agenda_id is not None:
             result = agenda_results.get(run.player_agenda_id, "not_adopted")
             player_task = "completed" if result == "core_adopted" else "partial" if result == "partially_adopted" else "failed"
+        player_messages = [
+            {
+                "messageId": message["messageId"],
+                "conversationId": message["conversationId"],
+                "text": message["text"],
+                "createdAt": message.get("createdAt"),
+            }
+            for conversation_messages in run.messages.values()
+            for message in conversation_messages
+            if message.get("authorActorId") == self.registry.player_actor_id
+        ]
+        player_messages.sort(key=lambda message: message["messageId"])
+        player_messages = player_messages[-5:]
         run.chapter_resolution = {
             "chapterId": self.registry.chapter_id,
             "branch": branch,
             "agendaResults": agenda_results,
             "playerTaskResult": player_task,
+            "actorStances": deepcopy(run.chapter_actor_stances),
+            "playerHighlights": player_messages,
         }
         run.run_finished = True
         run.clock.status = "chapter_ended"

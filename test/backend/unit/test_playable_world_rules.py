@@ -477,6 +477,16 @@ async def test_day7_resolution_is_fixed_from_committed_state(
     )
     async with run.lock:
         run.zhou_authorization = authorization
+        run.messages["conv_player"] = [
+            {
+                "messageId": "msg_player_key",
+                "conversationId": "conv_player",
+                "authorActorId": registry.player_actor_id,
+                "text": "先把书店不能退让的底线写进方案。",
+                "createdAt": "Day6 14:00",
+                "visibleToNpcIds": ["npc_001"],
+            }
+        ]
         for npc, stance in zip(registry.npcs, stances, strict=True):
             run.chapter_actor_stances[npc.actor_id] = stance
             run.chapter_agenda_stances[
@@ -484,6 +494,17 @@ async def test_day7_resolution_is_fixed_from_committed_state(
             ] = stance
         await service._finish_chapter_locked(run, deadline)
     assert run.chapter_resolution["branch"] == expected
+    assert run.chapter_resolution["actorStances"] == dict(
+        zip((npc.actor_id for npc in registry.npcs), stances, strict=True)
+    )
+    assert run.chapter_resolution["playerHighlights"] == [
+        {
+            "messageId": "msg_player_key",
+            "conversationId": "conv_player",
+            "text": "先把书店不能退让的底线写进方案。",
+            "createdAt": "Day6 14:00",
+        }
+    ]
     if expected == "consensus_submitted":
         assert run.chapter_resolution["agendaResults"]["agenda_001_literary_society"] == "core_adopted"
         assert run.chapter_resolution["playerTaskResult"] == "completed"
@@ -635,3 +656,54 @@ async def test_departed_npc_cannot_be_created_or_added_to_chat(registry) -> None
         await service.add_participant(
             second["runId"], opened["conversation"]["conversationId"], "npc_001"
         )
+
+
+@pytest.mark.anyio
+async def test_public_snapshot_restores_only_player_facing_pending_requests(registry) -> None:
+    service = RunService(registry, text_model=None)
+    created = await service.create_run()
+    run = await service.get_run_entity(created["runId"])
+    async with run.lock:
+        run.invitations["invite_player"] = {
+            "invitationId": "invite_player",
+            "initiatorActorId": "npc_001",
+            "targetActorId": "player_001",
+            "status": "pending",
+            "requestedAt": "Day1 10:00",
+            "_goalId": "goal_private",
+        }
+        run.invitations["invite_private"] = {
+            "invitationId": "invite_private",
+            "initiatorActorId": "npc_002",
+            "targetActorId": "npc_003",
+            "status": "pending",
+            "requestedAt": "Day1 10:00",
+            "_goalId": "goal_private",
+        }
+        run.join_requests["join_player"] = {
+            "joinRequestId": "join_player",
+            "conversationId": "conv_000001",
+            "applicantActorId": "npc_004",
+            "status": "pending",
+            "requestedAt": "Day1 10:00",
+            "approverActorIds": ["npc_005", "player_001"],
+            "approverDecisions": {"npc_005": "accept", "player_001": "pending"},
+        }
+        snapshot = run.to_public_snapshot(registry)
+
+    assert [item["invitationId"] for item in snapshot["pendingInvitations"]] == [
+        "invite_player"
+    ]
+    assert "_goalId" not in str(snapshot["pendingInvitations"])
+    assert snapshot["pendingJoinRequests"] == [
+        {
+            "joinRequestId": "join_player",
+            "conversationId": "conv_000001",
+            "applicantActorId": "npc_004",
+            "status": "pending",
+            "requestedAt": "Day1 10:00",
+            "approverActorIds": ["npc_005", "player_001"],
+            "pendingPlayerDecision": True,
+        }
+    ]
+    assert "approverDecisions" not in str(snapshot["pendingJoinRequests"])

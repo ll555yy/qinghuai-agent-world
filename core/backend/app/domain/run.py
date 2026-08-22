@@ -157,6 +157,40 @@ class Run:
         # Deliberately construct this projection field by field.  Copying YAML
         # records wholesale here would make it too easy to leak secrets,
         # private goals, memories, relation values, or authoring notes later.
+        player_id = registry.player_actor_id
+        pending_invitations = [
+            {
+                key: deepcopy(value)
+                for key, value in invitation.items()
+                if not key.startswith("_")
+            }
+            for invitation in self.invitations.values()
+            if invitation.get("status") == "pending"
+            and player_id
+            in {
+                invitation.get("initiatorActorId"),
+                invitation.get("targetActorId"),
+            }
+        ]
+        pending_join_requests = [
+            {
+                "joinRequestId": request["joinRequestId"],
+                "conversationId": request["conversationId"],
+                "applicantActorId": request["applicantActorId"],
+                "status": request["status"],
+                "requestedAt": request["requestedAt"],
+                "approverActorIds": list(request["approverActorIds"]),
+                "pendingPlayerDecision": (
+                    request["approverDecisions"].get(player_id) == "pending"
+                ),
+            }
+            for request in self.join_requests.values()
+            if request.get("status") == "pending"
+            and (
+                request.get("applicantActorId") == player_id
+                or player_id in request.get("approverActorIds", ())
+            )
+        ]
         return {
             "runId": self.run_id,
             "stateVersion": self.state_version,
@@ -174,6 +208,8 @@ class Run:
             "conversations": [
                 conversation.to_public_dict() for conversation in self.conversations.values()
             ],
+            "pendingInvitations": pending_invitations,
+            "pendingJoinRequests": pending_join_requests,
             "worldEvents": [
                 {
                     key: deepcopy(value)

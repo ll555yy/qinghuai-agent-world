@@ -8,7 +8,19 @@
 
 当前已完成无需前端即可运行的七天后端闭环：世界时间与事件、NPC 错峰行动、移动和邀请、最多三人聊天、玩家加入与自由发言、私有 Memory Graph 召回、离场沉淀、D-065 自动收束、长聊天滚动摘要以及 Day7 固定结算。火山方舟六类文本协议、2048 维 Embedding、真实 Day1 闭环以及 observer / pro_lin / pro_zhao 三条真实七日路线均已通过验收；后端前端门禁已解除。
 
-权威状态可选择进程内存或 Docker PostgreSQL + pgvector。数据库模式会持久化 Run、消息、Goal、关系、Memory Graph 和章节状态，后端重启后可以继续运行；React/Phaser 前端尚未开发。权威玩法见 `project/PROJECT_DESIGN.md`，数据库阶段设计与验收见 `project/DATABASE_BACKEND_DESIGN.md` 和 `project/DATABASE_BACKEND_IMPLEMENTATION_REPORT.md`。
+权威状态可选择进程内存或 Docker PostgreSQL + pgvector。数据库模式会持久化 Run、消息、Goal、关系、Memory Graph 和章节状态，后端重启后可以继续运行。React + Phaser 前端已实现开局、任务选择、二维书店场景、邀请/加入/聊天、日终、断线恢复和 Day7 结局。权威玩法见 `project/PROJECT_DESIGN.md`，前端设计与验收见 `project/FRONTEND_DESIGN.md` 和 `project/FRONTEND_ACCEPTANCE_REPORT.md`。
+
+## 启动前端
+
+先启动数据库和后端，再在另一个终端运行：
+
+```powershell
+cd core/frontend
+pnpm install
+pnpm dev
+```
+
+浏览器访问 `http://127.0.0.1:5173`。Vite 会把 `/api` 和 `/ws` 转发到 `http://127.0.0.1:8000`。首次运行浏览器验收前执行 `pnpm exec playwright install chromium`。
 
 ## 启动 PostgreSQL
 
@@ -27,7 +39,7 @@ cd ../..
 ```powershell
 $env:QINGHUAI_PERSISTENCE_BACKEND="postgres"
 $env:DATABASE_URL="postgresql+psycopg://qinghuai:你的本地密码@127.0.0.1:5432/qinghuai"
-python -m uvicorn core.backend.app.main:app --reload
+python -m core.backend.app
 ```
 
 只做快速单元测试时不设置上述变量，后端会显式使用内存仓储。数据库模式连接失败或未迁移会直接报错，不会悄悄退回内存。
@@ -49,7 +61,7 @@ cd ../..
 需要启动 API 时：
 
 ```powershell
-python -m uvicorn core.backend.app.main:app --reload
+python -m core.backend.app
 ```
 
 需要真实模型时，复制 `.env.example` 到本机 `.env`，填写已经轮换的新 `ARK_API_KEY`。应用和验收脚本会自动读取仓库根目录的 `.env`；不要把它加入 Git。
