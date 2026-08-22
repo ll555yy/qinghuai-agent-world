@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 
 import { ApiError, api } from '../../api/client'
 import { PLAYER_ACTOR_ID } from '../../api/types'
+import { actorPortraitCss } from '../../game/actorAssets'
 import { useUiStore } from '../../state/uiStore'
 import { useWorldStore } from '../../state/worldStore'
 
@@ -95,7 +96,10 @@ export function ChatPanel() {
       </header>
       <div className="participant-row">
         {conversation.participants.map((actorId) => (
-          <span key={actorId}>{actorId === PLAYER_ACTOR_ID ? '你' : actorMap.get(actorId)?.name ?? actorId}</span>
+          <span key={actorId} className="participant-chip">
+            <i className="mini-avatar" style={actorPortraitCss(actorId)} aria-hidden="true" />
+            {actorId === PLAYER_ACTOR_ID ? '你' : actorMap.get(actorId)?.name ?? actorId}
+          </span>
         ))}
       </div>
 
@@ -112,6 +116,7 @@ export function ChatPanel() {
       <div className="message-list" aria-live="polite">
         {messages.length ? messages.map((message) => (
           <article key={message.messageId} className={`${message.system ? 'system-message' : ''} ${message.authorActorId === PLAYER_ACTOR_ID ? 'own-message' : ''}`}>
+            {!message.system ? <i className="message-avatar" style={actorPortraitCss(message.authorActorId)} aria-hidden="true" /> : null}
             {!message.system ? <strong>{message.authorActorId === PLAYER_ACTOR_ID ? '你' : actorMap.get(message.authorActorId)?.name ?? message.authorActorId}</strong> : null}
             <p>{message.system && message.systemActorId ? `${message.systemActorId === PLAYER_ACTOR_ID ? '你' : actorMap.get(message.systemActorId)?.name ?? message.systemActorId}${message.text}` : message.text}</p>
             {message.createdAt ? <time>{message.createdAt}</time> : null}

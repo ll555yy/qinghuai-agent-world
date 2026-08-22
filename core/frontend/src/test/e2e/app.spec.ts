@@ -28,11 +28,17 @@ function makeSnapshot(overrides: Partial<RunSnapshot> = {}): RunSnapshot {
       { actorId: 'player_001', kind: 'player', name: '玩家', role: '旧书店兼职帮手', publicBackground: '半个月前搬来青槐巷。', publicImpression: ['做事稳妥'] },
       { actorId: 'npc_001', kind: 'npc', name: '林慧兰', role: '退休中学语文教师', publicBackground: '常在社区活动中心教人写字。', publicImpression: ['懂事知礼的长辈'] },
       { actorId: 'npc_002', kind: 'npc', name: '沈星遥', role: '自由插画师', publicBackground: '毕业于美术学院，搬来本地半年。', publicImpression: ['安静'] },
+      { actorId: 'npc_003', kind: 'npc', name: '赵磊', role: '销售主管', publicBackground: '外地来青槐巷打拼多年。', publicImpression: ['热情活络'] },
+      { actorId: 'npc_004', kind: 'npc', name: '陈月', role: '社区医院护士', publicBackground: '本地人，做事麻利。', publicImpression: ['热心直爽'] },
+      { actorId: 'npc_005', kind: 'npc', name: '周慎之', role: '旧书店老板', publicBackground: '经营旧书店十余年。', publicImpression: ['沉静可靠'] },
     ],
     actorStates: {
       player_001: { status: 'present', position: { x: 1, y: 2 } },
       npc_001: { status: 'waiting', position: { x: 0, y: 0 } },
       npc_002: { status: 'waiting', position: { x: 2, y: 0 } },
+      npc_003: { status: 'waiting', position: { x: 4, y: 0 } },
+      npc_004: { status: 'waiting', position: { x: 1, y: 1 } },
+      npc_005: { status: 'waiting', position: { x: 3, y: 1 } },
     },
     conversations: [],
     pendingInvitations: [],
@@ -53,7 +59,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 
 async function mockBackend(
   page: Page,
-  options: { healthFailure?: boolean; initialConversation?: boolean; ended?: boolean; dayEndEvent?: boolean } = {},
+  options: { healthFailure?: boolean; initialConversation?: boolean; ended?: boolean; dayEndEvent?: boolean; nearDayEnd?: boolean; refuseInvite?: boolean } = {},
 ) {
   const initialConversation = options.initialConversation
     ? [{ conversationId: 'conv_1', creationSeq: 1, participants: ['npc_001', 'npc_002'], status: 'open' as const }]
@@ -75,7 +81,11 @@ async function mockBackend(
         },
       }
     : {}
-  let current = makeSnapshot({ conversations: initialConversation, ...endingOverrides })
+  let current = makeSnapshot({
+    conversations: initialConversation,
+    ...(options.nearDayEnd ? { worldTime: { day: 1, hour: 17, minute: 50, time: '17:50', label: 'Day1 17:50', status: 'running' } } : {}),
+    ...endingOverrides,
+  })
   let conversationMessages: PublicMessage[] = options.initialConversation
     ? [{ messageId: 'msg_old', conversationId: 'conv_1', authorActorId: 'npc_001', text: '我们先把各自的底线说清楚。', createdAt: 'Day1 09:10' }]
     : []
@@ -97,6 +107,9 @@ async function mockBackend(
       return fulfillJson(route, { ...current.actors[1], status: current.actorStates.npc_001.status, position: current.actorStates.npc_001.position })
     }
     if (path === '/api/runs/run_e2e/invitations' && request.method() === 'POST') {
+      if (options.refuseInvite) {
+        return fulfillJson(route, { run: current, invitation: { invitationId: 'invite_refused', initiatorActorId: 'player_001', targetActorId: 'npc_001', status: 'refused' } })
+      }
       const conversation = { conversationId: 'conv_chat', creationSeq: 2, participants: ['player_001', 'npc_001'], status: 'open' as const }
       current = { ...current, eventSeq: current.eventSeq + 1, conversations: [conversation], actorStates: { ...current.actorStates, player_001: { ...current.actorStates.player_001, status: 'chatting' }, npc_001: { ...current.actorStates.npc_001, status: 'chatting' } } }
       conversationMessages = [{ messageId: 'msg_open', conversationId: 'conv_chat', authorActorId: 'npc_001', text: '既然来了，就坐下谈谈吧。', createdAt: 'Day1 09:05' }]
@@ -158,6 +171,31 @@ test('selects a task and enters the authoritative world', async ({ page }) => {
   await expect(page.getByLabel('慎之旧书店二维场景')).toBeVisible()
   await expect(page.getByText('Day 1 / 7')).toBeVisible()
   await expect(page.getByText('青槐文社', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('慎之旧书店二维场景')).toHaveAttribute('data-actor-count', '6')
+})
+
+test('shows refusal feedback without opening a conversation', async ({ page }) => {
+  await enterWorld(page, { refuseInvite: true })
+  await expect(page.getByLabel('慎之旧书店二维场景')).toHaveAttribute('data-ready', 'true')
+  const canvas = page.locator('canvas')
+  const box = await canvas.boundingBox()
+  if (!box) throw new Error('Phaser canvas was not rendered')
+  await canvas.click({ button: 'right', position: { x: (126 / 880) * box.width, y: (286 / 534) * box.height } })
+  await page.getByRole('button', { name: '发出聊天邀请' }).click()
+  await expect(page.getByText('林慧兰拒绝了邀请。')).toBeVisible()
+  await expect(page.getByPlaceholder('自由输入你想说的话……')).not.toBeVisible()
+})
+
+test('shows the 17:50 countdown and blocks new invitations', async ({ page }) => {
+  await enterWorld(page, { nearDayEnd: true })
+  await expect(page.getByText('临近 18:00，当前聊天即将强制结束')).toBeVisible()
+  await expect(page.getByLabel('慎之旧书店二维场景')).toHaveAttribute('data-world-time', '17:50')
+})
+
+test('remains usable with reduced motion enabled', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await enterWorld(page)
+  await expect(page.getByLabel('慎之旧书店二维场景')).toHaveAttribute('data-ready', 'true')
 })
 
 test('restores the authoritative Run after a page reload', async ({ page }) => {
@@ -224,4 +262,17 @@ test('keeps the task screen usable when the backend is unavailable', async ({ pa
   await page.getByRole('button', { name: '查看可选立场' }).click()
   await expect(page.getByRole('alert')).toContainText('后端尚未启动')
   await expect(page.getByRole('button', { name: '← 返回' })).toBeEnabled()
+})
+
+test('captures the approved world layout at three desktop sizes', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await enterWorld(page, { initialConversation: true })
+  await expect(page.getByLabel('慎之旧书店二维场景')).toHaveAttribute('data-ready', 'true')
+  await page.screenshot({ path: '../../project/visual-qa/world-1440x900.png', animations: 'disabled' })
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.screenshot({ path: '../../project/visual-qa/world-1280x720.png', animations: 'disabled' })
+  await page.setViewportSize({ width: 980, height: 720 })
+  await page.getByRole('button', { name: /林慧兰、沈星遥正在聊天/ }).click()
+  await expect(page.getByText('你还没有加入这场聊天')).toBeVisible()
+  await page.screenshot({ path: '../../project/visual-qa/world-980x720-panel.png', animations: 'disabled' })
 })

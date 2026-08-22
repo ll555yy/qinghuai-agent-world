@@ -60,8 +60,8 @@ export function WorldCanvas({ snapshot, onActorContext, onConversationClick, sce
   }, [snapshot])
 
   useEffect(() => {
-    if (sceneCue) sceneRef.current?.showBubble(sceneCue.actorId, sceneCue.text, sceneCue.tone)
+    if (sceneCue) sceneRef.current?.showBubble(sceneCue.actorId, sceneCue.text, sceneCue.tone, sceneCue.id)
   }, [sceneCue])
 
-  return <div ref={hostRef} className="world-canvas" aria-label="慎之旧书店二维场景" />
+  return <div ref={hostRef} className="world-canvas" aria-label="慎之旧书店二维场景" data-actor-count={snapshot.actors.length} data-world-time={snapshot.worldTime.time} />
 }

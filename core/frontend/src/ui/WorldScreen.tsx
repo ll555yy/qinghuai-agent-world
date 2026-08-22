@@ -98,7 +98,7 @@ export default function WorldScreen() {
       const result = await api.invite(snapshot.runId, actorId)
       setSnapshot(result.run)
       if (result.invitation) setInvitation(result.invitation)
-      showSceneCue(PLAYER_ACTOR_ID, '想和你聊聊')
+      showSceneCue(PLAYER_ACTOR_ID, '想和你聊聊', 'invite')
       if (result.conversation) {
         openChat(result.conversation.conversationId)
         const history = await api.messages(snapshot.runId, result.conversation.conversationId)
@@ -186,7 +186,7 @@ export default function WorldScreen() {
           onClick={(event) => event.stopPropagation()}
         >
           <strong>{menuActor.name}</strong>
-          <button type="button" onClick={() => openActor(menuActor.actorId)}>了解信息</button>
+          <button type="button" onClick={() => { closeContextMenu(); openActor(menuActor.actorId) }}>了解信息</button>
           <button type="button" disabled={!canInvite} onClick={() => inviteActor(menuActor.actorId)}>
             发出聊天邀请
           </button>

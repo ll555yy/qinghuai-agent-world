@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { api } from '../../api/client'
 import type { PublicActor } from '../../api/types'
+import { actorPortraitCss } from '../../game/actorAssets'
 import { useUiStore } from '../../state/uiStore'
 import { useWorldStore } from '../../state/worldStore'
 
@@ -34,7 +35,12 @@ export function ActorPanel() {
       <header><span>公开信息</span><button type="button" className="icon-button" onClick={closePanel}>×</button></header>
       {visibleDetail ? (
         <>
-          <div className="large-avatar">{visibleDetail.name.slice(0, 1)}</div>
+          <div
+            className="large-avatar portrait-avatar"
+            style={actorPortraitCss(visibleDetail.actorId)}
+            role="img"
+            aria-label={`${visibleDetail.name}的公开头像`}
+          ><span>{visibleDetail.name.slice(0, 1)}</span></div>
           <h2>{visibleDetail.name}</h2>
           <p className="role-label">{visibleDetail.role}</p>
           <p>{visibleDetail.publicBackground}</p>

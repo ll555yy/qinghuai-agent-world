@@ -8,6 +8,7 @@ import type {
   RunSnapshot,
 } from '../api/types'
 import { reduceRunEvent, type WorldData } from './eventReducer'
+import type { BubbleTone } from '../game/bubblePolicy'
 
 export interface Notice {
   id: string
@@ -19,7 +20,7 @@ export interface SceneCue {
   id: string
   actorId: string
   text: string
-  tone: 'paper' | 'refuse'
+  tone: BubbleTone
 }
 
 interface WorldStore extends WorldData {
@@ -70,6 +71,32 @@ function noticeFor(event: RunEvent): Omit<Notice, 'id'> | null {
   }
 }
 
+function cueFor(event: RunEvent, invitations: Record<string, PublicInvitation>): SceneCue | null {
+  const p = event.payload
+  const actorId = typeof p.actorId === 'string' ? p.actorId : undefined
+  const id = `event-${event.eventSeq}`
+  if (event.eventType === 'message_created' && typeof p.authorActorId === 'string' && typeof p.text === 'string') {
+    return { id, actorId: p.authorActorId, text: p.text, tone: p.authorActorId === 'player_001' ? 'player' : 'npc' }
+  }
+  if (event.eventType === 'npc_thought_started' && actorId) return { id, actorId, text: '正在想……', tone: 'thinking' }
+  if (event.eventType === 'invitation_requested') {
+    const invitationId = typeof p.invitationId === 'string' ? p.invitationId : ''
+    const invitation = invitations[invitationId]
+    if (invitation) return { id, actorId: invitation.initiatorActorId, text: '想和你聊聊', tone: 'invite' }
+  }
+  if (['invitation_accepted', 'invitation_refused', 'invitation_expired'].includes(event.eventType)) {
+    const invitationId = typeof p.invitationId === 'string' ? p.invitationId : ''
+    const invitation = invitations[invitationId]
+    if (invitation) {
+      if (event.eventType === 'invitation_accepted') return { id, actorId: invitation.targetActorId, text: '好，我们聊聊', tone: 'accept' }
+      return { id, actorId: invitation.targetActorId, text: event.eventType === 'invitation_refused' ? '不了，我现在不想聊' : '来不及开始了', tone: 'refuse' }
+    }
+  }
+  if (event.eventType === 'conversation_participant_joined' && typeof p.actorJoined === 'string') return { id, actorId: p.actorJoined, text: '加入了聊天', tone: 'join' }
+  if (event.eventType === 'conversation_participant_left' && typeof p.actorLeft === 'string') return { id, actorId: p.actorLeft, text: '先告辞了', tone: 'leave' }
+  return null
+}
+
 export const useWorldStore = create<WorldStore>((set) => ({
   ...initialWorld,
   notices: [],
@@ -97,13 +124,7 @@ export const useWorldStore = create<WorldStore>((set) => ({
     set((state) => {
       const reduced = reduceRunEvent(state, event)
       const notice = noticeFor(event)
-      const invitationId = event.payload.invitationId
-      const invitation = typeof invitationId === 'string' ? reduced.invitations[invitationId] : undefined
-      const sceneCue = event.eventType === 'invitation_requested' && invitation
-        ? { id: `event-${event.eventSeq}`, actorId: invitation.initiatorActorId, text: '想和你聊聊', tone: 'paper' as const }
-        : event.eventType === 'invitation_refused' && invitation
-          ? { id: `event-${event.eventSeq}`, actorId: invitation.targetActorId, text: '不了，我现在不想聊', tone: 'refuse' as const }
-          : state.sceneCue
+      const sceneCue = cueFor(event, reduced.invitations) ?? state.sceneCue
       return {
         ...reduced,
         sceneCue,
@@ -125,7 +146,7 @@ export const useWorldStore = create<WorldStore>((set) => ({
     set((state) => ({
       notices: [...state.notices.slice(-3), { id: crypto.randomUUID(), text, tone }],
     })),
-  showSceneCue: (actorId, text, tone = 'paper') =>
+  showSceneCue: (actorId, text, tone = 'npc') =>
     set({ sceneCue: { id: crypto.randomUUID(), actorId, text, tone } }),
   dismissNotice: (id) =>
     set((state) => ({ notices: state.notices.filter((notice) => notice.id !== id) })),
