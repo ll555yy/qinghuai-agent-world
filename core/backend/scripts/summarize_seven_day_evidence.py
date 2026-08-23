@@ -14,12 +14,22 @@ from core.backend.app.simulation.evidence import (  # noqa: E402
     gameplay_evidence_markdown,
     load_batch_reports,
     summarize_gameplay_evidence,
+    summarize_preregistered_evidence,
+)
+from core.backend.app.simulation.manifest import (  # noqa: E402
+    load_manifest,
 )
 
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("reports", nargs="+", type=Path)
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="preregistration manifest; enables the full planned denominator",
+    )
     parser.add_argument("--minimum-seeds-per-route", type=int, default=3)
     parser.add_argument(
         "--output",
@@ -32,10 +42,32 @@ def _args() -> argparse.Namespace:
 def main() -> int:
     args = _args()
     reports = load_batch_reports(args.reports)
-    summary = summarize_gameplay_evidence(
-        reports,
-        minimum_seeds_per_route=args.minimum_seeds_per_route,
-    )
+    manifest_path = args.manifest
+    if manifest_path is not None:
+        manifest, _ = load_manifest(manifest_path)
+        ledger_records: dict[str, dict[str, object]] = {}
+        for report in reports:
+            source = report.get("_evidenceSource")
+            if not isinstance(source, dict):
+                continue
+            raw_attempts = source.get("attempts", [])
+            if not isinstance(raw_attempts, list):
+                continue
+            for raw_attempt in raw_attempts:
+                if isinstance(raw_attempt, dict) and isinstance(
+                    raw_attempt.get("attemptId"), str
+                ):
+                    ledger_records.setdefault(str(raw_attempt["attemptId"]), raw_attempt)
+        summary = summarize_preregistered_evidence(
+            manifest,
+            reports,
+            attempt_records=ledger_records.values(),
+        )
+    else:
+        summary = summarize_gameplay_evidence(
+            reports,
+            minimum_seeds_per_route=args.minimum_seeds_per_route,
+        )
     args.output.mkdir(parents=True, exist_ok=True)
     json_path = args.output / "seven_day_gameplay_evidence.json"
     markdown_path = args.output / "seven_day_gameplay_evidence.md"

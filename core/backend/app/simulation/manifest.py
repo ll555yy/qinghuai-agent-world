@@ -29,6 +29,9 @@ ManifestStatus = Literal[
     "budget_exhausted",
     "runner_failed",
 ]
+# Public alias used by callers that think in terms of an attempt rather than
+# the broader manifest document.
+AttemptStatus = ManifestStatus
 
 TERMINAL_ATTEMPT_STATUSES: frozenset[str] = frozenset(
     {
@@ -480,6 +483,10 @@ class AttemptLedger:
         current = self._read_or_not_started(item, path)
         self._check_identity(current, item)
         existing = current.get("status")
+        if existing == "not_started" and current.get("terminalAt") is not None:
+            if status == "not_started":
+                return current
+            raise RuntimeError(f"attempt already terminal: {item['attemptId']}")
         if existing in TERMINAL_ATTEMPT_STATUSES and existing != "not_started":
             if existing != status:
                 raise RuntimeError(f"attempt already terminal: {item['attemptId']}")
@@ -590,6 +597,7 @@ __all__ = [
     "ATTEMPT_ID_RE",
     "AttemptLedger",
     "AttemptRecord",
+    "AttemptStatus",
     "DEFAULT_MANIFEST_PATH",
     "DEFAULT_MANIFEST_SCHEMA_PATH",
     "DEFAULT_MANIFEST_SHA256_PATH",

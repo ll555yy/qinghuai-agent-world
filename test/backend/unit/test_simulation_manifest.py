@@ -19,6 +19,16 @@ from core.backend.app.simulation.manifest import (
 )
 from core.backend.app.simulation.runner import ROUTE_PLAYER_STEPS
 
+RECOVERY_MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "core"
+    / "backend"
+    / "app"
+    / "simulation"
+    / "manifests"
+    / "final_agent_validation_recovery_v2.json"
+)
+
 
 def _canonical_json_digest(value: object) -> str:
     payload = (
@@ -52,6 +62,24 @@ def test_versioned_manifest_has_external_digest_and_full_continuous_matrix() -> 
         assert manifest["routes"][route]["plannedRuns"] == 5
     assert manifest["budget"]["maxCostCny"] is None
     assert manifest["pricing"]["currency"] == "CNY"
+
+
+def test_recovery_manifest_is_distinct_preregistered_full_matrix() -> None:
+    manifest, digest = load_manifest(RECOVERY_MANIFEST_PATH)
+    original, _ = load_manifest()
+
+    assert manifest["experimentId"] == "final-agent-validation-recovery-20260823"
+    assert manifest["preregistrationBaseCommit"] == "235b36b"
+    assert len(planned_attempts(manifest)) == 15
+    assert digest == "0bc0a42bd71f1c98ea3229bea74db59021dfef028d43438e21cc07a662fcfcfe"
+    assert manifest["artifacts"] == original["artifacts"]
+    assert manifest["strategies"] == original["strategies"]
+    assert {
+        item["attemptId"] for item in planned_attempts(manifest)
+    }.isdisjoint(item["attemptId"] for item in planned_attempts(original))
+    for route in ("observer", "pro_lin", "pro_zhao"):
+        assert manifest["routes"][route]["seeds"] == list(range(20260845, 20260850))
+        assert manifest["routes"][route]["plannedRuns"] == 5
 
 
 def test_manifest_artifact_and_strategy_digests_match_frozen_sources() -> None:

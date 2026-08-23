@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -32,6 +33,12 @@ load_dotenv(_ROOT / ".env", override=False)
 sys.path.insert(0, str(_ROOT))
 
 from core.backend.app.scenario.loader import ScenarioLoader  # noqa: E402
+from core.backend.app.simulation.manifest import (  # noqa: E402
+    DEFAULT_MANIFEST_PATH,
+    AttemptLedger,
+    load_manifest,
+    planned_attempts,
+)
 from core.backend.app.simulation.runner import (  # noqa: E402
     DEFAULT_EMBEDDING_CNY_PER_MILLION,
     DEFAULT_SIMULATION_SEED,
@@ -39,9 +46,35 @@ from core.backend.app.simulation.runner import (  # noqa: E402
     DEFAULT_TEXT_OUTPUT_CNY_PER_MILLION,
     ROUTE_AGENDAS,
     SevenDaySimulationRunner,
+    SimulationReport,
     SimulationRoute,
     real_quality_gate_failures,
 )
+
+
+def _atomic_write_text(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(value, encoding="utf-8")
+    temporary.replace(path)
+
+
+def _write_attempt_checkpoint(report: SimulationReport, output: Path) -> tuple[Path, Path]:
+    """Persist one completed attempt before the batch advances.
+
+    Batch-level cleanup may enrich the final report later, but this checkpoint
+    keeps provider usage, gameplay metrics, and the terminal attempt identity
+    recoverable if a later provider outage interrupts the process.
+    """
+
+    identity = report.attempt_id or f"{report.route}-{report.seed}"
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", identity).strip("_")
+    directory = output / "attempt_reports"
+    json_path = directory / f"{stem}.json"
+    markdown_path = directory / f"{stem}.md"
+    _atomic_write_text(json_path, report.to_json() + "\n")
+    _atomic_write_text(markdown_path, report.to_markdown())
+    return json_path, markdown_path
 
 
 def _args() -> argparse.Namespace:
@@ -65,6 +98,18 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--max-total-calls", type=int, default=1800)
     parser.add_argument("--step-timeout-seconds", type=float, default=900.0)
     parser.add_argument("--run-timeout-seconds", type=float, default=5400.0)
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="versioned preregistration manifest; real runs default to the final v1 matrix",
+    )
+    parser.add_argument(
+        "--attempt-root",
+        type=Path,
+        default=None,
+        help="directory for atomic redacted attempt records (defaults below output)",
+    )
     parser.add_argument(
         "--keep-runs",
         action="store_true",
@@ -93,6 +138,32 @@ def _args() -> argparse.Namespace:
 
 async def _main() -> int:
     args = _args()
+    manifest: dict[str, Any] | None = None
+    manifest_digest: str | None = None
+    planned_matrix: tuple[dict[str, Any], ...] = ()
+    manifest_path = args.manifest
+    if manifest_path is None and args.real:
+        manifest_path = DEFAULT_MANIFEST_PATH
+    if manifest_path is not None:
+        manifest, manifest_digest = load_manifest(manifest_path)
+        planned_matrix = planned_attempts(manifest)
+        # A preregistered invocation takes its ceilings and prices from the
+        # committed manifest.  CLI overrides remain useful for legacy offline
+        # runs, but cannot silently change a real preregistration.
+        if args.real:
+            args.max_calls_per_run = manifest["budget"]["maxCallsPerRun"]
+            args.max_total_calls = manifest["budget"]["maxTotalCalls"]
+            args.step_timeout_seconds = manifest["budget"]["timeoutsSeconds"]["step"]
+            args.run_timeout_seconds = manifest["budget"]["timeoutsSeconds"]["run"]
+            args.text_input_cny_per_million = manifest["pricing"][
+                "textInputCnyPerMillion"
+            ]
+            args.text_output_cny_per_million = manifest["pricing"][
+                "textOutputCnyPerMillion"
+            ]
+            args.embedding_cny_per_million = manifest["pricing"][
+                "embeddingCnyPerMillion"
+            ]
     if args.runs <= 0:
         raise SystemExit("--runs must be positive")
     if args.max_calls_per_run is not None and args.max_calls_per_run <= 0:
@@ -107,10 +178,28 @@ async def _main() -> int:
         args.embedding_cny_per_million,
     ) < 0:
         raise SystemExit("model pricing rates cannot be negative")
+    attempt_ledger: AttemptLedger | None = None
+    if manifest is not None and manifest_digest is not None:
+        attempt_root = args.attempt_root or (args.output / "attempts")
+        attempt_ledger = AttemptLedger(
+            attempt_root,
+            experiment_id=str(manifest["experimentId"]),
+            manifest_digest=manifest_digest,
+            planned=planned_matrix,
+        )
+        attempt_ledger.prepare()
     if args.real and args.backend != "postgres":
         raise SystemExit("real seven-day simulations require --backend postgres")
     embedding_model = os.environ.get("ARK_EMBEDDING_MODEL", "").strip()
     if args.real and not embedding_model:
+        if attempt_ledger is not None:
+            for planned_item in planned_matrix:
+                attempt_ledger.finish(
+                    planned_item,
+                    "not_started",
+                    reason="embedding_model_not_configured",
+                    infra_valid=False,
+                )
         raise SystemExit("ARK_EMBEDDING_MODEL is required for real seven-day simulations")
     if args.selected_agenda_id is not None:
         if args.route == "all":
@@ -207,14 +296,38 @@ async def _main() -> int:
 
     reports = []
     total_calls = 0
-    route_cycle = (
-        ("observer", "pro_lin", "pro_zhao")
-        if args.route == "all"
-        else (args.route,)
-    )
-    requested_run_count = args.runs * len(route_cycle)
-    for index in range(requested_run_count):
-        route = cast(SimulationRoute, route_cycle[index % len(route_cycle)])
+    if manifest is not None:
+        if args.runs != 1:
+            raise SystemExit("--runs must remain 1 when a preregistration manifest is used")
+        selected_plans = tuple(
+            item
+            for item in planned_matrix
+            if args.route == "all" or item["route"] == args.route
+        )
+        if not selected_plans:
+            raise SystemExit("manifest has no planned attempts for the selected route")
+        route_cycle: tuple[str, ...] = tuple(
+            dict.fromkeys(str(item["route"]) for item in selected_plans)
+        )
+        run_plan: tuple[dict[str, Any] | None, ...] = selected_plans
+    else:
+        route_cycle = (
+            ("observer", "pro_lin", "pro_zhao")
+            if args.route == "all"
+            else (args.route,)
+        )
+        run_plan = tuple(None for _ in range(args.runs * len(route_cycle)))
+    requested_run_count = len(run_plan)
+    for index, planned_item in enumerate(run_plan):
+        route = cast(
+            SimulationRoute,
+            planned_item["route"] if planned_item is not None else route_cycle[index % len(route_cycle)],
+        )
+        seed = (
+            int(planned_item["seed"])
+            if planned_item is not None
+            else args.seed + index
+        )
         remaining = None
         if args.max_total_calls is not None:
             remaining = args.max_total_calls - total_calls
@@ -237,7 +350,7 @@ async def _main() -> int:
         )
         report = await SevenDaySimulationRunner(
             registry,
-            seed=args.seed + index,
+            seed=seed,
             max_calls_per_run=per_run_limit,
             step_timeout_seconds=args.step_timeout_seconds,
             run_timeout_seconds=args.run_timeout_seconds,
@@ -248,6 +361,9 @@ async def _main() -> int:
             service=run_service,
             memory_retriever=retriever,
             allow_network=args.real and args.backend == "postgres",
+            attempt_ledger=attempt_ledger,
+            attempt=planned_item,
+            manifest_digest=manifest_digest,
         )
         embedding_after = (
             embedding_client.metrics_snapshot()
@@ -264,6 +380,9 @@ async def _main() -> int:
         report.metrics.text_input_cny_per_million = args.text_input_cny_per_million
         report.metrics.text_output_cny_per_million = args.text_output_cny_per_million
         report.metrics.embedding_cny_per_million = args.embedding_cny_per_million
+        if args.real:
+            report.metrics.quality_gate_failures = real_quality_gate_failures(report)
+        _write_attempt_checkpoint(report, args.output)
         reports.append(report)
         total_calls += report.metrics.physical_provider_requests or sum(
             report.metrics.provider_calls.values()
@@ -312,11 +431,44 @@ async def _main() -> int:
         else:
             await recovered_repository.close()
 
+    if attempt_ledger is not None:
+        # Any manifest row skipped because a batch ceiling was reached still
+        # receives a terminal ``not_started`` record.  It remains a planned
+        # denominator row and therefore cannot disappear from ITT evidence.
+        for planned_item in planned_matrix:
+            current = attempt_ledger.get(str(planned_item["attemptId"]))
+            if current.get("status") == "not_started" and current.get("terminalAt") is None:
+                attempt_ledger.finish(
+                    planned_item,
+                    "not_started",
+                    reason="not_attempted_in_batch",
+                    infra_valid=False,
+                )
     if args.real:
         for report in reports:
             report.metrics.quality_gate_failures = real_quality_gate_failures(report)
+    if attempt_ledger is not None:
+        for report in reports:
+            if report.attempt_id is None:
+                continue
+            attempt_ledger.annotate(
+                report.attempt_id,
+                infra_valid=report.attempt_status == "completed",
+                gameplay_pass=not report.metrics.quality_gate_failures,
+                run_id=report.run_id,
+            )
+    for report in reports:
+        _write_attempt_checkpoint(report, args.output)
+
+    attempt_records = attempt_ledger.records() if attempt_ledger is not None else []
 
     payload = {
+        "experimentId": manifest["experimentId"] if manifest is not None else None,
+        "manifestDigest": manifest_digest,
+        "manifestSourceId": (
+            f"manifest:{manifest['experimentId']}" if manifest is not None else None
+        ),
+        "sourceId": f"simulation-batch:{args.route}:{args.seed}",
         "route": args.route,
         "mode": "real" if args.real else "offline",
         "seed": args.seed,
@@ -335,12 +487,17 @@ async def _main() -> int:
             "embedding": args.embedding_cny_per_million,
         },
         "embeddingPreflight": embedding_preflight,
+        "plannedRuns": [dict(item) for item in planned_matrix],
+        "attempts": attempt_records,
         "reports": [report.to_dict() for report in reports],
     }
     args.output.mkdir(parents=True, exist_ok=True)
     json_path = args.output / "seven_day_simulation_batch.json"
     markdown_path = args.output / "seven_day_simulation_batch.md"
-    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _atomic_write_text(
+        json_path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
     markdown_lines = [
         "# Qinghuai seven-day simulation batch",
         "",
@@ -370,7 +527,7 @@ async def _main() -> int:
             f"| `{metrics['temporaryRunDeleted']}` "
             f"| `{','.join(metrics['qualityGateFailures']) or 'none'}` |"
         )
-    markdown_path.write_text("\n".join(markdown_lines) + "\n", encoding="utf-8")
+    _atomic_write_text(markdown_path, "\n".join(markdown_lines) + "\n")
     if client is not None:
         await client.close()
     print(f"JSON report: {json_path}")

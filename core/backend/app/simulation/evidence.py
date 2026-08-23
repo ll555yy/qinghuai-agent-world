@@ -6,7 +6,7 @@ import json
 from collections import Counter
 from collections.abc import Iterable
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from .manifest import (
@@ -36,11 +36,10 @@ def load_batch_reports(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
         embedding_preflight = payload.get("embeddingPreflight")
         source_digest = sha256(raw_bytes).hexdigest()
         declared_source_id = payload.get("sourceId")
-        source_id = (
-            declared_source_id
-            if isinstance(declared_source_id, str) and declared_source_id
-            else f"batch:{source_digest[:16]}"
-        )
+        source_id = _safe_source_id(declared_source_id, source_digest)
+        raw_attempts = payload.get("attempts", [])
+        if not isinstance(raw_attempts, list):
+            raise ValueError(f"batch attempts must be a list: {path}")
         source = {
             # A source ID is deliberately stable and non-local.  The input
             # path is useful to the CLI caller but must never enter canonical
@@ -54,7 +53,7 @@ def load_batch_reports(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
             "runsCompleted": payload.get("runsCompleted"),
             "experimentId": payload.get("experimentId"),
             "manifestDigest": payload.get("manifestDigest"),
-            "attempts": payload.get("attempts", []),
+            "attempts": raw_attempts,
             "embeddingPreflightPassed": (
                 isinstance(embedding_preflight, dict)
                 and _integer_or_zero(embedding_preflight.get("vectorCount")) >= 1
@@ -75,6 +74,21 @@ def load_batch_reports(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
                     break
             reports.append(report)
     return reports
+
+
+def _safe_source_id(value: Any, digest: str) -> str:
+    """Keep absolute local paths out of canonical evidence source metadata."""
+
+    if not isinstance(value, str) or not value:
+        return f"batch:{digest[:16]}"
+    if (
+        Path(value).is_absolute()
+        or PureWindowsPath(value).is_absolute()
+        or value.startswith(("/", "\\"))
+        or (len(value) >= 2 and value[1] == ":")
+    ):
+        return f"batch:{digest[:16]}"
+    return value
 
 
 def summarize_gameplay_evidence(
@@ -247,26 +261,33 @@ def summarize_preregistered_evidence(
 
     all_reports = list(reports)
     ledger_by_id: dict[str, dict[str, Any]] = {}
+    duplicate_ledger_ids: set[str] = set()
     if attempt_records is not None:
         for raw_record in attempt_records:
             if not isinstance(raw_record, dict):
                 continue
             attempt_id = raw_record.get("attemptId")
             if isinstance(attempt_id, str):
+                if attempt_id in ledger_by_id:
+                    duplicate_ledger_ids.add(attempt_id)
                 ledger_by_id[attempt_id] = raw_record
-    for report in all_reports:
-        raw_record = report.get("_attemptRecord")
-        if isinstance(raw_record, dict) and isinstance(raw_record.get("attemptId"), str):
-            ledger_by_id.setdefault(str(raw_record["attemptId"]), raw_record)
+    for raw_report in all_reports:
+        embedded_record = raw_report.get("_attemptRecord")
+        if isinstance(embedded_record, dict) and isinstance(
+            embedded_record.get("attemptId"), str
+        ):
+            ledger_by_id.setdefault(str(embedded_record["attemptId"]), embedded_record)
 
     report_by_id: dict[str, list[dict[str, Any]]] = {}
     extra_reports: list[dict[str, Any]] = []
-    for report in all_reports:
-        route = report.get("route")
-        seed = report.get("seed")
-        attempt_id = report.get("attemptId")
+    missing_attempt_ids: set[str] = set()
+    for incoming_report in all_reports:
+        route = incoming_report.get("route")
+        seed = incoming_report.get("seed")
+        attempt_id = incoming_report.get("attemptId")
         if not isinstance(attempt_id, str) and isinstance(route, str) and isinstance(seed, int):
             attempt_id = make_attempt_id(str(checked_manifest["experimentId"]), route, seed)
+            missing_attempt_ids.add(attempt_id)
         if not isinstance(attempt_id, str):
             extra_reports.append(
                 {
@@ -277,19 +298,26 @@ def summarize_preregistered_evidence(
                 }
             )
             continue
-        report_by_id.setdefault(attempt_id, []).append(report)
+        report_by_id.setdefault(attempt_id, []).append(incoming_report)
         if attempt_id not in expected_by_id:
+            reason = "unplanned_attempt"
+            expected_for_pair = expected_by_pair.get((route, seed))
+            if expected_for_pair is not None:
+                reason = "duplicate_route_seed"
             extra_reports.append(
                 {
                     "attemptId": attempt_id,
                     "route": route,
                     "seed": seed,
-                    "reason": "unplanned_attempt",
+                    "reason": reason,
                 }
             )
 
     rows: list[dict[str, Any]] = []
     matrix_failures: list[str] = []
+    matrix_failures.extend(
+        f"duplicate_attempt_record:{attempt_id}" for attempt_id in duplicate_ledger_ids
+    )
     seen_pairs: set[tuple[str, int]] = set()
     for planned in expected:
         attempt_id = str(planned["attemptId"])
@@ -309,6 +337,14 @@ def summarize_preregistered_evidence(
         route = str(planned["route"])
         seed = int(planned["seed"])
         pair = (route, seed)
+        if attempt_id in missing_attempt_ids:
+            reasons.add("missing_attempt_id")
+            matrix_failures.append(f"missing_attempt_id:{attempt_id}")
+        if report is not None and (
+            report.get("route") != route or report.get("seed") != seed
+        ):
+            reasons.add("attempt_route_seed_mismatch")
+            matrix_failures.append(f"attempt_route_seed_mismatch:{attempt_id}")
         if pair in seen_pairs:
             reasons.add("duplicate_route_seed")
             matrix_failures.append(f"duplicate_route_seed:{route}/{seed}")
@@ -339,14 +375,24 @@ def summarize_preregistered_evidence(
             )
             if value is not None
         }
-        if report is not None and expected_digest not in digest_values:
+        if report is not None and (
+            not digest_values or any(value != expected_digest for value in digest_values)
+        ):
             reasons.add("manifest_digest_mismatch")
             matrix_failures.append(f"manifest_digest_mismatch:{attempt_id}")
         if record is not None and record.get("manifestDigest") != expected_digest:
             reasons.add("attempt_digest_mismatch")
             matrix_failures.append(f"attempt_digest_mismatch:{attempt_id}")
+        attempt_reason = (
+            record.get("reason") if record is not None and isinstance(record.get("reason"), str) else None
+        )
+        if attempt_reason:
+            reasons.add(f"attempt:{attempt_reason}")
         report_status = report.get("attemptStatus") if report is not None else None
         record_status = record.get("status") if record is not None else None
+        if report is not None and not isinstance(report_status, str):
+            reasons.add("attempt_status_missing")
+            matrix_failures.append(f"attempt_status_missing:{attempt_id}")
         if (
             isinstance(report_status, str)
             and isinstance(record_status, str)
@@ -368,7 +414,8 @@ def summarize_preregistered_evidence(
         else:
             cost = None
             goal_rate = None
-        speech = metrics.get("speech") if isinstance(metrics.get("speech"), dict) else {}
+        raw_speech = metrics.get("speech")
+        speech: dict[str, Any] = raw_speech if isinstance(raw_speech, dict) else {}
         player_speech = _integer_or_zero(speech.get("player"))
         stance_changes = _integer_or_zero(metrics.get("chapterStanceChangeCount"))
         branch = _optional_string_or_none(metrics.get("day7Branch"))
@@ -406,6 +453,7 @@ def summarize_preregistered_evidence(
             "planned": True,
             "reportPresent": report is not None,
             "status": status,
+            "attemptReason": attempt_reason,
             "terminal": terminal,
             "attempted": attempted,
             "infraValid": infra_valid,
@@ -430,15 +478,27 @@ def summarize_preregistered_evidence(
             f"{item['reason']}:{item.get('attemptId') or 'unknown'}"
             for item in extra_reports
         )
+    for attempt_id in sorted(set(ledger_by_id) - set(expected_by_id)):
+        extra_reports.append(
+            {
+                "attemptId": attempt_id,
+                "route": ledger_by_id[attempt_id].get("route"),
+                "seed": ledger_by_id[attempt_id].get("seed"),
+                "reason": "unplanned_attempt_record",
+            }
+        )
+        matrix_failures.append(f"unplanned_attempt_record:{attempt_id}")
     # Duplicate route/seed pairs that arrive under different attempt IDs are
     # also unplanned from the matrix's perspective.
     for attempt_id, matches in report_by_id.items():
         if attempt_id not in expected_by_id:
             continue
         for report in matches:
-            pair = (report.get("route"), report.get("seed"))
-            if pair not in expected_by_pair:
-                matrix_failures.append(f"unplanned_seed:{pair[0]}/{pair[1]}")
+            report_pair = (report.get("route"), report.get("seed"))
+            if report_pair not in expected_by_pair:
+                matrix_failures.append(
+                    f"unplanned_seed:{report_pair[0]}/{report_pair[1]}"
+                )
 
     route_summaries: dict[str, dict[str, Any]] = {}
     for route in EXPECTED_ROUTES:
@@ -546,10 +606,6 @@ def _attempt_status(
 
 def _optional_string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) else None
-
-
-def _integer_or_zero(value: Any) -> int:
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _rate(numerator: int, denominator: int) -> float | None:

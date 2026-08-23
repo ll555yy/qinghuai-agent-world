@@ -5,6 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 from core.backend.app.ai.models import TextGenerationResult
+from core.backend.app.simulation.manifest import (
+    AttemptLedger,
+    load_manifest,
+    planned_attempts,
+)
 from core.backend.app.simulation.runner import (
     ROUTE_PLAYER_MESSAGES,
     ROUTE_PLAYER_STEPS,
@@ -13,6 +18,7 @@ from core.backend.app.simulation.runner import (
     _safe_exception_label,
     real_quality_gate_failures,
 )
+from core.backend.scripts import run_seven_day_simulation as simulation_cli
 
 
 def test_safe_exception_label_includes_only_valid_constraint_names() -> None:
@@ -102,6 +108,37 @@ class OfflineAcceptModel(OfflineWaitModel):
         if "协议=InvitationDecision" in request.system_prompt:
             return result.model_copy(update={"text": json.dumps({"decision": "accept"})})
         return result
+
+
+@pytest.mark.anyio
+async def test_attempt_checkpoint_is_atomic_and_uses_safe_identity(registry, tmp_path) -> None:
+    original = await SevenDaySimulationRunner(registry, seed=37).run(
+        route="observer",
+        mode="offline",
+        text_model=OfflineWaitModel(),
+    )
+    report = SimulationReport(
+        original.route,
+        original.mode,
+        original.seed,
+        original.metrics,
+        original.budget,
+        original.run_id,
+        "experiment:observer:37",
+        "completed",
+        "a" * 64,
+    )
+
+    json_path, markdown_path = simulation_cli._write_attempt_checkpoint(
+        report, tmp_path
+    )
+
+    assert json_path.name == "experiment_observer_37.json"
+    assert json.loads(json_path.read_text(encoding="utf-8"))["attemptId"] == report.attempt_id
+    assert markdown_path.read_text(encoding="utf-8").startswith(
+        "# Qinghuai seven-day simulation report"
+    )
+    assert not list((tmp_path / "attempt_reports").glob("*.tmp"))
 
 
 class OfflineRouteStanceModel(OfflineAcceptModel):
@@ -340,3 +377,67 @@ async def test_real_runner_rejects_without_explicit_network_or_key(registry) -> 
     )
     assert configured_report.run_id is None
     assert configured_report.metrics.rejection_reason == "model_not_configured"
+
+
+class RunCreationFailureService:
+    def __init__(self) -> None:
+        self.decisions = SimpleNamespace(model=None)
+
+    async def create_run(self, agenda_id, *, seed):
+        raise RuntimeError("database is unavailable")
+
+
+@pytest.mark.anyio
+async def test_preregistered_attempt_is_terminal_when_run_creation_fails(registry, tmp_path) -> None:
+    manifest, digest = load_manifest()
+    planned = planned_attempts(manifest)
+    ledger = AttemptLedger(
+        tmp_path,
+        experiment_id=manifest["experimentId"],
+        manifest_digest=digest,
+        planned=planned,
+    )
+    ledger.prepare()
+
+    report = await SevenDaySimulationRunner(registry, seed=planned[0]["seed"]).run(
+        route="observer",
+        mode="offline",
+        service=RunCreationFailureService(),
+        attempt_ledger=ledger,
+        attempt=planned[0],
+    )
+
+    assert report.run_id is None
+    assert report.attempt_id == planned[0]["attemptId"]
+    assert report.attempt_status == "runner_failed"
+    record = ledger.get(planned[0]["attemptId"])
+    assert record["status"] == "runner_failed"
+    assert record["startedAt"]
+    assert record["terminalAt"]
+
+
+@pytest.mark.anyio
+async def test_preregistered_provider_preflight_failure_is_not_started(registry, tmp_path) -> None:
+    manifest, digest = load_manifest()
+    planned = planned_attempts(manifest)
+    ledger = AttemptLedger(
+        tmp_path,
+        experiment_id=manifest["experimentId"],
+        manifest_digest=digest,
+        planned=planned,
+    )
+    ledger.prepare()
+
+    report = await SevenDaySimulationRunner(registry, seed=planned[0]["seed"]).run(
+        route="observer",
+        mode="real",
+        text_model=UnconfiguredModel(),
+        allow_network=True,
+        attempt_ledger=ledger,
+        attempt=planned[0],
+    )
+
+    assert report.attempt_status == "not_started"
+    record = ledger.get(planned[0]["attemptId"])
+    assert record["status"] == "not_started"
+    assert record["terminalAt"]
