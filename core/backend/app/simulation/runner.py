@@ -31,6 +31,7 @@ from ..ai.protocols import (
 from ..orchestration.run_service import RunService
 from ..orchestration.world_engine import WorldEngine
 from ..scenario.models import ScenarioRegistry
+from .manifest import AttemptLedger, ManifestStatus
 
 SimulationRoute = Literal["observer", "pro_lin", "pro_zhao"]
 SimulationMode = Literal["offline", "real"]
@@ -570,6 +571,9 @@ class SimulationReport:
     metrics: SimulationMetrics
     budget: SimulationBudget
     run_id: str | None = None
+    attempt_id: str | None = None
+    attempt_status: ManifestStatus | None = None
+    manifest_digest: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -578,6 +582,9 @@ class SimulationReport:
             "mode": self.mode,
             "seed": self.seed,
             "runId": self.run_id,
+            "attemptId": self.attempt_id,
+            "attemptStatus": self.attempt_status,
+            "manifestDigest": self.manifest_digest,
             "budget": asdict(self.budget),
             "metrics": self.metrics.to_dict(),
         }
@@ -594,6 +601,8 @@ class SimulationReport:
             f"- Mode: `{self.mode}`",
             f"- Seed: `{self.seed}`",
             f"- Run: `{self.run_id or 'not-created'}`",
+            f"- Attempt: `{self.attempt_id or 'n/a'}`",
+            f"- Attempt status: `{self.attempt_status or 'n/a'}`",
             "",
             "## Outcome",
             "",
@@ -825,76 +834,142 @@ class SevenDaySimulationRunner:
         text_model: Any | None = None,
         allow_network: bool = False,
         memory_retriever: Any | None = None,
+        attempt_ledger: AttemptLedger | None = None,
+        attempt: dict[str, Any] | str | None = None,
+        manifest_digest: str | None = None,
     ) -> SimulationReport:
         if route not in ROUTE_AGENDAS:
             raise ValueError(f"unknown simulation route: {route}")
         metrics = SimulationMetrics()
+        attempt_id = (
+            str(attempt.get("attemptId"))
+            if isinstance(attempt, dict)
+            else attempt
+        )
+        if attempt_ledger is not None and attempt_id is None:
+            raise ValueError("attempt_ledger requires a planned attempt")
+        if manifest_digest is None and attempt_ledger is not None:
+            manifest_digest = attempt_ledger.manifest_digest
         if mode == "real":
             # Require both an explicit caller opt-in and a configured provider.
             # This check happens before creating a Run or calling the model.
             if not allow_network:
-                return self._rejected(route, mode, metrics, "network_opt_in_required")
+                return self._rejected(
+                    route,
+                    mode,
+                    metrics,
+                    "network_opt_in_required",
+                    attempt_id=attempt_id,
+                    manifest_digest=manifest_digest,
+                    attempt_ledger=attempt_ledger,
+                    attempt=attempt,
+                )
             if text_model is None or getattr(text_model, "configured", False) is not True:
-                return self._rejected(route, mode, metrics, "model_not_configured")
+                return self._rejected(
+                    route,
+                    mode,
+                    metrics,
+                    "model_not_configured",
+                    attempt_id=attempt_id,
+                    manifest_digest=manifest_digest,
+                    attempt_ledger=attempt_ledger,
+                    attempt=attempt,
+                )
         elif mode != "offline":
             raise ValueError(f"unknown simulation mode: {mode}")
 
-        embedding_port = getattr(memory_retriever, "_embedding_port", None)
-        embedding_snapshot = getattr(embedding_port, "metrics_snapshot", None)
-        before_embedding_metrics = (
-            embedding_snapshot()
-            if callable(embedding_snapshot)
-            else None
-        )
+        # The durable transition is intentionally before service construction
+        # and before the first provider call.  A database/bootstrap failure
+        # after this point is therefore still represented by a terminal row.
+        if attempt_ledger is not None and attempt is not None:
+            attempt_ledger.start(attempt)
 
-        run_service = service or RunService(
-            self.registry,
-            text_model=text_model,
-            memory_retriever=_CountingRetriever(memory_retriever, metrics)
-            if memory_retriever is not None
-            else None,
-            seed=self.seed,
-        )
-        if service is not None and memory_retriever is not None:
-            for agent in run_service.agents.agents.values():
-                tool = agent.memory_tool
-                original = (
-                    tool.retriever.retriever
-                    if isinstance(tool.retriever, _CountingRetriever)
-                    else tool.retriever
-                )
-                tool.retriever = _CountingRetriever(original, metrics)
-        initial_relationships: dict[tuple[str, str], dict[str, Any]] = {}
-        original_model = None
-        before_provider_metrics: dict[str, int] | None = None
-        if run_service.decisions.model is not None:
-            original_model = getattr(
-                run_service.decisions.model,
-                "_simulation_original_model",
-                run_service.decisions.model,
+        try:
+            embedding_port = getattr(memory_retriever, "_embedding_port", None)
+            embedding_snapshot = getattr(embedding_port, "metrics_snapshot", None)
+            before_embedding_metrics = (
+                embedding_snapshot()
+                if callable(embedding_snapshot)
+                else None
             )
-            snapshot = getattr(original_model, "metrics_snapshot", None)
-            if callable(snapshot):
-                before_provider_metrics = snapshot()
-            counting_model = _CountingModel(
-                original_model,
+
+            run_service = service or RunService(
+                self.registry,
+                text_model=text_model,
+                memory_retriever=_CountingRetriever(memory_retriever, metrics)
+                if memory_retriever is not None
+                else None,
+                seed=self.seed,
+            )
+            if service is not None and memory_retriever is not None:
+                for agent in run_service.agents.agents.values():
+                    tool = agent.memory_tool
+                    original = (
+                        tool.retriever.retriever
+                        if isinstance(tool.retriever, _CountingRetriever)
+                        else tool.retriever
+                    )
+                    tool.retriever = _CountingRetriever(original, metrics)
+        except Exception as exc:
+            safe_label = _safe_exception_label(exc)
+            metrics.failures[f"runner:{safe_label}"] += 1
+            metrics.abnormal_termination = safe_label
+            if attempt_ledger is not None and attempt is not None:
+                attempt_ledger.finish(
+                    attempt,
+                    "runner_failed",
+                    reason=safe_label,
+                    infra_valid=False,
+                )
+            return SimulationReport(
+                route,
+                mode,
+                self.seed,
                 metrics,
                 self.budget,
-                self.max_calls_per_run,
+                None,
+                attempt_id,
+                "runner_failed" if attempt_ledger is not None and attempt is not None else None,
+                manifest_digest,
             )
-            counting_model._simulation_original_model = original_model
-            run_service.decisions.model = counting_model
-        engine = WorldEngine(run_service)
-        deadline = time.perf_counter() + self.run_timeout_seconds
-        created = await asyncio.wait_for(
-            run_service.create_run(ROUTE_AGENDAS[route], seed=self.seed),
-            timeout=self._remaining_timeout(deadline),
-        )
-        run = await run_service.get_run_entity(created["runId"])
-        self._check_world_budget(run, metrics)
-        initial_relationships = {key: dict(value) for key, value in run.relationships.items()}
-        initial_goals = {key: dict(value) for key, value in run.goals.items()}
+        initial_relationships: dict[tuple[str, str], dict[str, Any]] = {}
+        initial_goals: dict[str, dict[str, Any]] = {}
+        original_model = None
+        before_provider_metrics: dict[str, int] | None = None
+        run: Any | None = None
+        run_id: str | None = None
+        terminal_status: ManifestStatus = "runner_failed"
         try:
+            if run_service.decisions.model is not None:
+                original_model = getattr(
+                    run_service.decisions.model,
+                    "_simulation_original_model",
+                    run_service.decisions.model,
+                )
+                snapshot = getattr(original_model, "metrics_snapshot", None)
+                if callable(snapshot):
+                    before_provider_metrics = snapshot()
+                counting_model = _CountingModel(
+                    original_model,
+                    metrics,
+                    self.budget,
+                    self.max_calls_per_run,
+                )
+                counting_model._simulation_original_model = original_model
+                run_service.decisions.model = counting_model
+            engine = WorldEngine(run_service)
+            deadline = time.perf_counter() + self.run_timeout_seconds
+            created = await asyncio.wait_for(
+                run_service.create_run(ROUTE_AGENDAS[route], seed=self.seed),
+                timeout=self._remaining_timeout(deadline),
+            )
+            run_id = str(created["runId"])
+            run = await run_service.get_run_entity(run_id)
+            self._check_world_budget(run, metrics)
+            initial_relationships = {
+                key: dict(value) for key, value in run.relationships.items()
+            }
+            initial_goals = {key: dict(value) for key, value in run.goals.items()}
             completed_strategy_steps: set[str] = set()
             await asyncio.wait_for(
                 self._run_player_strategy_for_day(
@@ -948,23 +1023,38 @@ class SevenDaySimulationRunner:
                     timeout=self._remaining_timeout(deadline),
                 )
                 self._check_world_budget(run, metrics)
+            terminal_status = "completed"
         except SimulationBudgetExceeded:
             metrics.budget_exhausted = True
             metrics.abnormal_termination = "budget_exhausted"
+            terminal_status = "budget_exhausted"
         except TimeoutError:
             metrics.failures["runner:timeout"] += 1
             metrics.abnormal_termination = "timeout"
+            terminal_status = "timeout"
         except Exception as exc:
             safe_label = _safe_exception_label(exc)
+            # Provider failures are recorded by _CountingModel with a
+            # protocol-qualified key.  Keep them distinct from a local
+            # runner/database error for the preregistration denominator.
+            provider_failure = any(
+                not key.startswith(("runner:", "script:"))
+                for key in metrics.failures
+            )
+            if provider_failure:
+                terminal_status = "provider_failed"
+            else:
+                terminal_status = "runner_failed"
             metrics.failures[f"runner:{safe_label}"] += 1
             metrics.abnormal_termination = safe_label
         finally:
-            metrics.observe_run(
-                run,
-                initial_relationships,
-                initial_goals,
-                {event.event_id for event in self.registry.events},
-            )
+            if run is not None:
+                metrics.observe_run(
+                    run,
+                    initial_relationships,
+                    initial_goals,
+                    {event.event_id for event in self.registry.events},
+                )
             snapshot = getattr(original_model, "metrics_snapshot", None)
             if before_provider_metrics is not None and callable(snapshot):
                 after = snapshot()
@@ -986,7 +1076,25 @@ class SevenDaySimulationRunner:
                     after_embedding["totalTokens"]
                     - before_embedding_metrics["totalTokens"]
                 )
-        return SimulationReport(route, mode, self.seed, metrics, self.budget, created["runId"])
+            if attempt_ledger is not None and attempt is not None:
+                attempt_ledger.finish(
+                    attempt,
+                    terminal_status,
+                    run_id=run_id,
+                    reason=metrics.abnormal_termination or metrics.rejection_reason,
+                    infra_valid=terminal_status == "completed",
+                )
+        return SimulationReport(
+            route,
+            mode,
+            self.seed,
+            metrics,
+            self.budget,
+            run_id,
+            attempt_id,
+            terminal_status if attempt_ledger is not None and attempt is not None else None,
+            manifest_digest,
+        )
 
     def _check_world_budget(self, run: Any, metrics: SimulationMetrics) -> None:
         message_count = sum(len(items) for items in run.messages.values())
@@ -1121,10 +1229,32 @@ class SevenDaySimulationRunner:
         mode: SimulationMode,
         metrics: SimulationMetrics,
         reason: str,
+        *,
+        attempt_id: str | None = None,
+        manifest_digest: str | None = None,
+        attempt_ledger: AttemptLedger | None = None,
+        attempt: dict[str, Any] | str | None = None,
     ) -> SimulationReport:
         metrics.rejected = True
         metrics.rejection_reason = reason
-        return SimulationReport(route, mode, self.seed, metrics, self.budget)
+        if attempt_ledger is not None and attempt is not None:
+            attempt_ledger.finish(
+                attempt,
+                "not_started",
+                reason=reason,
+                infra_valid=False,
+            )
+        return SimulationReport(
+            route,
+            mode,
+            self.seed,
+            metrics,
+            self.budget,
+            None,
+            attempt_id,
+            "not_started" if attempt_ledger is not None and attempt is not None else None,
+            manifest_digest,
+        )
 
 
 def real_quality_gate_failures(report: SimulationReport) -> list[str]:
