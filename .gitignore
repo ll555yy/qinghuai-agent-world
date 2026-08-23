@@ -37,3 +37,29 @@ simulation_reports/
 
 # Local assistant workspace state
 .superpowers/
+
+# Local semantic-evaluation investigations (preserved in place, never canonical)
+/evaluation_reports/
+/project/evaluation-results/dry-run-final/
+/project/evaluation-results/dry-run-live-budget-preview/
+/project/evaluation-results/dry-run-remediation-2026-08-23/
+/project/evaluation-results/live-experiment-direct-question-v2-2026-08-23/
+/project/evaluation-results/live-experiment-direct-question-v2-complete-2026-08-23/
+/project/evaluation-results/live-recovery-hard-cases-2026-08-23/
+/project/evaluation-results/live-remediation-final-2026-08-23/
+/project/evaluation-results/offline/
+/project/evaluation-results/offline-audit/
+/project/evaluation-results/offline-final/
+/project/evaluation-results/probe/
+/project/evaluation-results/probe-live-authorized/
+/project/evaluation-results/probe-live-authorized-120s/
+/project/evaluation-results/probe-live-authorized-120s-judge/
+/project/evaluation-results/probe-live-authorized-responses/
+/project/evaluation-results/probe-live-authorized-responses-no-thinking/
+/project/evaluation-results/probe-live-authorized-responses-optimized/
+/project/evaluation-results/probe-live-authorized-responses-optimized-network/
+/project/evaluation-results/probe-live-authorized-responses-passed/
+/project/evaluation-results/probe-live-authorized-responses-schema/
+/project/evaluation-results/probe-live-authorized-responses-schema-diagnostic/
+/project/evaluation-results/probe-live-authorized-retry/
+/project/evaluation-results/probe-live-authorized-standard-v3/

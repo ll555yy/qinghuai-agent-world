@@ -33,7 +33,10 @@ sys.path.insert(0, str(_ROOT))
 
 from core.backend.app.scenario.loader import ScenarioLoader  # noqa: E402
 from core.backend.app.simulation.runner import (  # noqa: E402
+    DEFAULT_EMBEDDING_CNY_PER_MILLION,
     DEFAULT_SIMULATION_SEED,
+    DEFAULT_TEXT_INPUT_CNY_PER_MILLION,
+    DEFAULT_TEXT_OUTPUT_CNY_PER_MILLION,
     ROUTE_AGENDAS,
     SevenDaySimulationRunner,
     SimulationRoute,
@@ -70,6 +73,21 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--backend", choices=("memory", "postgres"), default="memory")
     parser.add_argument("--database-url", default=None)
     parser.add_argument("--output", type=Path, default=Path("simulation_reports"))
+    parser.add_argument(
+        "--text-input-cny-per-million",
+        type=float,
+        default=DEFAULT_TEXT_INPUT_CNY_PER_MILLION,
+    )
+    parser.add_argument(
+        "--text-output-cny-per-million",
+        type=float,
+        default=DEFAULT_TEXT_OUTPUT_CNY_PER_MILLION,
+    )
+    parser.add_argument(
+        "--embedding-cny-per-million",
+        type=float,
+        default=DEFAULT_EMBEDDING_CNY_PER_MILLION,
+    )
     return parser.parse_args()
 
 
@@ -83,6 +101,12 @@ async def _main() -> int:
         raise SystemExit("--max-total-calls must be positive")
     if args.step_timeout_seconds <= 0 or args.run_timeout_seconds <= 0:
         raise SystemExit("simulation timeouts must be positive")
+    if min(
+        args.text_input_cny_per_million,
+        args.text_output_cny_per_million,
+        args.embedding_cny_per_million,
+    ) < 0:
+        raise SystemExit("model pricing rates cannot be negative")
     if args.real and args.backend != "postgres":
         raise SystemExit("real seven-day simulations require --backend postgres")
     embedding_model = os.environ.get("ARK_EMBEDDING_MODEL", "").strip()
@@ -206,6 +230,11 @@ async def _main() -> int:
         run_service = service
         if not args.keep_runs and args.backend == "memory":
             run_service = None
+        embedding_before = (
+            embedding_client.metrics_snapshot()
+            if embedding_client is not None
+            else {"completedRequests": 0, "totalTokens": 0}
+        )
         report = await SevenDaySimulationRunner(
             registry,
             seed=args.seed + index,
@@ -220,6 +249,21 @@ async def _main() -> int:
             memory_retriever=retriever,
             allow_network=args.real and args.backend == "postgres",
         )
+        embedding_after = (
+            embedding_client.metrics_snapshot()
+            if embedding_client is not None
+            else embedding_before
+        )
+        report.metrics.embedding_provider_requests = (
+            embedding_after["completedRequests"]
+            - embedding_before["completedRequests"]
+        )
+        report.metrics.embedding_tokens = (
+            embedding_after["totalTokens"] - embedding_before["totalTokens"]
+        )
+        report.metrics.text_input_cny_per_million = args.text_input_cny_per_million
+        report.metrics.text_output_cny_per_million = args.text_output_cny_per_million
+        report.metrics.embedding_cny_per_million = args.embedding_cny_per_million
         reports.append(report)
         total_calls += report.metrics.physical_provider_requests or sum(
             report.metrics.provider_calls.values()
@@ -252,12 +296,21 @@ async def _main() -> int:
                     await session.execute(
                         delete(ChapterRun).where(ChapterRun.run_id.in_(run_ids))
                     )
+            # ``get`` intentionally keeps stable Run identity objects in a
+            # repository-local cache.  Verify deletion through a fresh
+            # repository instead of mistaking that cache for a surviving row.
+            await recovered_repository.close()
+            verification_repository = SQLAlchemyRunRepository(
+                database_url, chapter_id=registry.chapter_id
+            )
             for report in reports:
                 if report.run_id:
                     report.metrics.temporary_run_deleted = (
-                        await recovered_repository.get(report.run_id)
+                        await verification_repository.get(report.run_id)
                     ) is None
-        await recovered_repository.close()
+            await verification_repository.close()
+        else:
+            await recovered_repository.close()
 
     if args.real:
         for report in reports:
@@ -276,6 +329,11 @@ async def _main() -> int:
         "stepTimeoutSeconds": args.step_timeout_seconds,
         "runTimeoutSeconds": args.run_timeout_seconds,
         "totalProviderCalls": total_calls,
+        "pricingCnyPerMillionTokens": {
+            "textInput": args.text_input_cny_per_million,
+            "textOutput": args.text_output_cny_per_million,
+            "embedding": args.embedding_cny_per_million,
+        },
         "embeddingPreflight": embedding_preflight,
         "reports": [report.to_dict() for report in reports],
     }
@@ -293,15 +351,19 @@ async def _main() -> int:
         f"- Provider calls: `{total_calls}`",
         f"- Temporary Runs deleted: `{all(report.metrics.temporary_run_deleted is True for report in reports if report.run_id) if not args.keep_runs else 'kept by request'}`",
         "",
-        "| Run | Route | Final time | Day7 branch | Player result | Recall | Vector/Graph | Recovered | Deleted | Gates |",
-        "|---:|---|---|---|---|---:|---:|---|---|---|",
+        "| Run | Seed | Route | Player lines | Changed NPC stances | Goal completion | Day7 branch | Player result | Cost CNY | Recall | Vector/Graph | Recovered | Deleted | Gates |",
+        "|---:|---:|---|---:|---:|---:|---|---|---:|---:|---:|---|---|---|",
     ]
     for index, report in enumerate(reports, start=1):
         metrics = report.metrics.to_dict()
         markdown_lines.append(
-            f"| {index} | `{report.route}` | `{metrics['finalWorldTime'] or 'n/a'}` "
+            f"| {index} | {report.seed} | `{report.route}` "
+            f"| {metrics['speech']['player']} "
+            f"| {metrics['chapterStanceChangeCount']} "
+            f"| {metrics['goalCompletionRate'] if metrics['goalCompletionRate'] is not None else 'n/a'} "
             f"| `{metrics['day7Branch'] or 'n/a'}` "
             f"| `{metrics['playerResult'] or 'n/a'}` "
+            f"| {metrics['costEstimate']['totalCny']} "
             f"| {metrics['memoryRetrieval']['calls']} "
             f"| {metrics['memoryRetrieval']['vectorHits']}/{metrics['memoryRetrieval']['graphHits']} "
             f"| `{metrics['repositoryRecovered']}` "

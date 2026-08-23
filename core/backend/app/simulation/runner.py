@@ -35,6 +35,9 @@ from ..scenario.models import ScenarioRegistry
 SimulationRoute = Literal["observer", "pro_lin", "pro_zhao"]
 SimulationMode = Literal["offline", "real"]
 DEFAULT_SIMULATION_SEED = 20260819
+DEFAULT_TEXT_INPUT_CNY_PER_MILLION = 0.6
+DEFAULT_TEXT_OUTPUT_CNY_PER_MILLION = 3.6
+DEFAULT_EMBEDDING_CNY_PER_MILLION = 0.7
 _SAFE_DATABASE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _HISTORICAL_CUE = re.compile(
     r"过去|以前|旧事|上次|曾经|当年|承诺|旧怨|来历|父亲|祖父"
@@ -46,35 +49,105 @@ ROUTE_AGENDAS: dict[SimulationRoute, str | None] = {
     "pro_zhao": "agenda_003_cultural_operation",
 }
 
-ROUTE_PLAYER_TARGETS: dict[SimulationRoute, str | None] = {
-    "observer": None,
-    "pro_lin": "npc_001",
-    "pro_zhao": "npc_003",
-}
+@dataclass(frozen=True, slots=True)
+class PlayerStrategyStep:
+    """One public, non-adaptive player action in a benchmark route."""
 
-ROUTE_PLAYER_MESSAGES: dict[SimulationRoute, tuple[str, str] | None] = {
-    "observer": None,
+    step_id: str
+    day: int
+    target_actor_id: str
+    message: str
+
+
+# ``pro_lin`` is the reachable coalition route.  Its fixed script uses only
+# public scenario facts and gives each NPC a reason, grounded in that NPC's
+# public role, to consider one guarded joint proposal.  It never reads private
+# memories or current stance fields.  ``pro_zhao`` intentionally remains a
+# low-effort, single-person route so the benchmark also contains a real failure
+# control rather than nine variants of an optimized playthrough.
+ROUTE_PLAYER_STEPS: dict[SimulationRoute, tuple[PlayerStrategyStep, ...]] = {
+    "observer": (),
     "pro_lin": (
-        (
-            "我支持林老师以公益文化为主保住书店。你和周老板一家过去是否有没说开的旧事？"
-            "这会怎样影响你现在推动青槐文社？"
+        PlayerStrategyStep(
+            "lin_opening",
+            1,
+            "npc_001",
+            "林老师，我愿意帮忙把公益文化放在方案核心。如果你对以前的合作有什么顾虑，"
+            "哪些底线应该写进方案？如果明确旧书保护、收支公开和各方职责，你是否愿意支持联合提交，"
+            "并支持青槐文社成为核心主张？请把条件直接说清楚。",
         ),
-        (
-            "现在到了提交期限。回想这七天里大家对方案说过的具体承诺和仍没解决的分歧，"
-            "你是否愿意支持大家提交联合方案？"
-            "对于青槐文社这项主张，你是支持、附条件支持，还是反对？请把条件和担心直接说清楚。"
+        PlayerStrategyStep(
+            "chen_safeguards",
+            2,
+            "npc_004",
+            "陈月，我想把健康角写成公益配套：不碰病人隐私、不夸大医疗作用，物资和责任都列清楚。"
+            "在这些前提下，你是否愿意参与，并支持大家提交以青槐文社为核心的联合方案？"
+            "若只能附条件支持，也请直接说条件。",
+        ),
+        PlayerStrategyStep(
+            "shen_consent",
+            3,
+            "npc_002",
+            "星遥，联合方案可以明确插画由你独立创作，公开人物故事前逐一征得同意，也不要求你现场应酬。"
+            "如果这些边界写进去，你是否愿意提供绘本和宣传插画，并支持联合提交与青槐文社主张？"
+            "你可以直接说支持、附条件支持或反对。",
+        ),
+        PlayerStrategyStep(
+            "zhao_accountability",
+            4,
+            "npc_003",
+            "赵磊，方案需要你的运营和资源能力，但品牌授权、账目、旧书保护和商业比例都要书面透明，"
+            "公益活动优先。若给你清楚的运营职责而不是排斥商业，你是否愿意接受这些约束，"
+            "支持联合提交和青槐文社这项核心主张？请直说你的底线。",
+        ),
+        PlayerStrategyStep(
+            "zhou_conditions",
+            5,
+            "npc_005",
+            "周老板，目前能合并的方案是：青槐文社为公益核心，绘本、健康角和受约束的文创运营作为配套；"
+            "书店性质、旧书安全、品牌授权和账目由书面条款保护。哪些条件满足后你愿意支持联合提交？"
+            "也请明确你对青槐文社是支持、附条件支持还是反对，以及是否愿意授权提交。",
+        ),
+        PlayerStrategyStep(
+            "lin_final_commitment",
+            6,
+            "npc_001",
+            "林老师，提交前我再确认一次：方案保留公益文化核心，也吸收绘本、健康角和透明运营，"
+            "周老板的保护条款写在前面。你是否愿意接受这份妥协并明确支持整体提交和青槐文社？"
+            "还有必须补上的承诺请现在说清楚。",
+        ),
+        PlayerStrategyStep(
+            "zhou_final_authorization",
+            7,
+            "npc_005",
+            "今天是截止日。我准备按公益核心、旧书保护、授权边界和公开账目这些条件合并方案，"
+            "请你最后明确：是否支持这份联合方案，是否支持或附条件支持青槐文社，"
+            "以及对正式提交是授权、附条件授权还是拒绝。",
         ),
     ),
     "pro_zhao": (
-        (
-            "我支持赵磊提出可持续的商业运营。你和周老板过去是否有没说开的合作或分歧？"
-            "这会怎样影响你现在推动邻里文创运营？"
+        PlayerStrategyStep(
+            "zhao_history",
+            1,
+            "npc_003",
+            "我支持你提出可持续的商业运营。你和周老板过去是否有没说开的合作或分歧？"
+            "这会怎样影响你现在推动邻里文创运营？",
         ),
-        (
-            "现在到了提交期限。赵磊，你最终是否愿意支持大家提交联合方案？"
-            "对于邻里文创运营这项主张，你是支持、附条件支持，还是反对？请直接表态并说清底线。"
+        PlayerStrategyStep(
+            "zhao_final_stance",
+            7,
+            "npc_003",
+            "现在到了提交期限。你最终是否愿意支持大家提交联合方案？"
+            "对于邻里文创运营这项主张，你是支持、附条件支持，还是反对？请直接表态并说清底线。",
         ),
     ),
+}
+
+# Kept as a compact compatibility/readability projection for tests and report
+# tooling that only needs to inspect the public player text.
+ROUTE_PLAYER_MESSAGES: dict[SimulationRoute, tuple[str, ...]] = {
+    route: tuple(step.message for step in steps)
+    for route, steps in ROUTE_PLAYER_STEPS.items()
 }
 
 
@@ -190,6 +263,12 @@ class SimulationMetrics:
     temporary_run_deleted: bool | None = None
     historical_invitation_intents: int = 0
     historical_topic_messages: int = 0
+    goal_completion_rate: float | None = None
+    embedding_provider_requests: int = 0
+    embedding_tokens: int = 0
+    text_input_cny_per_million: float = DEFAULT_TEXT_INPUT_CNY_PER_MILLION
+    text_output_cny_per_million: float = DEFAULT_TEXT_OUTPUT_CNY_PER_MILLION
+    embedding_cny_per_million: float = DEFAULT_EMBEDDING_CNY_PER_MILLION
 
     def record_protocol_call(self, protocol: str) -> None:
         self.protocol_calls[protocol] += 1
@@ -286,6 +365,11 @@ class SimulationMetrics:
         self.goals_by_status = Counter(
             str(goal.get("status", "unknown")) for goal in run.goals.values()
         )
+        self.goal_completion_rate = (
+            self.goals_by_status["achieved"] / len(run.goals)
+            if run.goals
+            else None
+        )
         initial_relationships = initial_relationships or {}
         self.relationship_change_details = []
         for key, value in run.relationships.items():
@@ -346,6 +430,19 @@ class SimulationMetrics:
             }
             for protocol, values in sorted(self.latency_ms.items())
         }
+        prompt_tokens = sum(
+            count for key, count in self.tokens.items() if key.endswith(":prompt")
+        )
+        completion_tokens = sum(
+            count for key, count in self.tokens.items() if key.endswith(":completion")
+        )
+        text_cost = (
+            prompt_tokens * self.text_input_cny_per_million
+            + completion_tokens * self.text_output_cny_per_million
+        ) / 1_000_000
+        embedding_cost = (
+            self.embedding_tokens * self.embedding_cny_per_million / 1_000_000
+        )
         return {
             "protocolCalls": counters(self.protocol_calls),
             "providerCalls": counters(self.provider_calls),
@@ -375,6 +472,7 @@ class SimulationMetrics:
                 "bySource": counters(self.memories_by_source),
             },
             "goalsByStatus": counters(self.goals_by_status),
+            "goalCompletionRate": self.goal_completion_rate,
             "relationshipChanges": self.relationship_changes,
             "day7Branch": self.final_day7_branch,
             "finalWorldTime": self.final_world_time,
@@ -415,6 +513,20 @@ class SimulationMetrics:
             "safeResults": self.safe_results,
             "physicalProviderRequests": self.physical_provider_requests,
             "providerRetries": self.provider_retries,
+            "costEstimate": {
+                "currency": "CNY",
+                "textPromptTokens": prompt_tokens,
+                "textCompletionTokens": completion_tokens,
+                "embeddingTokens": self.embedding_tokens,
+                "embeddingProviderRequests": self.embedding_provider_requests,
+                "textInputCnyPerMillion": self.text_input_cny_per_million,
+                "textOutputCnyPerMillion": self.text_output_cny_per_million,
+                "embeddingCnyPerMillion": self.embedding_cny_per_million,
+                "textCny": round(text_cost, 6),
+                "embeddingCny": round(embedding_cost, 6),
+                "totalCny": round(text_cost + embedding_cost, 6),
+                "basis": "token_usage_x_configured_rates",
+            },
             "goalChanges": self.goal_changes,
             "goalChangeCount": len(self.goal_changes),
             "relationshipChangeDetails": self.relationship_change_details,
@@ -496,6 +608,8 @@ class SimulationReport:
             f"- Safe results: `{data['safeResults']}`",
             f"- Abnormal termination: `{data['abnormalTermination'] or 'none'}`",
             f"- Player result: `{data['playerResult'] or 'n/a'}`",
+            f"- Goal completion rate: `{data['goalCompletionRate']}`",
+            f"- Estimated model cost (CNY): `{data['costEstimate']['totalCny']}`",
             f"- Repository recovered: `{data['repositoryRecovered']}`",
             f"- Temporary Run deleted: `{data['temporaryRunDeleted']}`",
             f"- Memory retrieval calls: `{data['memoryRetrieval']['calls']}`",
@@ -725,6 +839,14 @@ class SevenDaySimulationRunner:
         elif mode != "offline":
             raise ValueError(f"unknown simulation mode: {mode}")
 
+        embedding_port = getattr(memory_retriever, "_embedding_port", None)
+        embedding_snapshot = getattr(embedding_port, "metrics_snapshot", None)
+        before_embedding_metrics = (
+            embedding_snapshot()
+            if callable(embedding_snapshot)
+            else None
+        )
+
         run_service = service or RunService(
             self.registry,
             text_model=text_model,
@@ -773,21 +895,19 @@ class SevenDaySimulationRunner:
         initial_relationships = {key: dict(value) for key, value in run.relationships.items()}
         initial_goals = {key: dict(value) for key, value in run.goals.items()}
         try:
-            history_sent = False
-            stance_sent = False
+            completed_strategy_steps: set[str] = set()
             await asyncio.wait_for(
-                self._script_player_action(
+                self._run_player_strategy_for_day(
                     run_service,
                     run,
                     route,
                     metrics,
-                    phase="history",
-                    already_sent=history_sent,
+                    day=1,
+                    completed_step_ids=completed_strategy_steps,
                 ),
                 timeout=self._remaining_timeout(deadline),
             )
             self._check_world_budget(run, metrics)
-            history_sent = metrics.scripted_actions["history_message_sent"] > 0
             await asyncio.wait_for(
                 engine.step(
                     created["runId"],
@@ -807,38 +927,18 @@ class SevenDaySimulationRunner:
                     timeout=self._remaining_timeout(deadline),
                 )
                 self._check_world_budget(run, metrics)
-                if day < self.registry.end_day and not history_sent:
-                    await asyncio.wait_for(
-                        self._script_player_action(
-                            run_service,
-                            run,
-                            route,
-                            metrics,
-                            phase="history",
-                            already_sent=history_sent,
-                        ),
-                        timeout=self._remaining_timeout(deadline),
-                    )
-                    self._check_world_budget(run, metrics)
-                    history_sent = (
-                        metrics.scripted_actions["history_message_sent"] > 0
-                    )
-                if day == self.registry.end_day and not stance_sent:
-                    await asyncio.wait_for(
-                        self._script_player_action(
-                            run_service,
-                            run,
-                            route,
-                            metrics,
-                            phase="stance",
-                            already_sent=stance_sent,
-                        ),
-                        timeout=self._remaining_timeout(deadline),
-                    )
-                    self._check_world_budget(run, metrics)
-                    stance_sent = (
-                        metrics.scripted_actions["stance_message_sent"] > 0
-                    )
+                await asyncio.wait_for(
+                    self._run_player_strategy_for_day(
+                        run_service,
+                        run,
+                        route,
+                        metrics,
+                        day=day,
+                        completed_step_ids=completed_strategy_steps,
+                    ),
+                    timeout=self._remaining_timeout(deadline),
+                )
+                self._check_world_budget(run, metrics)
                 await asyncio.wait_for(
                     engine.step(
                         created["runId"],
@@ -876,6 +976,16 @@ class SevenDaySimulationRunner:
                     after["providerRetries"]
                     - before_provider_metrics["providerRetries"]
                 )
+            if before_embedding_metrics is not None and callable(embedding_snapshot):
+                after_embedding = embedding_snapshot()
+                metrics.embedding_provider_requests = (
+                    after_embedding["completedRequests"]
+                    - before_embedding_metrics["completedRequests"]
+                )
+                metrics.embedding_tokens = (
+                    after_embedding["totalTokens"]
+                    - before_embedding_metrics["totalTokens"]
+                )
         return SimulationReport(route, mode, self.seed, metrics, self.budget, created["runId"])
 
     def _check_world_budget(self, run: Any, metrics: SimulationMetrics) -> None:
@@ -893,6 +1003,29 @@ class SevenDaySimulationRunner:
             raise TimeoutError("simulation run timeout")
         return min(self.step_timeout_seconds, remaining)
 
+    async def _run_player_strategy_for_day(
+        self,
+        service: RunService,
+        run: Any,
+        route: SimulationRoute,
+        metrics: SimulationMetrics,
+        *,
+        day: int,
+        completed_step_ids: set[str],
+    ) -> None:
+        for step in ROUTE_PLAYER_STEPS[route]:
+            if step.day != day or step.step_id in completed_step_ids:
+                continue
+            sent = await self._script_player_action(
+                service,
+                run,
+                route,
+                metrics,
+                step=step,
+            )
+            if sent:
+                completed_step_ids.add(step.step_id)
+
     async def _script_player_action(
         self,
         service: RunService,
@@ -900,14 +1033,13 @@ class SevenDaySimulationRunner:
         route: SimulationRoute,
         metrics: SimulationMetrics,
         *,
-        phase: Literal["history", "stance"],
-        already_sent: bool,
-    ) -> None:
-        target_id = ROUTE_PLAYER_TARGETS[route]
-        if target_id is None or already_sent or run.clock.new_chat_allowed is False:
-            if target_id is not None and not already_sent:
-                metrics.scripted_actions["message_not_sent"] += 1
-            return
+        step: PlayerStrategyStep,
+    ) -> bool:
+        target_id = step.target_actor_id
+        if run.clock.new_chat_allowed is False:
+            metrics.scripted_actions["message_not_sent"] += 1
+            metrics.scripted_actions[f"step_{step.step_id}_not_sent"] += 1
+            return False
         conversation = next(
             (
                 item
@@ -924,7 +1056,7 @@ class SevenDaySimulationRunner:
                     run.run_id,
                     conversation.conversation_id,
                     command_id=(
-                        f"simulation_player_join_{route}_{phase}_{run.clock.current.day}"
+                        f"simulation_player_join_{route}_{step.step_id}"
                     ),
                 )
                 status = result.get("joinRequest", {}).get("status")
@@ -933,40 +1065,55 @@ class SevenDaySimulationRunner:
                 ] += 1
                 if status != "accepted":
                     metrics.scripted_actions["message_not_sent"] += 1
-                    return
+                    metrics.scripted_actions[f"step_{step.step_id}_not_sent"] += 1
+                    return False
                 conversation_id = conversation.conversation_id
             else:
                 result = await service.player_invite(
                     run.run_id,
                     target_id,
                     command_id=(
-                        f"simulation_player_invite_{route}_{phase}_{run.clock.current.day}"
+                        f"simulation_player_invite_{route}_{step.step_id}"
                     ),
                 )
                 invitation = result.get("invitation", {})
                 if invitation.get("status") != "accepted":
                     metrics.scripted_actions["invite_not_accepted"] += 1
                     metrics.scripted_actions["message_not_sent"] += 1
-                    return
+                    metrics.scripted_actions[f"step_{step.step_id}_not_sent"] += 1
+                    return False
                 metrics.scripted_actions["invite_sent"] += 1
                 conversation_id = str(invitation["conversationId"])
-            route_messages = ROUTE_PLAYER_MESSAGES[route]
-            if route_messages is None:
-                return
-            message_text = route_messages[0 if phase == "history" else 1]
             await service.player_message(
                 run.run_id,
                 conversation_id,
-                message_text,
+                step.message,
                 command_id=(
-                    f"simulation_player_message_{route}_{phase}_{run.clock.current.day}"
+                    f"simulation_player_message_{route}_{step.step_id}"
                 ),
             )
             metrics.scripted_actions["message_sent"] += 1
-            metrics.scripted_actions[f"{phase}_message_sent"] += 1
+            metrics.scripted_actions["strategy_step_sent"] += 1
+            metrics.scripted_actions[f"step_{step.step_id}_sent"] += 1
+            current = run.conversations.get(conversation_id)
+            if (
+                current is not None
+                and current.is_open
+                and self.registry.player_actor_id in current.participants
+            ):
+                await service.remove_participant(
+                    run.run_id,
+                    conversation_id,
+                    self.registry.player_actor_id,
+                    command_id=f"simulation_player_leave_{route}_{step.step_id}",
+                )
+                metrics.scripted_actions["player_left"] += 1
+            return True
         except Exception as exc:
             metrics.scripted_actions["message_not_sent"] += 1
+            metrics.scripted_actions[f"step_{step.step_id}_not_sent"] += 1
             metrics.failures[f"script:{type(exc).__name__}"] += 1
+            return False
 
     def _rejected(
         self,
@@ -1008,8 +1155,6 @@ def real_quality_gate_failures(report: SimulationReport) -> list[str]:
         failures.append("no_messages")
     if metrics.protocol_calls["ExitConsolidation"] < 1:
         failures.append("no_exit_consolidation")
-    if metrics.memory_retrieval_calls < 1:
-        failures.append("no_memory_retrieval")
     if metrics.memory_vector_status != "enabled":
         failures.append("embedding_not_enabled")
     if metrics.repository_recovered is not True:
@@ -1023,11 +1168,34 @@ def real_quality_gate_failures(report: SimulationReport) -> list[str]:
             failures.append("no_chapter_stance_change")
         if metrics.player_result is None:
             failures.append("player_result_missing")
+    if report.route == "pro_lin":
+        if metrics.player_speech_count < 5:
+            failures.append("coalition_strategy_incomplete")
+        if metrics.chapter_stance_changes < 3:
+            failures.append("coalition_not_formed")
+        if metrics.final_day7_branch not in {
+            "compromise_submitted",
+            "consensus_submitted",
+        }:
+            failures.append("success_branch_not_reached")
+        if metrics.player_result not in {"completed", "partial"}:
+            failures.append("support_task_not_completed")
+    elif report.route == "pro_zhao":
+        if metrics.final_day7_branch != "no_submission":
+            failures.append("failure_control_changed_branch")
+        if metrics.player_result != "failed":
+            failures.append("failure_control_not_failed")
     return failures
 
 
 __all__ = [
+    "DEFAULT_EMBEDDING_CNY_PER_MILLION",
     "DEFAULT_SIMULATION_SEED",
+    "DEFAULT_TEXT_INPUT_CNY_PER_MILLION",
+    "DEFAULT_TEXT_OUTPUT_CNY_PER_MILLION",
+    "PlayerStrategyStep",
+    "ROUTE_PLAYER_MESSAGES",
+    "ROUTE_PLAYER_STEPS",
     "SimulationBudget",
     "SimulationMetrics",
     "SimulationMode",

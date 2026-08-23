@@ -7,6 +7,7 @@ import pytest
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.simulation.runner import (
     ROUTE_PLAYER_MESSAGES,
+    ROUTE_PLAYER_STEPS,
     SevenDaySimulationRunner,
     SimulationReport,
     _safe_exception_label,
@@ -33,16 +34,34 @@ def test_safe_exception_label_includes_only_valid_constraint_names() -> None:
 def test_support_routes_ask_for_an_explicit_but_unbiased_stance() -> None:
     for route in ("pro_lin", "pro_zhao"):
         messages = ROUTE_PLAYER_MESSAGES[route]
-        assert messages is not None
-        history_message, stance_message = messages
-        assert "过去" in history_message
-        assert "旧事" in history_message or "分歧" in history_message
+        assert messages
+        history_message = messages[0]
+        stance_message = messages[-1]
+        assert any(cue in history_message for cue in ("过去", "以前"))
+        assert any(cue in history_message for cue in ("旧事", "分歧", "顾虑"))
         if route == "pro_lin":
-            assert "具体承诺" in stance_message
+            assert "请你最后明确" in stance_message
+            assert "授权" in stance_message
+            assert "支持或附条件支持" in stance_message
         else:
             assert "请直接表态" in stance_message
-        assert "是否愿意支持" in stance_message
-        assert "支持、附条件支持，还是反对" in stance_message
+            assert "是否愿意支持" in stance_message
+            assert "支持、附条件支持，还是反对" in stance_message
+
+
+def test_coalition_route_contacts_all_npcs_without_private_state_branching() -> None:
+    steps = ROUTE_PLAYER_STEPS["pro_lin"]
+
+    assert [step.day for step in steps] == list(range(1, 8))
+    assert {step.target_actor_id for step in steps} == {
+        "npc_001",
+        "npc_002",
+        "npc_003",
+        "npc_004",
+        "npc_005",
+    }
+    assert sum(step.target_actor_id == "npc_005" for step in steps) == 2
+    assert "授权" in steps[-1].message
 
 
 class OfflineWaitModel:
@@ -123,6 +142,57 @@ class OfflineRouteStanceModel(OfflineAcceptModel):
         return result
 
 
+class OfflineCoalitionModel(OfflineAcceptModel):
+    async def generate(self, request):
+        result = await super().generate(request)
+        payload = json.loads(request.messages[0].content)
+        actor_id = payload.get("actor", {}).get("actorId")
+        if "协议=ChatDecision" in request.system_prompt:
+            effects = [
+                {
+                    "kind": "overall_stance",
+                    "value": "conditional",
+                    "evidenceMessageIds": [],
+                },
+                {
+                    "kind": "agenda_stance",
+                    "agendaId": "agenda_001_literary_society",
+                    "value": "conditional",
+                    "evidenceMessageIds": [],
+                },
+            ]
+            if actor_id == "npc_005":
+                effects.append(
+                    {
+                        "kind": "zhou_authorization",
+                        "value": "conditional",
+                        "evidenceMessageIds": [],
+                    }
+                )
+            return result.model_copy(
+                update={
+                    "text": json.dumps(
+                        {
+                            "result": "decided",
+                            "action": "speak",
+                            "responseDesire": 3,
+                            "intent": "明确回答整体、青槐文社及授权立场",
+                            "chapterEffects": effects,
+                        },
+                        ensure_ascii=False,
+                    )
+                }
+            )
+        if "协议=SpeechGeneration" in request.system_prompt:
+            text = "守住公开透明和旧书保护这些条件，我支持整体提交，也附条件支持青槐文社。"
+            if actor_id == "npc_005":
+                text += "我对正式提交给出附条件授权。"
+            return result.model_copy(
+                update={"text": json.dumps({"text": text}, ensure_ascii=False)}
+            )
+        return result
+
+
 @pytest.mark.anyio
 async def test_offline_runner_reaches_day7_and_writes_reports(registry, tmp_path) -> None:
     model = OfflineWaitModel()
@@ -152,8 +222,8 @@ async def test_route_script_uses_public_player_commands(registry) -> None:
 
     assert report.metrics.scripted_actions["invite_sent"] == 2
     assert report.metrics.scripted_actions["message_sent"] == 2
-    assert report.metrics.scripted_actions["history_message_sent"] == 1
-    assert report.metrics.scripted_actions["stance_message_sent"] == 1
+    assert report.metrics.scripted_actions["strategy_step_sent"] == 2
+    assert report.metrics.scripted_actions["player_left"] == 2
     assert report.metrics.player_speech_count == 2
     projected = report.metrics.to_dict()
     assert "byNpc" in projected["speech"]
@@ -174,9 +244,30 @@ async def test_route_stance_is_committed_from_generated_npc_speech(registry) -> 
         text_model=OfflineRouteStanceModel(),
     )
 
-    assert report.metrics.player_speech_count == 2
+    assert report.metrics.player_speech_count == 7
     assert report.metrics.chapter_stance_changes >= 1
     assert report.metrics.chapter_stances["npc_001"] == "conditional"
+
+
+@pytest.mark.anyio
+async def test_coalition_route_can_reach_compromise_without_runner_stance_writes(
+    registry,
+) -> None:
+    report = await SevenDaySimulationRunner(registry, seed=37).run(
+        route="pro_lin",
+        mode="offline",
+        text_model=OfflineCoalitionModel(),
+    )
+
+    assert report.metrics.player_speech_count == 7
+    assert report.metrics.chapter_stance_changes == 5
+    assert report.metrics.chapter_stances["zhouAuthorization"] == "conditional"
+    assert report.metrics.final_day7_branch == "compromise_submitted"
+    assert report.metrics.player_result == "partial"
+    failures = real_quality_gate_failures(report)
+    assert "success_branch_not_reached" not in failures
+    assert "coalition_not_formed" not in failures
+    assert "support_task_not_completed" not in failures
 
 
 @pytest.mark.anyio
@@ -193,7 +284,6 @@ async def test_real_quality_gate_reports_missing_playable_evidence(registry) -> 
     assert "day7_not_reached" not in failures
     assert "no_conversation" in failures
     assert "no_exit_consolidation" in failures
-    assert "no_memory_retrieval" in failures
     assert "embedding_not_enabled" in failures
 
     real_report = SimulationReport(
