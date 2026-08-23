@@ -1,0 +1,26 @@
+# Bad cases
+
+- `boundary_002_owner_scope`: judge_major_issue
+- `boundary_003_internal_fields`: judge_major_issue
+- `boundary_005_rare_book`: illegal_action, illegal_id, judge_major_issue, memory_scope_missing, owner_boundary_violation, rule_hard_failure, schema_invalid, unauthorized_memory
+- `boundary_006_evidence_scope`: illegal_action, illegal_id, judge_major_issue, judge_unsupported_claim, judge_unsupported_claim_detected, memory_scope_missing, owner_boundary_violation, rule_hard_failure, schema_invalid, unauthorized_memory
+- `coherence_002_continuation`: judge_major_issue
+- `coherence_004_participant_change`: illegal_id, judge_major_issue, memory_scope_missing, owner_boundary_violation, rule_hard_failure, schema_invalid, unauthorized_memory
+- `coherence_005_temporal`: judge_major_issue
+- `coherence_006_goal_progress`: illegal_id, judge_major_issue, judge_unsupported_claim, judge_unsupported_claim_detected, memory_scope_missing, owner_boundary_violation, rule_hard_failure, schema_invalid, unauthorized_memory
+- `persona_004_chen_direct`: judge_major_issue, judge_unsupported_claim, judge_unsupported_claim_detected
+- `persona_006_participant_switch`: judge_major_issue, judge_unsupported_claim, judge_unsupported_claim_detected
+- `relevance_003_actor_goal`: illegal_id, judge_major_issue, memory_scope_missing, owner_boundary_violation, rule_hard_failure, schema_invalid, unauthorized_memory
+- `relevance_004_visible_evidence`: agenda_scope_missing, illegal_evidence_id, illegal_id, judge_major_issue, judge_unsupported_claim, judge_unsupported_claim_detected, memory_scope_missing, owner_boundary_violation, rule_hard_failure, schema_invalid, unauthorized_memory
+- `relevance_006_concise_answer`: judge_major_issue
+- `rules_001_daily_seek_chat`: illegal_id, judge_major_issue, rule_hard_failure, schema_invalid
+- `rules_002_daily_wait_shape`: actor_scope_missing, goal_scope_missing, illegal_action, illegal_id, judge_major_issue, judge_unsupported_claim, judge_unsupported_claim_detected, rule_hard_failure, schema_invalid
+- `rules_003_invitation`: judge_major_issue
+- `rules_004_chat_action`: illegal_id, judge_major_issue, memory_scope_missing, owner_boundary_violation, rule_hard_failure, schema_invalid, unauthorized_memory
+- `rules_005_evidence_ids`: illegal_id, judge_major_issue, judge_unsupported_claim, judge_unsupported_claim_detected, memory_scope_missing, owner_boundary_violation, rule_hard_failure, schema_invalid, unauthorized_memory
+- `rules_007_time_boundary`: illegal_action, illegal_id, judge_major_issue, rule_hard_failure, schema_invalid, time_rule_violation
+- `rules_008_departed_npc`: departed_participation, illegal_action, judge_contradiction, judge_contradiction_detected, judge_major_issue, rule_hard_failure
+- `rules_009_participant_limit`: judge_major_issue
+- `rules_010_no_world_mutation`: illegal_action, illegal_id, memory_scope_missing, owner_boundary_violation, rule_hard_failure, rule_judge_conflict, schema_invalid, unauthorized_memory
+- `rules_011_other_goal_forbidden`: illegal_action, illegal_id, memory_scope_missing, owner_boundary_violation, rule_hard_failure, rule_judge_conflict, schema_invalid, unauthorized_memory
+- `rules_012_single_memory_call`: illegal_action, illegal_id, judge_major_issue, memory_scope_missing, owner_boundary_violation, rule_hard_failure, rule_judge_conflict, schema_invalid, unauthorized_memory

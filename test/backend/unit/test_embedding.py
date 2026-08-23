@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from core.backend.app.ai.ark_embedding import (
@@ -28,7 +29,8 @@ class _FakeEmbeddings:
                     embedding=[float(index + 1)] * MEMORY_EMBEDDING_DIMENSIONS,
                 )
                 for index, _ in enumerate(inputs)
-            ]
+            ],
+            usage={"total_tokens": len(inputs) * 3},
         )
 
 
@@ -83,6 +85,10 @@ async def test_ark_embedding_batches_inputs_in_one_provider_call() -> None:
     assert vectors[1][0] == 2.0
     assert fake.embeddings.kwargs is not None
     assert fake.embeddings.kwargs["input"] == ["旧书店", "公益文社"]
+    assert provider.metrics_snapshot() == {
+        "completedRequests": 1,
+        "totalTokens": 6,
+    }
 
 
 @pytest.mark.anyio
@@ -129,7 +135,7 @@ def test_embedding_probe_provider_failure_projection_is_safe() -> None:
     class BadRequestError(Exception):
         status_code = 400
         code = "InvalidParameter"
-        body = {"message": "must never be projected"}
+        body: ClassVar[dict[str, str]] = {"message": "must never be projected"}
         response = SimpleNamespace(headers={"x-request-id": "safe-request-id"})
 
     report = check_ark_embedding._safe_provider_failure(BadRequestError("secret text"))

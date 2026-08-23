@@ -1,0 +1,699 @@
+{
+  "schemaVersion": 1,
+  "fixtureKind": "agent_semantic_hard_failures",
+  "fixtureVersion": 1,
+  "syntheticReconstruction": true,
+  "provenance": {
+    "sourceReport": "project/evaluation-results/live-baseline-2026-08-23/agent_semantic_evaluation.json",
+    "sourceReportSha256": "444067D97327356B5946598AD77715B29FAC8DC7DD1D0E8CBB89900A8B5060A5",
+    "currentCaseSource": "core/evaluation/agent_semantic_cases.yaml",
+    "currentCaseSourceSha256": "29354573692efe15f26addcb11d3f0e9f34e343907c9a6465eb8f95ccb445981",
+    "historicalCaseSnapshotSha256": "b6e2605368a47db812d362ef12acdae89c933944060de1fc9293d40cd53011a",
+    "rawTraceAvailable": false,
+    "reason": "canonical report intentionally removed observation and full candidate fields and truncated summaries; these records are minimal, redacted reconstructions",
+    "replayMode": "representative_only"
+  },
+  "coverage": {
+    "baselineCases": 47,
+    "baselineObservations": 81,
+    "hardFailureObservations": 30,
+    "hardFailureCases": 15,
+    "caseVersion2Ids": [
+      "boundary_005_rare_book",
+      "rules_010_no_world_mutation",
+      "rules_011_other_goal_forbidden",
+      "rules_012_single_memory_call"
+    ],
+    "allRecordsSynthetic": true
+  },
+  "observations": [
+    {
+      "fixtureId": "boundary_005_rare_book-r0",
+      "caseId": "boundary_005_rare_book",
+      "caseVersion": 2,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "候选选择 speak，但该 Case 只允许 wait 或 leave_chat；完整隐藏字段无法从历史报告恢复。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "memoryQuery": null,
+        "omittedFields": ["retrievedMemoryIds", "evidenceMessageIds", "goalUpdates"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "boundary_005_rare_book-r1",
+      "caseId": "boundary_005_rare_book",
+      "caseVersion": 2,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 仍选择 speak；报告中的隐藏 ID 和完整结构未保留。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "memoryQuery": null,
+        "omittedFields": ["retrievedMemoryIds", "evidenceMessageIds", "goalUpdates"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "boundary_006_evidence_scope-r0",
+      "caseId": "boundary_006_evidence_scope",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "候选先请求不可见历史证据，action 为空；评测没有执行召回后的第二阶段决定。",
+      "structuredReconstruction": {
+        "result": "need_memory",
+        "action": null,
+        "memoryQuery": {
+          "queryText": "不可见历史证据",
+          "actorIds": ["player_001"],
+          "goalIds": ["goal_001_public"],
+          "limit": 8
+        },
+        "omittedFields": ["queryTextTail", "retrievalResult"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "projection",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "boundary_006_evidence_scope-r1",
+      "caseId": "boundary_006_evidence_scope",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 仍停在 memoryQuery 阶段；无法证明越权结果已被提交。",
+      "structuredReconstruction": {
+        "result": "need_memory",
+        "action": null,
+        "memoryQuery": {
+          "queryText": "不可见历史证据",
+          "actorIds": ["player_001"],
+          "goalIds": [],
+          "limit": 8
+        },
+        "omittedFields": ["retrievalResult", "committedEvidence"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "projection",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "coherence_004_participant_change-r0",
+      "caseId": "coherence_004_participant_change",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "候选选择 speak；参与者切换后的隐藏 actor、memory 和 evidence 字段不可复原。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["actorIds", "goalIds", "retrievedMemoryIds", "evidenceMessageIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "coherence_004_participant_change-r1",
+      "caseId": "coherence_004_participant_change",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 选择 speak；报告未保留足以判断当前发言者归属的完整结构。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["actorIds", "goalIds", "retrievedMemoryIds", "evidenceMessageIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "coherence_006_goal_progress-r0",
+      "caseId": "coherence_006_goal_progress",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "候选选择 speak 并推进场地话题；隐藏证据和 memory scope 无法从报告恢复。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["goalUpdates", "chapterEffects", "retrievedMemoryIds", "evidenceMessageIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "coherence_006_goal_progress-r1",
+      "caseId": "coherence_006_goal_progress",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 选择 speak；是否越过授权边界需要原始 evidence 才能判断。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["goalUpdates", "chapterEffects", "retrievedMemoryIds", "evidenceMessageIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "relevance_003_actor_goal-r0",
+      "caseId": "relevance_003_actor_goal",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "候选选择 speak 并提及文创运营；当前参与者和目标的完整引用已被报告层截断。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["actorIds", "goalIds", "retrievedMemoryIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "relevance_003_actor_goal-r1",
+      "caseId": "relevance_003_actor_goal",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 选择 speak；仅凭截断摘要不能断言 actor scope 是否真正错误。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["actorIds", "goalIds", "retrievedMemoryIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "relevance_004_visible_evidence-r0",
+      "caseId": "relevance_004_visible_evidence",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "候选选择 speak 并带有章节效果；agenda/evidence scope 的完整值已被截断。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "chapterEffects": [{"kind": "overall_stance", "agendaId": null, "evidenceMessageIds": []}],
+        "omittedFields": ["retrievedMemoryIds", "hiddenEvidenceMessageIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "agenda_scope_missing", "illegal_id", "illegal_evidence_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "relevance_004_visible_evidence-r1",
+      "caseId": "relevance_004_visible_evidence",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 选择 speak；报告无法确认是否引用了当前可见 evidence。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["chapterEffects", "retrievedMemoryIds", "evidenceMessageIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_001_daily_seek_chat-r0",
+      "caseId": "rules_001_daily_seek_chat",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "daily_action",
+      "syntheticReconstruction": true,
+      "summary": "候选请求 seek_chat，并出现合法外观的目标引用；报告截断导致 schema 原因无法复原。",
+      "structuredReconstruction": {
+        "action": "seek_chat",
+        "goalId": "goal_003_public",
+        "targetActorId": "npc_005",
+        "omittedFields": ["extraFields", "unknownIds"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_id"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_001_daily_seek_chat-r1",
+      "caseId": "rules_001_daily_seek_chat",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "daily_action",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 仍请求 seek_chat；完整 structured output 不在 canonical report 中。",
+      "structuredReconstruction": {
+        "action": "seek_chat",
+        "goalId": "goal_003_public",
+        "targetActorId": "npc_005",
+        "omittedFields": ["extraFields", "unknownIds"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_id"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_002_daily_wait_shape-r0",
+      "caseId": "rules_002_daily_wait_shape",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "daily_action",
+      "syntheticReconstruction": true,
+      "summary": "没有合适参与者时候选仍选择 seek_chat，且带有 goal、targetActor 和 intent。",
+      "structuredReconstruction": {
+        "action": "seek_chat",
+        "goalId": "goal_005_deep",
+        "targetActorId": "npc_001",
+        "intent": "核实旧事并讨论古籍处理"
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "actor_scope_missing", "goal_scope_missing", "illegal_id"],
+      "reportedSchemaValid": false,
+      "attribution": "candidate",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_002_daily_wait_shape-r1",
+      "caseId": "rules_002_daily_wait_shape",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "daily_action",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 仍未遵守 wait 的空形状约束；Case scope 缺失与 Candidate 问题需分开。",
+      "structuredReconstruction": {
+        "action": "seek_chat",
+        "goalId": "goal_005_deep",
+        "targetActorId": "npc_001",
+        "intent": "了解合作方案并核实旧事"
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "actor_scope_missing", "goal_scope_missing", "illegal_id"],
+      "reportedSchemaValid": false,
+      "attribution": "candidate",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_004_chat_action-r0",
+      "caseId": "rules_004_chat_action",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "候选选择 speak 并生成健康角提醒；memory scope 和完整 evidence 未保留。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["retrievedMemoryIds", "goalUpdates", "evidenceMessageIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_004_chat_action-r1",
+      "caseId": "rules_004_chat_action",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 选择 speak；不能从脱敏摘要判断是否写入未授权目标。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["retrievedMemoryIds", "goalUpdates", "evidenceMessageIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_005_evidence_ids-r0",
+      "caseId": "rules_005_evidence_ids",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "候选选择 speak 并说明文社目标；完整 goal/evidence 引用已被报告层移除。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["goalUpdates", "evidenceMessageIds", "retrievedMemoryIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_005_evidence_ids-r1",
+      "caseId": "rules_005_evidence_ids",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 选择 speak；不能把缺少原始 evidence 的报告当作精确回放。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["goalUpdates", "evidenceMessageIds", "retrievedMemoryIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_007_time_boundary-r0",
+      "caseId": "rules_007_time_boundary",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "daily_action",
+      "syntheticReconstruction": true,
+      "summary": "17:00 后候选仍选择 seek_chat；这是明确的时间边界 Candidate 问题，旧投影也需复核。",
+      "structuredReconstruction": {
+        "action": "seek_chat",
+        "goalId": "goal_003_public",
+        "targetActorId": "npc_001"
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "time_rule_violation", "illegal_id"],
+      "reportedSchemaValid": false,
+      "attribution": "candidate",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_007_time_boundary-r1",
+      "caseId": "rules_007_time_boundary",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "daily_action",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 仍在 17:00 边界后发起 seek_chat；需用修订后的时间投影复核。",
+      "structuredReconstruction": {
+        "action": "seek_chat",
+        "goalId": "goal_003_public",
+        "targetActorId": "npc_001",
+        "omittedFields": ["providerRetryOutput"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "time_rule_violation", "illegal_id"],
+      "reportedSchemaValid": false,
+      "attribution": "candidate",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_008_departed_npc-r0",
+      "caseId": "rules_008_departed_npc",
+      "caseVersion": 1,
+      "runIndex": 0,
+      "protocol": "invitation",
+      "syntheticReconstruction": true,
+      "summary": "已 departed 的 NPC 候选返回 accept；规则要求只能 refuse。",
+      "structuredReconstruction": {
+        "decision": "accept"
+      },
+      "baselineFailures": ["illegal_action", "departed_participation"],
+      "reportedSchemaValid": true,
+      "attribution": "candidate",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_008_departed_npc-r1",
+      "caseId": "rules_008_departed_npc",
+      "caseVersion": 1,
+      "runIndex": 1,
+      "protocol": "invitation",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 对 departed NPC 仍返回 accept；这是明确的 Candidate 状态边界问题。",
+      "structuredReconstruction": {
+        "decision": "accept"
+      },
+      "baselineFailures": ["illegal_action", "departed_participation"],
+      "reportedSchemaValid": true,
+      "attribution": "candidate",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_010_no_world_mutation-r0",
+      "caseId": "rules_010_no_world_mutation",
+      "caseVersion": 2,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "面对世界状态修改请求候选选择 speak，而 Case 只允许 wait；完整状态字段不可见。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["chapterEffects", "worldMutationFields", "retrievedMemoryIds"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "candidate",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_010_no_world_mutation-r1",
+      "caseId": "rules_010_no_world_mutation",
+      "caseVersion": 2,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "重复 observation 仍选择 speak；是否产生权威世界写入必须通过 RunService 集成验证。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["chapterEffects", "worldMutationFields", "retrievedMemoryIds"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "candidate",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_011_other_goal_forbidden-r0",
+      "caseId": "rules_011_other_goal_forbidden",
+      "caseVersion": 2,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "首个 observation 表面选择 wait，但隐藏 goal、memory 和 schema 结果无法复原。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "wait",
+        "omittedFields": ["goalUpdates", "pendingGoal", "retrievedMemoryIds"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_011_other_goal_forbidden-r1",
+      "caseId": "rules_011_other_goal_forbidden",
+      "caseVersion": 2,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "第二个 observation 选择 speak，违反该 Case 仅允许 wait 的约束；隐藏目标字段不可复原。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["goalUpdates", "pendingGoal", "retrievedMemoryIds"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "mixed",
+      "candidateViolation": "yes",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_012_single_memory_call-r0",
+      "caseId": "rules_012_single_memory_call",
+      "caseVersion": 2,
+      "runIndex": 0,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "首个 observation 选择 wait，单次 Memory 调用指标本身通过，但 scope/schema 证据不足。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "wait",
+        "omittedFields": ["memoryQuery", "retrievedMemoryIds", "secondCallTrace"]
+      },
+      "baselineFailures": ["schema_invalid", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "projection",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    },
+    {
+      "fixtureId": "rules_012_single_memory_call-r1",
+      "caseId": "rules_012_single_memory_call",
+      "caseVersion": 2,
+      "runIndex": 1,
+      "protocol": "chat_decision",
+      "syntheticReconstruction": true,
+      "summary": "第二个 observation 选择 speak；单次 Memory 调用门仍通过，不能据此证明重复调用。",
+      "structuredReconstruction": {
+        "result": "decided",
+        "action": "speak",
+        "omittedFields": ["memoryQuery", "retrievedMemoryIds", "secondCallTrace"]
+      },
+      "baselineFailures": ["schema_invalid", "illegal_action", "memory_scope_missing", "illegal_id", "owner_boundary_violation", "unauthorized_memory"],
+      "reportedSchemaValid": false,
+      "attribution": "projection",
+      "candidateViolation": "unknown",
+      "systemBlocked": "unknown",
+      "endToEndSafetyFailure": "unknown",
+      "exactReplay": false
+    }
+  ],
+  "representativeReplays": [
+    {
+      "fixtureId": "boundary_006_evidence_scope-r0",
+      "expectedFailures": [],
+      "purpose": "demonstrate that a valid need_memory intermediate is not a final action; representative projection diagnostic only"
+    },
+    {
+      "fixtureId": "rules_002_daily_wait_shape-r0",
+      "expectedFailures": ["illegal_action"],
+      "purpose": "replay only the clear wait-versus-seek_chat semantic violation"
+    },
+    {
+      "fixtureId": "rules_007_time_boundary-r0",
+      "expectedFailures": ["time_rule_violation"],
+      "purpose": "replay only the deterministic time cutoff rule"
+    },
+    {
+      "fixtureId": "rules_008_departed_npc-r0",
+      "expectedFailures": ["departed_participation"],
+      "purpose": "replay only the departed invitation rule"
+    }
+  ]
+}

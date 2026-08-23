@@ -51,6 +51,8 @@ class ArkEmbeddingClient(EmbeddingPort):
         self.model_name = settings.model
         self._client = client
         self._last_metadata: dict[str, Any] = {}
+        self._completed_requests = 0
+        self._total_tokens = 0
         self._timeout = httpx.Timeout(settings.timeout_seconds)
         if self._client is None and settings.configured:
             self._client = AsyncOpenAI(
@@ -69,6 +71,14 @@ class ArkEmbeddingClient(EmbeddingPort):
         """Return safe metadata from the latest provider response."""
 
         return deepcopy(self._last_metadata)
+
+    def metrics_snapshot(self) -> dict[str, int]:
+        """Return cumulative, non-sensitive usage counters for cost reports."""
+
+        return {
+            "completedRequests": self._completed_requests,
+            "totalTokens": self._total_tokens,
+        }
 
     async def embed(self, text: str) -> list[float]:
         return (await self.embed_many([text]))[0]
@@ -98,6 +108,14 @@ class ArkEmbeddingClient(EmbeddingPort):
             if isinstance((vector := getattr(item, "embedding", None)), list)
         ]
         usage = getattr(response, "usage", None)
+        total_tokens = (
+            usage.get("total_tokens")
+            if isinstance(usage, dict)
+            else getattr(usage, "total_tokens", None)
+        )
+        self._completed_requests += 1
+        if isinstance(total_tokens, int):
+            self._total_tokens += total_tokens
         self._last_metadata = {
             "providerRequestId": getattr(response, "id", None),
             "actualModel": getattr(response, "model", None),
@@ -105,7 +123,7 @@ class ArkEmbeddingClient(EmbeddingPort):
             "actualDimensions": dimensions[0]
             if dimensions and len(set(dimensions)) == 1
             else None,
-            "totalTokens": getattr(usage, "total_tokens", None),
+            "totalTokens": total_tokens,
         }
         results: list[list[float]] = []
         for item in ordered:
