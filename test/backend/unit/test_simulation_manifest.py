@@ -28,6 +28,15 @@ RECOVERY_MANIFEST_PATH = (
     / "manifests"
     / "final_agent_validation_recovery_v2.json"
 )
+RECOVERY_V3_MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "core"
+    / "backend"
+    / "app"
+    / "simulation"
+    / "manifests"
+    / "final_agent_validation_recovery_v3.json"
+)
 
 
 def _canonical_json_digest(value: object) -> str:
@@ -79,6 +88,29 @@ def test_recovery_manifest_is_distinct_preregistered_full_matrix() -> None:
     }.isdisjoint(item["attemptId"] for item in planned_attempts(original))
     for route in ("observer", "pro_lin", "pro_zhao"):
         assert manifest["routes"][route]["seeds"] == list(range(20260845, 20260850))
+        assert manifest["routes"][route]["plannedRuns"] == 5
+
+
+def test_recovery_v3_manifest_is_distinct_preregistered_full_matrix() -> None:
+    manifest, digest = load_manifest(RECOVERY_V3_MANIFEST_PATH)
+    original, _ = load_manifest()
+    recovery_v2, _ = load_manifest(RECOVERY_MANIFEST_PATH)
+
+    assert manifest["experimentId"] == "final-agent-validation-recovery-v3-20260824"
+    assert manifest["preregistrationBaseCommit"] == "9f5cae1"
+    assert len(planned_attempts(manifest)) == 15
+    assert digest == "3efe93e36137510c8ed6d944a593135fea106e0e72eafed83c3d7a665d6c4f40"
+    assert manifest["artifacts"] == original["artifacts"]
+    assert manifest["strategies"] == original["strategies"]
+    attempt_ids = {item["attemptId"] for item in planned_attempts(manifest)}
+    assert attempt_ids.isdisjoint(
+        item["attemptId"] for item in planned_attempts(original)
+    )
+    assert attempt_ids.isdisjoint(
+        item["attemptId"] for item in planned_attempts(recovery_v2)
+    )
+    for route in ("observer", "pro_lin", "pro_zhao"):
+        assert manifest["routes"][route]["seeds"] == list(range(20260850, 20260855))
         assert manifest["routes"][route]["plannedRuns"] == 5
 
 
