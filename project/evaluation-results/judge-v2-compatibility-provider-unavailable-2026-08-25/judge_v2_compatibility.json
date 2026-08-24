@@ -1,0 +1,49 @@
+{
+  "apiMode": "responses",
+  "attempts": [
+    {
+      "compatible": false,
+      "errorCode": "ai_provider_unavailable",
+      "fallbackEligible": false,
+      "latencyMs": 5636.642,
+      "model": "deepseek-v4-pro",
+      "physicalRequests": 1,
+      "providerRetries": 0,
+      "status": "failed",
+      "tokenUsage": {
+        "completionTokens": null,
+        "promptTokens": null,
+        "totalTokens": null
+      }
+    }
+  ],
+  "calibrationExecuted": false,
+  "createdAt": "2026-08-24T16:34:06.762183+00:00",
+  "estimatedCostCny": null,
+  "fallbackModel": "deepseek-v4-flash",
+  "humanValidated": false,
+  "judgeOnly47Executed": false,
+  "localDate": "2026-08-25",
+  "localPydanticValidation": true,
+  "maxPhysicalRequests": 2,
+  "physicalRequests": 1,
+  "primaryModel": "deepseek-v4-pro",
+  "profileFrozen": false,
+  "promptSha256": "1c461e4be9e9da8f0502fa8224f2f32202edb357d004ebe0ff28b2af96ad786c",
+  "rubricVersion": "agent-semantic-rubric-v2",
+  "schemaSha256": "a1b2c63e95c49bbad18c6125f60a5cf62bffb165a73a3b2c59d2b684f5673b4b",
+  "schemaVersion": 1,
+  "selectedModel": null,
+  "stage": "judge-v2-technical-compatibility",
+  "status": "provider_unavailable",
+  "stopReason": "primary_provider_unavailable_no_fallback_allowed",
+  "store": false,
+  "strictJsonSchema": true,
+  "temperature": 0.0,
+  "thinking": "disabled",
+  "tokenUsage": {
+    "completionTokens": null,
+    "promptTokens": null,
+    "totalTokens": null
+  }
+}

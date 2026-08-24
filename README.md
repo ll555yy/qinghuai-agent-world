@@ -221,11 +221,12 @@ run_id + owner_npc_id 最终过滤
 | 评测 | 数据 | 结果 |
 |---|---:|---|
 | Agent 语义复评 | 47 Case / 68 Candidate 调用 | 47/47 完成，Schema `100%`，hard failure `0`；29 直接通过，18 进入人工复核 |
+| Judge v2 完成尝试 | Pro 技术兼容性 1 次 | Provider unavailable；未回退 Flash、未运行 13 Case 或 47 Case Judge-only |
 | PostgreSQL Memory 留出集 | tuning 7 + holdout 7 | Precision@returned / Recall@K 均 `1.0`，FPR、重复和 owner 越界均 `0` |
 | 可达性样本 | observer / 联盟成功 / 低投入失败 | 三种路径都有真实历史样本；只证明路径可达，不代表自然玩家成功率 |
 | 前端契约 | Vitest + Playwright | 单元、浏览器契约和无 REST/WS Mock 的全栈黄金链路均纳入 CI |
 
-LLM Judge 已接入独立模型与 rubric，但当前校准未达到预注册阈值，因此不能覆盖确定性规则，也不能把待人工复核样本自动改判为通过。这是项目刻意保留的评测边界。
+LLM Judge 已接入独立模型与 rubric，但 v1 校准未达到预注册阈值。2026-08-25 的 Judge v2 主选 `deepseek-v4-pro` 在唯一一次严格 Schema `/responses` 兼容性请求中返回 Provider unavailable；这不是技术不兼容，因此没有切换 Flash，也没有运行校准或复评。Judge 仍不能覆盖确定性规则，不能把待人工复核样本自动改判为通过。
 
 ### 本地验证
 
@@ -292,6 +293,7 @@ python -m pytest -c core/backend/pyproject.toml -q
 - [PostgreSQL + pgvector 设计](project/DATABASE_BACKEND_DESIGN.md)
 - [Agent 语义整改 Before / After](project/AGENT_SEMANTIC_REMEDIATION_BEFORE_AFTER.md)
 - [47 Case 最终语义报告](project/evaluation-results/live-final-canonical-2026-08-23/agent_semantic_evaluation.md)
+- [Judge v2 兼容性负向结果](project/evaluation-results/judge-v2-compatibility-provider-unavailable-2026-08-25/judge_v2_compatibility.md)
 - [PostgreSQL Memory 留出集](project/evaluation-results/postgres-retrieval-final-2026-08-23/postgres_retrieval_benchmark.md)
 - [七日模拟结果与边界](project/REAL_SEVEN_DAY_SIMULATION_RESULTS.md)
 - [项目就绪度与验证报告](project/PROJECT_READINESS_REPORT.md)
@@ -299,7 +301,7 @@ python -m pytest -c core/backend/pyproject.toml -q
 
 ## 📌 已知边界
 
-- 最新一次预注册七日 v5 矩阵因 Candidate 与 Embedding Provider 不可用而没有启动，不能宣称该轮统计门禁通过；历史样本只支持“路线可达”。
+- 最新一次 v5 恢复健康门为 Candidate `0/6`、Embedding `0/2`，因此没有创建新 execution 或重跑 15 项；旧 v5 仍为 `15 planned / 0 attempted`。不能宣称该轮统计门禁通过，历史样本只支持“路线可达”。
 - LLM Judge 当前是辅助信号，不是发布门；高风险语义样本仍需要双人独立标注与仲裁。
 - 当前采用本地单进程应用架构，尚未实现多实例分布式锁、租户级配额和生产运维面板。
 - 仓库暂不提供托管在线实例，需要按照“快速开始”在本地运行。

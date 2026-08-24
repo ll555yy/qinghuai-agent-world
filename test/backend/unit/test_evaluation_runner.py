@@ -229,9 +229,10 @@ def test_cli_exposes_a_separate_auditable_live_judge_timeout(monkeypatch) -> Non
             captured.setdefault("settings", []).append(settings)
 
     class FakeJudgeAdapter:
-        def __init__(self, *, settings, cost):
+        def __init__(self, *, settings, cost, profile_id):
             self.settings = settings
             self.cost = cost
+            self.profile_id = profile_id
 
     monkeypatch.setenv("ARK_API_KEY", "test-key")
     monkeypatch.setenv("ARK_MODEL", "doubao-seed-2.0-lite")
@@ -248,6 +249,7 @@ def test_cli_exposes_a_separate_auditable_live_judge_timeout(monkeypatch) -> Non
     assert judge.settings.model == "doubao-seed-2.1-turbo"
     assert judge.settings.api_key == "judge-test-key"
     assert judge.settings.request_timeout_seconds == 135
+    assert judge.profile_id == "judge-v1"
     assert judge.cost.prompt_cny_per_1k == 0.003
     assert judge.cost.completion_cny_per_1k == 0.015
     assert captured["settings"][0].api_key == "test-key"

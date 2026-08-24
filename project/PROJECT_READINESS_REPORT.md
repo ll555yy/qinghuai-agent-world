@@ -1,6 +1,6 @@
 # 项目就绪度与验证报告
 
-- 状态：已完成真实性收口；语义、检索和 CI/E2E 已通过；v4 的 pro_lin v2 指标失败已保留，v5 因 Candidate 与 Embedding Provider 均不可用而以 `15 planned / 0 attempted / 15 not_started` 的负向 canonical 结论收口
+- 状态：已完成真实性收口；语义、检索和 CI/E2E 已通过；Judge v2 与 v5 恢复尝试均因 Provider unavailable 按预注册停止，旧 v5 保持 `15 planned / 0 attempted / 15 not_started`
 - 冻结起点：`50d6c88`
 - 七日基线提交：`738ef11`
 - 预注册提交：`235b36b`
@@ -49,6 +49,10 @@ Canonical 47 Case 是 2026-08-23 的单一 live 批次，没有拼接历史或�
 
 真实 Judge 校准完成 13/13，无 provider/schema error，score-band match `92.3077%`；但 critical boolean macro accuracy `79.4872% < 80%`，Injection `2/3 < 3/3`，因此 `qualityGateStatus=advisory`。47 Case Judge 六维均分为 persona `3.918919`、context `3.646341`、relevance `3.439024`、naturalness `4.357143`、goal progress `3.144737`、player agency `4.036585`。这些数字只用于诊断和人工队列排序。
 
+2026-08-25 的 Judge v2 完成尝试先对主选 `deepseek-v4-pro` 执行完整严格 `JudgeScore` Schema 的 Ark `/responses` 技术检查，固定 temperature `0`、thinking disabled、`store=false`。唯一一次物理请求在 `5636.642 ms` 后返回 `ai_provider_unavailable`，没有 Provider retry、request ID 或 Token 用量。该错误不是明确的 model/endpoint/schema 不兼容，所以未切换 `deepseek-v4-flash`，未冻结 v2 profile，未运行 13 Case 校准，也未对保存的 47 个 Candidate summary 做 Judge-only 复评。v1 profile 已转为仓库注册合同，未知 profile 在发请求前失败；v1 canonical 保持不变且仍为 advisory。
+
+证据：[Judge v2 兼容性 JSON](evaluation-results/judge-v2-compatibility-provider-unavailable-2026-08-25/judge_v2_compatibility.json)，SHA-256 `7c2934e26b34a14fe56d6cbc18273aee33456b0c55077a80f9eb29e149709eb7`。
+
 ## 4. 预注册七日全分母
 
 原批次 manifest 已在 `235b36b` 预先提交：observer / pro_lin / pro_zhao 共用连续 seed `20260840..20260844`，合计 15 个唯一 attempt。Ark Provider 连续超时后安全停止；ledger 已把所有计划项终态化，结果为 `planned=15`、`attempted=11`、`infraValid=10`、`gameplayPass=0`、coverage `0.733333`、`complete=false`。前 10 个已完成运行的丰富报告只存在于被中止进程内存，不能事后重建，因此 canonical 汇总保守地按缺失报告处理，不能用其推导玩法成功率。
@@ -65,6 +69,8 @@ v4 holdout 在 `aa71928` 预注册后真实运行：5 个 observer、5 个 pro_l
 
 v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。本收口 Goal 只执行一轮最小真实预检：Candidate 六协议 `0/6`，6 次物理请求均为 `ai_provider_unavailable`，无格式重试；Embedding 对 2 条固定公开文本发出 1 次物理请求，返回 `embedding_provider_error / APIConnectionError`。两者均无 Provider request ID 和 Token 用量。按预先规则不再轮询、不启动正式矩阵；ledger 已将 15 个 planned attempt 全部终态化为 `not_started / provider_unavailable_preflight_candidate_and_embedding`。v5 canonical 为 `planned=15`、`attempted=0`、`infraValid=0`、`gameplayPass=0`、coverage `0.0`、`complete=false`；这是外部 Provider 不可用结论，不是 strategy v3 质量通过或失败的样本证据。
 
+本 Goal 获得新的 API 授权后只执行了一轮 v5 恢复健康门。Candidate 六协议仍为 `0/6`；每个逻辑检查触发底层唯一一次瞬时 Provider retry，合计 `12` 个物理请求、`6` 个 retry，全部为 `ai_provider_unavailable`。Embedding 对 2 条公开文本发出 1 个批量物理请求，结果仍为 `embedding_provider_error / APIConnectionError`，实际维度和 Token 均不可得。健康门失败后没有轮询，没有复核 manifest digest，没有创建 recovery execution/ledger/PostgreSQL Run，也没有启动 15 项；这不是“重新运行 15 个”，旧 v5 ledger 与 `15/0/0/0` canonical 均保持不动。
+
 Canonical 证据：
 
 - [v1 中断全分母 JSON](simulation-results/final-preregistered-v1-interrupted-2026-08-23/seven_day_gameplay_evidence.json)，SHA-256 `df7163924460d3499799eadc45c9e1faeb3b57809e1a58f33767389e67c6f36c`；
@@ -73,6 +79,7 @@ Canonical 证据：
 - [v4 strategy v2 中断全分母 JSON](simulation-results/final-preregistered-strategy-v2-v4-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `00da5ba495be1e70885f6ee2a7b50ff2cf5d4761ba0d42a019811b1825e180c2`；
 - [v5 Provider 不可用全分母 JSON](simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `09573d47a05e35bca83f0d7643028c3bf16c9dcb535d2bc10b7d6c095b0aa677`；
 - [v5 真实健康检查 JSON](simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/provider_health_check.json)，SHA-256 `3fd207de11fdd20a48bd025be8d3ca5870079e0d88341b16e14f42ce1c3b576e`；
+- [v5 恢复健康检查 JSON](simulation-results/final-preregistered-strategy-v3-v5-recovery-health-provider-unavailable-2026-08-25/provider_health_check.json)，SHA-256 `d61a3313472e32a5891d6577c00baa9fd6f4ca1d4018c0cfca2cc85ad5bffa4d`；
 - 所有汇总均从各自 manifest 枚举完整 15 项，保留 completed、runner_failed 与 not_started，结果都明确为 `complete=false`。
 
 ## 5. CI 与真实 full-stack E2E
@@ -89,24 +96,26 @@ v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Toke
 
 v5 收口健康检查发出 Candidate `6` 次、Embedding `1` 次物理请求，成功数均为 `0`；Provider 没有返回 Token 用量，因此估算费用记为“不可得”而不是伪造为零。正式 v5 矩阵为 `0` 次模型调用、`0` Token；资源使用未接近滚动 5 小时 2000 AFP 积分上限。
 
+本 Goal 新增 Judge v2 兼容性物理请求 `1` 次、Candidate 健康物理请求 `12` 次、Embedding 健康物理请求 `1` 次；成功请求为 `0`，Provider 未返回 Token 或可核算费用。这里不能把未知用量写成 `0`。正式 Judge 校准、47 Case Judge-only 和 v5 15 项均未启动；账户页给出的约束为任意滚动 5 小时最多 `2000` AFP 积分，本轮没有出现限额告警。
+
 ## 7. 总门禁
 
 | 门禁 | 结果 | 证据 |
 |---|---|---|
-| backend pytest | 通过 | `264 passed, 11 skipped`；数据库项另以专用库强制执行 |
-| Ruff | 通过 | `ruff 0.16.3`；`core/backend/app scripts migrations test/backend` |
-| mypy | 通过 | `Success: no issues found in 78 source files` |
+| backend pytest | 通过（离线） | `266 passed, 11 skipped`；11 项均因本轮未设置 `QINGHUAI_TEST_DATABASE_URL` 跳过 |
+| Ruff | 通过 | 从 `core/backend` 使用项目配置检查 `app scripts migrations ../../test/backend`：`All checks passed` |
+| mypy | 通过 | `Success: no issues found in 79 source files` |
 | FastAPI app import | 通过 | 无 Key 导入输出 `Qinghuai Chat Backend` |
 | 空库 Alembic upgrade/check | 通过 | `No new upgrade operations detected` |
 | persistence/semantic PostgreSQL tests，关键项不 skip | 通过 | 专用库 `12 passed` |
-| frontend lint/typecheck/Vitest/build | 通过 | Vitest `23 passed`；build 仅有 chunk-size warning |
-| 现有 Playwright | 通过 | `11 passed` |
-| full-stack Playwright | 通过 | `1 passed`，真实 REST/WS/PostgreSQL |
+| frontend lint/typecheck/Vitest/build | 通过 | Vitest `23/23`；build 仅有 chunk-size warning |
+| 现有 Playwright | 通过 | `11/11` |
+| full-stack Playwright | 历史通过，本 Goal 未重跑 | 当前环境没有专用 PostgreSQL URL；保留既有 `1/1` 真实 REST/WS/PostgreSQL 证据，不伪报本轮通过 |
 | CI 无真实 Ark Key/网络 | 通过（本地门禁 + 配置审计） | workflow 仅显式置空 Key，ArkClient 在缺 Key 时拒绝发请求；不覆盖默认 model/base URL，避免污染默认值单测；模型仅测试 app DI；pytest/Ruff/mypy 版本已固定；四个 job 可解析 |
 | manifest 15/15 全分母完整性 | 结论已固化（统计门禁未通过） | v5 canonical 包含全部 15 个预注册项，均为终态 `not_started`；`15/0/0/0`（planned/attempted/infraValid/gameplayPass），`complete=false`，没有替换 seed 或遗漏失败项 |
 | README 与 canonical 指标一致 | 通过 | README 与 v5 canonical 均报告 `15/0/0/0`，不把 Provider 不可用写成 strategy v3 通过或质量失败 |
 | `git diff --check`、凭据和绝对路径扫描 | 通过，最终提交前再核对 | canonical 无绝对路径或真实凭据；README 只含显式密码占位符 |
-| 工作树干净 | 通过（最终提交后复核） | 所有可审计证据由最终收口提交统一纳入，不将“交付完成”写成“七日统计门禁通过” |
+| 工作树干净 | 最终提交后复核 | 本 Goal 路径精确暂存；用户原有未跟踪 Goal 文档保持在工作树且不纳入本提交 |
 
 ## 8. 自动化不能替代的证据
 

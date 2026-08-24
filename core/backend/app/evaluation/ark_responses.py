@@ -46,11 +46,15 @@ class ArkResponsesClient:
         client: Any | None = None,
         *,
         response_schema: dict[str, Any] | None = None,
+        max_provider_retries: int = 1,
     ) -> None:
+        if max_provider_retries < 0:
+            raise ValueError("max_provider_retries must be non-negative")
         self.settings = settings
         self._configured = bool(settings.api_key)
         self._client = client
         self._response_schema = response_schema
+        self._max_provider_retries = max_provider_retries
         self._provider_attempts = 0
         self._provider_retries = 0
         self._completed_requests = 0
@@ -130,13 +134,13 @@ class ArkResponsesClient:
             }
 
         started = time.perf_counter()
-        for attempt in range(2):
+        for attempt in range(self._max_provider_retries + 1):
             try:
                 self._provider_attempts += 1
                 response = await self._client.responses.create(**options)
             except Exception as exc:
                 error = self._map_provider_error(exc, request_id)
-                if error.retryable and attempt == 0:
+                if error.retryable and attempt < self._max_provider_retries:
                     self._provider_retries += 1
                     await asyncio.sleep(0)
                     continue

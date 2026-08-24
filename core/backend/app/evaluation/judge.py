@@ -8,6 +8,7 @@ is treated as hostile, opaque data all the way through prompt construction.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import re
@@ -674,6 +675,53 @@ def build_judge_prompt(
     return system_prompt, user_prompt
 
 
+def judge_schema_sha256() -> str:
+    """Return the stable digest of the exact strict Judge response schema."""
+
+    payload = json.dumps(
+        JudgeScore.model_json_schema(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def judge_prompt_sha256() -> str:
+    """Digest the prompt contract using a public, deterministic probe fixture.
+
+    The fixture makes changes to prompt wording, safety boundaries, rubric
+    projection, or serialization observable without hashing any private case
+    or Candidate content.
+    """
+
+    system_prompt, user_prompt = build_judge_prompt(
+        {
+            "case_id": "judge-profile-contract-probe",
+            "category": "relevance",
+            "protocol": "chat_decision",
+            "input_context": {"direct_question": "你支持这个公开测试方案吗？"},
+            "expected_constraints": ["直接回答公开测试问题"],
+            "forbidden_signals": [],
+            "allowed_outcomes": ["support", "conditional", "oppose"],
+            "judge_rubric": ["事实和边界优先"],
+            "tags": ["synthetic", "public"],
+        },
+        {
+            "protocol": "chat_decision",
+            "candidate_text": "支持，但应先核对公开测试数据。",
+        },
+        include_schema=False,
+    )
+    payload = json.dumps(
+        {"system": system_prompt, "user": user_prompt},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _provider_retry_count(model: object) -> int:
     snapshot = getattr(model, "metrics_snapshot", None)
     if snapshot is None or not callable(snapshot):
@@ -733,7 +781,7 @@ def _rule_hard_failure(rule_score: object | None) -> bool:
 
 
 class JudgeAdapter:
-    """Async Judge backed by the independent ``doubao-seed-2.1-turbo`` model."""
+    """Async Judge backed by an exact repository-registered profile."""
 
     provider = JUDGE_PROVIDER
     model_name = JUDGE_MODEL
@@ -744,19 +792,31 @@ class JudgeAdapter:
         *,
         settings: ArkSettings | None = None,
         cost: JudgeCostConfig | None = None,
+        profile_id: str = "judge-v1",
     ) -> None:
-        self.cost = cost or JudgeCostConfig()
+        from .judge_profiles import load_judge_profile
+
+        self.profile = load_judge_profile(profile_id)
+        self.model_name = self.profile.model
+        self.cost = cost or JudgeCostConfig(
+            prompt_cny_per_1k=self.profile.inputCnyPerMillion / 1_000,
+            completion_cny_per_1k=self.profile.outputCnyPerMillion / 1_000,
+        )
         if model is not None:
             self.model: TextModel | None = model
         else:
             # Never inherit ARK_MODEL here: the production candidate and this
             # evaluator have intentionally different model contracts.
-            judge_settings = settings or ArkSettings(model=JUDGE_MODEL)
-            if judge_settings.model != JUDGE_MODEL:
-                judge_settings = dataclass_replace(judge_settings, model=JUDGE_MODEL)
+            judge_settings = settings or ArkSettings(model=self.profile.model)
+            if judge_settings.model != self.profile.model:
+                judge_settings = dataclass_replace(
+                    judge_settings,
+                    model=self.profile.model,
+                )
             self.model = ArkResponsesClient(
                 settings=judge_settings,
                 response_schema=JudgeScore.model_json_schema(),
+                max_provider_retries=self.profile.providerRetries,
             )
         self._cumulative = _MetricsAccumulator()
         self.last_metrics = JudgeMetrics()
@@ -772,6 +832,8 @@ class JudgeAdapter:
             "configured": self.configured,
             "provider": self.provider,
             "model": self.model_name,
+            "profileId": self.profile.profileId,
+            "apiMode": self.profile.apiMode,
             "baseUrlHost": DEFAULT_ARK_BASE_URL.split("//", 1)[-1].split("/", 1)[0],
         }
 
@@ -1075,6 +1137,8 @@ __all__ = [
     "RUBRIC_VERSION",
     "SemanticJudge",
     "build_judge_prompt",
+    "judge_prompt_sha256",
+    "judge_schema_sha256",
     "parse_judge_score",
     "protocol_rubric_v2",
     "redact_sensitive",

@@ -1,0 +1,23 @@
+{
+  "apiMode": "responses",
+  "formatRetries": 1,
+  "humanValidated": false,
+  "inputCnyPerMillion": 3.0,
+  "model": "doubao-seed-2.1-turbo",
+  "outputCnyPerMillion": 15.0,
+  "profileId": "judge-v1",
+  "profileVersion": 1,
+  "promptSha256": "1c461e4be9e9da8f0502fa8224f2f32202edb357d004ebe0ff28b2af96ad786c",
+  "provider": "volcengine_ark",
+  "providerRetries": 1,
+  "registeredAt": "2026-08-25T00:00:00+08:00",
+  "rubricVersion": "agent-semantic-rubric-v2",
+  "schemaSha256": "a1b2c63e95c49bbad18c6125f60a5cf62bffb165a73a3b2c59d2b684f5673b4b",
+  "schemaVersion": 1,
+  "status": "historical-v1-registered",
+  "store": false,
+  "strictJsonSchema": true,
+  "temperature": 0.0,
+  "thinking": "disabled",
+  "timeoutSeconds": 120.0
+}

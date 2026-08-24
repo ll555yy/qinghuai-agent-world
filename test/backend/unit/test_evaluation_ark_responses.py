@@ -109,6 +109,23 @@ async def test_responses_adapter_retries_one_transient_timeout() -> None:
 
 
 @pytest.mark.anyio
+async def test_responses_adapter_can_disable_provider_retry_for_compatibility_probe() -> None:
+    fake = _FakeOpenAI([httpx.TimeoutException("synthetic timeout"), _response()])
+    client = ArkResponsesClient(
+        ArkSettings(api_key="test-key", model="deepseek-v4-pro"),
+        client=fake,
+        max_provider_retries=0,
+    )
+
+    with pytest.raises(AIError) as captured:
+        await client.generate(_request())
+
+    assert captured.value.code == AIErrorCode.TIMEOUT
+    assert len(fake.responses.calls) == 1
+    assert client.metrics_snapshot()["providerRetries"] == 0
+
+
+@pytest.mark.anyio
 async def test_responses_adapter_rejects_empty_completed_output() -> None:
     fake = _FakeOpenAI([_response("")])
     client = ArkResponsesClient(

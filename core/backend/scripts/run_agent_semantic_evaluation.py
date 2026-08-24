@@ -109,6 +109,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--enable-judge", action="store_true", help="enable a judge; live mode needs this plus --live")
     parser.add_argument(
+        "--judge-profile",
+        default="judge-v1",
+        help="exact repository-registered Judge v1/v2 profile ID",
+    )
+    parser.add_argument(
         "--max-candidate-calls",
         "--max-model-calls",
         dest="max_candidate_calls",
@@ -966,16 +971,23 @@ def _live_adapters(args: argparse.Namespace) -> tuple[Any, Any | None, Any | Non
             JudgeAdapter,
             JudgeCostConfig,
         )
-
-        judge_model = (
-            os.environ.get("ARK_JUDGE_MODEL", "").strip() or "doubao-seed-2.1-turbo"
+        from core.backend.app.evaluation.judge_profiles import (  # noqa: PLC0415
+            load_judge_profile,
         )
-        if judge_model != "doubao-seed-2.1-turbo":
-            raise SystemExit("semantic baseline fixes ARK_JUDGE_MODEL to doubao-seed-2.1-turbo")
+
+        try:
+            profile = load_judge_profile(args.judge_profile)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        configured_model = os.environ.get("ARK_JUDGE_MODEL", "").strip()
+        if configured_model and configured_model != profile.model:
+            raise SystemExit(
+                "ARK_JUDGE_MODEL must match the selected registered Judge profile"
+            )
         judge_key = os.environ.get("ARK_JUDGE_API_KEY", "").strip() or key
         judge_settings = ArkSettings(
             api_key=judge_key,
-            model=judge_model,
+            model=profile.model,
             base_url=os.environ.get("ARK_JUDGE_BASE_URL", "").strip()
             or os.environ.get("ARK_BASE_URL", "").strip()
             or "https://ark.cn-beijing.volces.com/api/plan/v3",
@@ -983,6 +995,7 @@ def _live_adapters(args: argparse.Namespace) -> tuple[Any, Any | None, Any | Non
         )
         judge = JudgeAdapter(
             settings=judge_settings,
+            profile_id=profile.profileId,
             cost=JudgeCostConfig(
                 prompt_cny_per_1k=args.judge_input_cny_per_million / 1_000,
                 completion_cny_per_1k=args.judge_output_cny_per_million / 1_000,
@@ -1070,6 +1083,15 @@ async def _run(args: argparse.Namespace) -> tuple[dict[str, Any], list[Path]]:
         postgres_available=bool(args.database_url or os.environ.get("DATABASE_URL", "").strip()),
     )
     report = await runner.run()
+    if judge is not None:
+        judge_status = judge.status()
+        report.setdefault("metadata", {})["judgeProfileId"] = judge_status.get(
+            "profileId"
+        )
+        report.setdefault("metadata", {})["judgeModel"] = judge_status.get("model")
+        report.setdefault("llmJudgeMetrics", {})["judgeModel"] = judge_status.get(
+            "model"
+        )
     report.setdefault("execution", {}).setdefault("budget", {})[
         "judgeRequestTimeoutSeconds"
     ] = args.judge_request_timeout_seconds

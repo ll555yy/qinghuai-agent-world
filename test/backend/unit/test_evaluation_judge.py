@@ -14,6 +14,10 @@ from core.backend.app.evaluation.judge import (
     parse_judge_score,
     protocol_rubric_v2,
 )
+from core.backend.app.evaluation.judge_profiles import (
+    load_judge_profile,
+    registered_judge_profile_ids,
+)
 from core.backend.app.evaluation.judge_protocols import DIMENSION_NAMES, ReviewReason
 from pydantic import ValidationError
 
@@ -247,3 +251,14 @@ def test_parse_rejects_markdown_trailing_text_and_duplicate_json_keys() -> None:
     duplicate = valid[:-1] + ', "confidence": "low"}'
     with pytest.raises(ValueError):
         parse_judge_score(duplicate)
+
+
+def test_only_repository_registered_judge_profiles_are_accepted() -> None:
+    assert "judge-v1" in registered_judge_profile_ids()
+    profile = load_judge_profile("judge-v1")
+    assert profile.model == "doubao-seed-2.1-turbo"
+    assert profile.humanValidated is False
+    with pytest.raises(ValueError, match="unknown Judge profile"):
+        load_judge_profile("judge-v3")
+    with pytest.raises(ValueError, match="unknown Judge profile"):
+        load_judge_profile("../../private")

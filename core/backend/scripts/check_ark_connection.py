@@ -254,6 +254,8 @@ async def run_check(*, live: bool) -> tuple[dict[str, Any], int]:
         if callable(status_method)
         else {"provider": "unknown", "model": "unknown"}
     )
+    metrics_method = getattr(client, "metrics_snapshot", None)
+    provider_metrics = metrics_method() if callable(metrics_method) else None
     return (
         {
             "tool": REPORT_NAME,
@@ -263,6 +265,7 @@ async def run_check(*, live: bool) -> tuple[dict[str, Any], int]:
             "status": "completed" if success else "failed",
             "provider": status["provider"],
             "model": status["model"],
+            "providerMetrics": provider_metrics,
             "errorCode": "client_close_failed" if close_error else None,
             "checks": checks,
         },
