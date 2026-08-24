@@ -160,8 +160,11 @@ test('runs the real PostgreSQL/FastAPI/LangGraph/React golden path', async ({ pa
   expect(ended.run.worldTime.time).toBe('18:00')
   expect(ended.run.conversations[0].status).toBe('closed')
   assertNoPrivateFields(ended)
-  await expect(page.getByText('今天的聊天已经结束')).toBeVisible()
-  await expect(page.getByText('世界将从下一天 08:00 继续。')).toBeVisible()
+  const dayEndOverlay = page
+    .getByRole('status')
+    .filter({ hasText: '今天的聊天已经结束' })
+    .filter({ hasText: '世界将从下一天 08:00 继续。' })
+  await expect(dayEndOverlay).toBeVisible()
 
   await page.reload()
   await expect(page.getByLabel('慎之旧书店二维场景')).toHaveAttribute('data-ready', 'true')
