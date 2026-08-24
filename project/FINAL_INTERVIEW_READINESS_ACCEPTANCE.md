@@ -1,12 +1,14 @@
 # 最终面试交付验收
 
-- 状态：未完成；语义、检索和 CI/E2E 已通过，最终 15 局七日门禁被外部 Provider 连续超时阻断
+- 状态：未完成；语义、检索和 CI/E2E 已通过；v4 同时暴露 pro_lin v2 质量失败与外部 Provider 故障，v5 已预注册但因最新健康检查 `0/6` 尚未启动
 - 冻结起点：`50d6c88`
 - 七日基线提交：`738ef11`
 - 预注册提交：`235b36b`
 - 恢复批次预注册提交：`9f5cae1`
 - 第二恢复批次预注册提交：`5f1f497`
 - strategy v2 holdout 预注册提交：`aa71928`
+- v4 失败证据、strategy v3 与恢复修复：`e9a4a52`
+- strategy v3 holdout 预注册提交：`15f0dd7`
 - 最终提交：待生成
 
 ## 1. 可审计提交链
@@ -18,7 +20,9 @@
 | 预注册 | `235b36b` | manifest、连续 seed、策略/代码哈希、预算与失败规则先于真实运行提交 |
 | 恢复批次预注册 | `9f5cae1` | 新实验 ID 与连续 seed、逐 attempt 原子检查点先于 v2 真实调用提交 |
 | 第二恢复批次预注册 | `5f1f497` | v3 独立实验 ID、连续 seed `20260850..20260854` 与 digest 先于真实调用提交 |
-| strategy v2 holdout 预注册 | `aa71928` | v4 连续 seed `20260855..20260859`、混合策略 digest 与原门槛已冻结，尚未真实运行 |
+| strategy v2 holdout 预注册 | `aa71928` | v4 连续 seed `20260855..20260859`、混合策略 digest 与原门槛冻结后再运行 |
+| v4 失败证据与恢复修复 | `e9a4a52` | v4 canonical、pro_lin v3 状态拆分、Run ID 持久绑定和不中途重跑 seed 的 resume 逻辑 |
+| strategy v3 holdout 预注册 | `15f0dd7` | v5 连续 seed `20260860..20260864`、策略/Prompt digest 与原门槛在真实调用前冻结 |
 | 最终交付 | 待生成 | 真实全分母结果、语义闭环、CI/E2E、README 和本验收报告 |
 
 ## 2. Agent 语义与检索
@@ -55,14 +59,19 @@ Provider 后续短时恢复，两轮六协议检查均 `6/6` 一次通过且 Emb
 
 v3 的 5 个 pro_lin 均到达 `compromise_submitted`，但玩家任务为 `1 completed / 3 partial / 1 failed`，未达到预注册的“至少 2 个 completed”。根因是旧固定策略在 Day7 主动允许重复已满足条件并继续 conditional；历史 v1 策略保持冻结，新增 `strategy.pro_lin.v2` 仅澄清“已经写入的条件不再挂起，只有真实未满足事项才 conditional”。该修复已经离线测试，但尚未经过新的预注册 holdout，不能用 v3 回填或改判。
 
-v4 holdout 已在 `aa71928` 预注册：observer/pro_zhao 继续使用 v1，pro_lin 使用 v2，三路线共用连续新 seed `20260855..20260859`；门槛仍为 pro_lin 至少 `4/5` gameplay pass、至少 `2/5` player task completed，未降低验收标准。由于 v1、v2、v3 三轮均在真实批次中复现 Provider 超时/不可用，v4 当前保持未运行，等待外部服务稳定窗口；它不能计入当前成功率。
+v4 holdout 在 `aa71928` 预注册后真实运行：5 个 observer、5 个 pro_lin、2 个 pro_zhao 完成；第 13 个 attempt 在 Provider 故障风暴中人工停止并记为 runner_failed，后 2 个为 not_started。ledger 全分母为 `planned=15`、`attempted=13`、`infraValid=12`、coverage `0.866667`、`complete=false`；13 个临时 PostgreSQL Run 均按精确 runId 删除，专用库恢复为原有 14 条。v4 的 pro_lin v2 结果为 `0 completed / 3 partial / 2 failed`，gameplay pass `3/5`、player completed `0/5`，两项均低于未修改的 `4/5` 与 `2/5` 门槛。pro_zhao 已完成两局中一局保持失败对照、另一局意外成为 partial，未达到 4/5。
+
+只读检查 5 个 Day7 对话确认 v2 原文均成功送达，但同一条话术没有稳定更新两个独立状态：周仍把已写入的保护条件表达为 conditional，或没有形成授权。`e9a4a52` 新增 `strategy.pro_lin.v3`，把“青槐文社议案无条件支持”和“正式提交批准授权”拆成两个公开、非自适应动作；离线 Fake 模型必须通过真实 RunService/resolver 得到 `consensus_submitted`、`core_adopted`、`completed`。同一提交还让 attempt 创建 Run 后立即持久绑定 runId，resume 只复用已完成 checkpoint、把陈旧 started 终态化为 runner_failed，绝不重跑同一 seed。
+
+v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。预注册后第一轮六协议健康检查为 `0/6`，全部 `ai_provider_unavailable`，所以 v5 保持 15 个 attempt 全部未启动；没有用不健康 Provider 消耗另一批样本。
 
 Canonical 证据：
 
 - [v1 中断全分母 JSON](simulation-results/final-preregistered-v1-interrupted-2026-08-23/seven_day_gameplay_evidence.json)，SHA-256 `df7163924460d3499799eadc45c9e1faeb3b57809e1a58f33767389e67c6f36c`；
 - [v2 恢复批次中断全分母 JSON](simulation-results/final-preregistered-recovery-v2-interrupted-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `891cf03ecdc0a7490d047c29e2235728b4324a21701ed950ede010884b50a6d1`；
 - [v3 第二恢复批次中断全分母 JSON](simulation-results/final-preregistered-recovery-v3-interrupted-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `9e2a7e07eeb7e49340631b06d12467d7c7d7d68357f05d5316f8be086b68e424`；
-- 两份汇总均从 manifest 枚举完整 15 项，保留 completed、runner_failed 与 not_started，结果都明确为 `complete=false`。
+- [v4 strategy v2 中断全分母 JSON](simulation-results/final-preregistered-strategy-v2-v4-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `00da5ba495be1e70885f6ee2a7b50ff2cf5d4761ba0d42a019811b1825e180c2`；
+- 所有汇总均从各自 manifest 枚举完整 15 项，保留 completed、runner_failed 与 not_started，结果都明确为 `complete=false`。
 
 ## 5. CI 与真实 full-stack E2E
 
@@ -74,7 +83,7 @@ Canonical 证据：
 
 47 Case 批次：Candidate 68 次、121,752 Token、估算 `0.152516 CNY`；评测 Judge 83 次、157,179 Token、估算 `0.684597 CNY`；校准 Judge 13 次、19,834 Token、估算 `0.089046 CNY`；Embedding 12 次、310 Token、估算 `0.000216 CNY`。整批总计 176 次，估算 `0.926375 CNY`，耗时 `884253 ms`，未超时或耗尽预算。上述是本地 rate-card 估算，不是账户账单。
 
-v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Token 与费用无法可靠追溯，故不估算。v2 首个完整检查点记录文本 Provider 物理请求 `214` 次、Prompt `669,411` Token、Completion `208,907` Token，Embedding `17` 次 / `5,127` Token，估算总费用 `1.157301 CNY`。v3 的 10 个完整检查点合计文本物理请求 `2,427` 次、Prompt `6,805,554` Token、Completion `2,145,259` Token，Embedding `195` 次 / `53,670` Token，估算总费用 `11.843834 CNY`；被中止的第 11 局没有完整检查点，因此不伪造其 Token 或费用。资源控制按用户最新授权采用“任意滚动 5 小时不超过 2000 AFP 积分”，不设金额硬上限；调用保持单批串行，未收到 AFP 限额告警。
+v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Token 与费用无法可靠追溯，故不估算。v2 首个完整检查点记录文本 Provider 物理请求 `214` 次、Prompt `669,411` Token、Completion `208,907` Token，Embedding `17` 次 / `5,127` Token，估算总费用 `1.157301 CNY`。v3 的 10 个完整检查点合计文本物理请求 `2,427` 次、Prompt `6,805,554` Token、Completion `2,145,259` Token，Embedding `195` 次 / `53,670` Token，估算总费用 `11.843834 CNY`。v4 的 12 个完整检查点合计文本物理请求 `2,857` 次、Prompt `8,906,811` Token、Completion `2,837,043` Token，Embedding `249` 次 / `67,587` Token，估算总费用 `15.604751 CNY`；被中止 attempt 没有完整用量，因此不伪造。资源控制按用户最新授权采用“任意滚动 5 小时不超过 2000 AFP 积分”，不设金额硬上限；调用保持单批串行，未收到 AFP 限额告警。
 
 ## 7. 总门禁
 
@@ -90,10 +99,10 @@ v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Toke
 | 现有 Playwright | 通过 | `11 passed` |
 | full-stack Playwright | 通过 | `1 passed`，真实 REST/WS/PostgreSQL |
 | CI 无真实 Ark Key/网络 | 通过（本地门禁 + 配置审计） | workflow 显式空 Key + invalid base URL；模型仅测试 app DI；四个 job 可解析 |
-| manifest 15/15 全分母完整性 | 未通过 | v1 `15/11/10/0`，v2 `15/2/1/0`，v3 `15/11/10/0`；均 `complete=false`，失败与 not_started 未替换 |
-| README 与 canonical 指标一致 | 通过（包括失败状态） | README 不再把七日门禁写为运行中或完成 |
+| manifest 15/15 全分母完整性 | 未通过 | v1 `15/11/10`，v2 `15/2/1`，v3 `15/11/10`，v4 `15/13/12`（planned/attempted/infraValid）；均 `complete=false`，失败与 not_started 未替换；v5 已预注册但未启动 |
+| README 与 canonical 指标一致 | 通过（包括 v4 失败状态） | README 不把七日门禁或尚未启动的 v5 写成完成 |
 | `git diff --check`、凭据和绝对路径扫描 | 通过，最终提交前再核对 | canonical 无绝对路径或真实凭据；README 只含显式密码占位符 |
-| 工作树干净 | 通过（blocked checkpoint） | 已提交全部可验证进度；最终七日门禁未通过，因此不生成冒充完成的最终提交 |
+| 工作树干净 | 通过（当前阶段提交后复核） | 已提交全部可验证进度；最终七日门禁未通过，因此不生成冒充完成的最终提交 |
 
 ## 8. 自动化不能替代的证据
 
