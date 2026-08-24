@@ -15,7 +15,7 @@
 | 最终七日门禁 | 三轮预注册真实批次 | 均因 Ark Provider 连续超时而不完整；最新 v3 为 `planned=15 / attempted=11 / infraValid=10`，未通过最终门禁 |
 | 前后端 | FastAPI + React/Phaser | 23/23 Vitest、11/11 浏览器契约、1/1 无 REST/WS Mock 的 PostgreSQL 全栈黄金链路通过 |
 
-Judge 校准已真实完成 13/13，但 critical boolean macro accuracy 为 `79.4872%`、Injection 为 `2/3`，未过预注册阈值，因此 Judge 仍是 advisory，不能覆盖规则结果。三路线各 5 个连续 seed 的最终七日门禁尚未通过：v1、v2、v3 都保留完整分母，不替换失败 seed；最新 v3 保住 5 个 observer 和 5 个 pro_lin 检查点，但 Provider 故障阻断全部 pro_zhao。v3 还发现旧 pro_lin 策略只有 `1/5` 达到玩家任务 completed，因此新增了尚待新 holdout 验证的 `strategy.pro_lin.v2`。当前项目可用于展示架构、语义整改、检索与 CI/E2E，但不能声称“最终七日统计门禁已完成”。最终数字以 [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md) 和其链接的 canonical JSON 为准。
+Judge 校准已真实完成 13/13，但 critical boolean macro accuracy 为 `79.4872%`、Injection 为 `2/3`，未过预注册阈值，因此 Judge 仍是 advisory，不能覆盖规则结果。三路线各 5 个连续 seed 的最终七日门禁尚未通过：v1、v2、v3 都保留完整分母，不替换失败 seed；最新 v3 保住 5 个 observer 和 5 个 pro_lin 检查点，但 Provider 故障阻断全部 pro_zhao。v3 还发现旧 pro_lin 策略只有 `1/5` 达到玩家任务 completed，因此新增 `strategy.pro_lin.v2`，并已在 `aa71928` 预注册连续 seed `20260855..20260859` 的 v4 holdout；Provider 稳定前不启动。当前项目可用于展示架构、语义整改、检索与 CI/E2E，但不能声称“最终七日统计门禁已完成”。最终数字以 [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md) 和其链接的 canonical JSON 为准。
 
 ## 架构
 

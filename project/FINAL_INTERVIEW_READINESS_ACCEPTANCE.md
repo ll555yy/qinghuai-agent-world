@@ -6,6 +6,7 @@
 - 预注册提交：`235b36b`
 - 恢复批次预注册提交：`9f5cae1`
 - 第二恢复批次预注册提交：`5f1f497`
+- strategy v2 holdout 预注册提交：`aa71928`
 - 最终提交：待生成
 
 ## 1. 可审计提交链
@@ -17,6 +18,7 @@
 | 预注册 | `235b36b` | manifest、连续 seed、策略/代码哈希、预算与失败规则先于真实运行提交 |
 | 恢复批次预注册 | `9f5cae1` | 新实验 ID 与连续 seed、逐 attempt 原子检查点先于 v2 真实调用提交 |
 | 第二恢复批次预注册 | `5f1f497` | v3 独立实验 ID、连续 seed `20260850..20260854` 与 digest 先于真实调用提交 |
+| strategy v2 holdout 预注册 | `aa71928` | v4 连续 seed `20260855..20260859`、混合策略 digest 与原门槛已冻结，尚未真实运行 |
 | 最终交付 | 待生成 | 真实全分母结果、语义闭环、CI/E2E、README 和本验收报告 |
 
 ## 2. Agent 语义与检索
@@ -52,6 +54,8 @@ Canonical 47 Case 是 2026-08-23 的单一 live 批次，没有拼接历史或�
 Provider 后续短时恢复，两轮六协议检查均 `6/6` 一次通过且 Embedding `2/2` 后，v3 manifest 在 `5f1f497` 预先提交并开始真实运行。v3 完成了全部 5 个 observer 与 5 个 pro_lin，逐局检查点均成功落盘；第一个 pro_zhao attempt 随后进入大量连续 `ai_timeout`、`ai_provider_unavailable`、空响应和 Embedding 部分失败，按异常消费规则人工安全停止。ledger 终态为 `10 completed / 1 runner_failed / 4 not_started`，全分母结果 `planned=15`、`attempted=11`、`infraValid=10`、coverage `0.733333`、`complete=false`。11 个临时 PostgreSQL Run 均按精确 runId 删除，专用库从 25 条恢复为原有 14 条。
 
 v3 的 5 个 pro_lin 均到达 `compromise_submitted`，但玩家任务为 `1 completed / 3 partial / 1 failed`，未达到预注册的“至少 2 个 completed”。根因是旧固定策略在 Day7 主动允许重复已满足条件并继续 conditional；历史 v1 策略保持冻结，新增 `strategy.pro_lin.v2` 仅澄清“已经写入的条件不再挂起，只有真实未满足事项才 conditional”。该修复已经离线测试，但尚未经过新的预注册 holdout，不能用 v3 回填或改判。
+
+v4 holdout 已在 `aa71928` 预注册：observer/pro_zhao 继续使用 v1，pro_lin 使用 v2，三路线共用连续新 seed `20260855..20260859`；门槛仍为 pro_lin 至少 `4/5` gameplay pass、至少 `2/5` player task completed，未降低验收标准。由于 v1、v2、v3 三轮均在真实批次中复现 Provider 超时/不可用，v4 当前保持未运行，等待外部服务稳定窗口；它不能计入当前成功率。
 
 Canonical 证据：
 
