@@ -812,6 +812,7 @@ def _build_observation(case: Any, run_index: int, result: Any, *, latency_ms: fl
     query_actor_ids = _value(memory_query, "actor_ids", "actorIds", default=[])
     query_goal_ids = _value(memory_query, "goal_ids", "goalIds", default=[])
     query_topic_hints = _value(memory_query, "topic_hints", "topicHints", default=[])
+    query_text = _value(memory_query, "query_text", "queryText", default="")
     vector_hits = _value(structured, "vector_hits", "vectorHits", default=0)
     graph_hits = _value(structured, "graph_hits", "graphHits", default=0)
     if target_actor is not None:
@@ -840,6 +841,10 @@ def _build_observation(case: Any, run_index: int, result: Any, *, latency_ms: fl
         "goal_ids": [str(item) for item in goal_ids] if isinstance(goal_ids, (list, tuple)) else [],
         "evidence_message_ids": [str(item) for item in evidence_ids] if isinstance(evidence_ids, (list, tuple)) else [],
         "retrieved_memory_ids": [str(item) for item in memory_ids] if isinstance(memory_ids, (list, tuple)) else [],
+        "retrieval_source": _value(
+            _case_context(case), "retrieval_source", "retrievalSource", default="fixture"
+        ),
+        "memory_query_text": str(query_text) if isinstance(query_text, str) else "",
         "memory_query_actor_ids": [str(item) for item in query_actor_ids]
         if isinstance(query_actor_ids, (list, tuple))
         else [],

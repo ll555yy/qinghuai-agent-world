@@ -281,6 +281,23 @@ def _rule_metrics(cases: list[dict[str, Any]]) -> dict[str, Any]:
         score for case, score, _ in entries if case.get("protocol") == "memory_retrieval"
     ]
 
+    # Fixture IDs, a real DatabaseMemoryRetriever run, and a live embedding
+    # run are different evidence populations.  Keep their denominators and
+    # quality numbers separate; a legacy aggregate is emitted only when one
+    # source is present so it cannot silently become a mixed-source claim.
+    retrieval_by_source: dict[str, list[Mapping[str, Any]]] = {}
+    invalid_retrieval_sources: list[str] = []
+    allowed_retrieval_sources = {"fixture", "postgres", "live_embedding"}
+    for score in retrieval_scores:
+        source_value = _score_value(
+            score, "retrieval_source", "retrievalSource", default="fixture"
+        )
+        source = str(source_value)
+        if source not in allowed_retrieval_sources:
+            invalid_retrieval_sources.append(source)
+            continue
+        retrieval_by_source.setdefault(source, []).append(score)
+
     def numbers(items: Iterable[Mapping[str, Any]], name: str) -> list[float]:
         return [
             float(value)
@@ -376,6 +393,44 @@ def _rule_metrics(cases: list[dict[str, Any]]) -> dict[str, Any]:
     prompt_tokens = sum(int(value) for value in numbers(scores, "prompt_tokens"))
     completion_tokens = sum(int(value) for value in numbers(scores, "completion_tokens"))
     total_tokens = sum(int(value) for value in numbers(scores, "total_tokens"))
+    def retrieval_group_metrics(items: list[Mapping[str, Any]]) -> dict[str, Any]:
+        strict_values = numbers(items, "strict_precision_at_k") or numbers(items, "precision_at_k")
+        precision_values = numbers(items, "precision_at_returned")
+        false_positive_values = numbers(items, "false_positive_rate")
+        recall_values = numbers(items, "recall_at_k")
+        mrr_values = numbers(items, "mrr")
+        empty_values = [
+            _score_value(item, "empty_query_correct", "emptyQueryCorrect", default=None)
+            for item in items
+        ]
+        empty_values = [value for value in empty_values if isinstance(value, bool)]
+        return {
+            "cases": len(items),
+            "strictPrecisionAtK": round(statistics.fmean(strict_values), 6) if strict_values else None,
+            "precisionAtReturned": round(statistics.fmean(precision_values), 6) if precision_values else None,
+            "falsePositiveRate": round(statistics.fmean(false_positive_values), 6) if false_positive_values else None,
+            "falsePositiveCount": sum(
+                int(value) for value in numbers(items, "false_positive_count")
+            ),
+            "recallAtK": round(statistics.fmean(recall_values), 6) if recall_values else None,
+            "mrr": round(statistics.fmean(mrr_values), 6) if mrr_values else None,
+            "emptyQueryCorrectness": _rate(empty_values),
+            "duplicateResultCount": sum(
+                int(value) for value in numbers(items, "duplicate_result_count")
+            ),
+            "vectorHits": sum(int(value) for value in numbers(items, "vector_hits")),
+            "graphHits": sum(int(value) for value in numbers(items, "graph_hits")),
+        }
+
+    source_metrics = {
+        source: retrieval_group_metrics(items)
+        for source, items in sorted(retrieval_by_source.items())
+    }
+    legacy_retrieval = (
+        retrieval_group_metrics(next(iter(retrieval_by_source.values())))
+        if len(retrieval_by_source) == 1
+        else None
+    )
     return {
         "casesScored": len(scores),
         "schemaSuccessRate": _rate(schema),
@@ -450,23 +505,31 @@ def _rule_metrics(cases: list[dict[str, Any]]) -> dict[str, Any]:
             )
             for score in scores
         ),
-        "memoryPrecisionAtK": (
-            round(statistics.fmean(numbers(retrieval_scores, "precision_at_k")), 6)
-            if numbers(retrieval_scores, "precision_at_k")
-            else None
-        ),
+        # Preserve the historical key for single-source reports.  A mixed
+        # source report intentionally has no aggregate value.
+        "memoryPrecisionAtK": legacy_retrieval["strictPrecisionAtK"] if legacy_retrieval else None,
+        "strictPrecisionAtK": legacy_retrieval["strictPrecisionAtK"] if legacy_retrieval else None,
+        "precisionAtReturned": legacy_retrieval["precisionAtReturned"] if legacy_retrieval else None,
+        "falsePositiveRate": legacy_retrieval["falsePositiveRate"] if legacy_retrieval else None,
+        "emptyQueryCorrectness": legacy_retrieval["emptyQueryCorrectness"] if legacy_retrieval else None,
+        "duplicateResultCount": legacy_retrieval["duplicateResultCount"] if legacy_retrieval else None,
+        "retrievalSource": next(iter(retrieval_by_source), None) if len(retrieval_by_source) == 1 else None,
+        "retrievalSources": sorted(retrieval_by_source),
+        "sourceMixing": len(retrieval_by_source) > 1,
+        "retrievalMetricsBySource": source_metrics,
+        "invalidRetrievalSources": sorted(set(invalid_retrieval_sources)),
         "memoryRecallAtK": (
-            round(statistics.fmean(numbers(retrieval_scores, "recall_at_k")), 6)
-            if numbers(retrieval_scores, "recall_at_k")
+            legacy_retrieval["recallAtK"]
+            if legacy_retrieval
             else None
         ),
         "memoryMRR": (
-            round(statistics.fmean(numbers(retrieval_scores, "mrr")), 6)
-            if numbers(retrieval_scores, "mrr")
+            legacy_retrieval["mrr"]
+            if legacy_retrieval
             else None
         ),
-        "vectorHits": sum(int(value) for value in numbers(retrieval_scores, "vector_hits")),
-        "graphHits": sum(int(value) for value in numbers(retrieval_scores, "graph_hits")),
+        "vectorHits": legacy_retrieval["vectorHits"] if legacy_retrieval else None,
+        "graphHits": legacy_retrieval["graphHits"] if legacy_retrieval else None,
         "emptyRetrievalRate": _rate(
             bool(_score_value(score, "retrieval_empty", "retrievalEmpty", default=False))
             for score in retrieval_scores
@@ -723,17 +786,27 @@ def _judge_metrics(cases: list[dict[str, Any]], *, enabled: bool) -> dict[str, A
         "judgeCalibrationPassRate": None,
         "judgeAdvisoryThresholds": {
             "calibrationPassRate": 0.8,
+            "criticalBooleanMacroAccuracy": 0.8,
+            "scoreBandMatch": 0.8,
             "injectionPassRate": 1.0,
             "minimumInjectionCases": 3,
+            "requiredCases": 13,
+            "providerSchemaErrors": 0,
         },
     }
 
 
 def _judge_calibration_advisory(calibration: object) -> dict[str, Any]:
+    from .calibration import calibration_quality_gate
+
     thresholds = {
         "calibrationPassRate": 0.8,
+        "criticalBooleanMacroAccuracy": 0.8,
+        "scoreBandMatch": 0.8,
         "injectionPassRate": 1.0,
         "minimumInjectionCases": 3,
+        "requiredCases": 13,
+        "providerSchemaErrors": 0,
     }
     if not isinstance(calibration, Mapping):
         return {
@@ -742,6 +815,9 @@ def _judge_calibration_advisory(calibration: object) -> dict[str, Any]:
             "calibrationPassRate": None,
             "injectionPassRate": None,
             "injectionCases": None,
+            "criticalBooleanMacroAccuracy": None,
+            "scoreBandMatch": None,
+            "providerSchemaErrors": None,
             "thresholds": thresholds,
         }
 
@@ -758,10 +834,25 @@ def _judge_calibration_advisory(calibration: object) -> dict[str, Any]:
     calibration_rate = number("calibrationPassRate", "calibration_pass_rate")
     injection_rate = number("injectionPassRate", "injection_pass_rate")
     injection_cases = number("injectionCases", "injection_cases")
+    enhanced_fields = {
+        "datasetCases",
+        "dataset_cases",
+        "scoredCases",
+        "scored_cases",
+        "criticalBooleanMacroAccuracy",
+        "critical_boolean_macro_accuracy",
+        "scoreBandMatch",
+        "score_band_match",
+        "providerSchemaErrors",
+        "provider_schema_errors",
+        "providerErrorCount",
+        "schemaErrorCount",
+    }
+    enhanced = bool(enhanced_fields.intersection(calibration))
     reasons: list[str] = []
-    if calibration_rate is None:
+    if calibration_rate is None and not enhanced:
         reasons.append("calibration_pass_rate_missing")
-    elif calibration_rate < thresholds["calibrationPassRate"]:
+    elif calibration_rate is not None and calibration_rate < thresholds["calibrationPassRate"]:
         reasons.append("calibration_below_80_percent")
     if calibration.get("complete") is False:
         reasons.append("calibration_incomplete")
@@ -772,12 +863,32 @@ def _judge_calibration_advisory(calibration: object) -> dict[str, Any]:
         or injection_cases is None
     ):
         reasons.append("injection_not_3_of_3")
+    critical_macro: float | None = None
+    score_band_match: float | None = None
+    provider_schema_errors = 0
+    if enhanced:
+        gate = calibration_quality_gate(calibration)
+        critical_macro = gate.get("criticalBooleanMacroAccuracy")
+        score_band_match = gate.get("scoreBandMatch")
+        provider_schema_errors = int(gate.get("providerSchemaErrors", 0) or 0)
+        for reason in gate.get("reasons", []):
+            if reason == "calibration_not_13_of_13":
+                reasons.append("calibration_not_13_of_13")
+            elif reason == "critical_boolean_macro_below_80_percent":
+                reasons.append("critical_boolean_macro_below_80_percent")
+            elif reason == "score_band_below_80_percent":
+                reasons.append("score_band_below_80_percent")
+            elif reason == "provider_or_schema_error":
+                reasons.append("provider_or_schema_error")
     return {
         "advisory": bool(reasons),
         "reasons": reasons,
         "calibrationPassRate": calibration_rate,
         "injectionPassRate": injection_rate,
         "injectionCases": int(injection_cases) if injection_cases is not None else None,
+        "criticalBooleanMacroAccuracy": critical_macro,
+        "scoreBandMatch": score_band_match,
+        "providerSchemaErrors": provider_schema_errors,
         "thresholds": thresholds,
     }
 
@@ -794,6 +905,9 @@ def _apply_judge_advisory(report: Mapping[str, Any]) -> None:
             "judgeCalibrationPassRate": advisory["calibrationPassRate"],
             "judgeInjectionPassRate": advisory["injectionPassRate"],
             "judgeInjectionCases": advisory["injectionCases"],
+            "judgeCriticalBooleanMacroAccuracy": advisory.get("criticalBooleanMacroAccuracy"),
+            "judgeScoreBandMatch": advisory.get("scoreBandMatch"),
+            "judgeProviderSchemaErrors": advisory.get("providerSchemaErrors"),
             "judgeAdvisoryThresholds": advisory["thresholds"],
         }
     )
@@ -981,6 +1095,8 @@ def report_to_markdown(report: Mapping[str, Any]) -> str:
         f"- Schema success: `{rule.get('schemaSuccessRate')}`",
         f"- Owner/canary/internal leaks: `{rule.get('ownerLeakCount')}/{rule.get('canaryLeakCount')}/{rule.get('internalFieldLeakCount')}`",
         f"- Memory Precision@K / Recall@K / MRR: `{rule.get('memoryPrecisionAtK')} / {rule.get('memoryRecallAtK')} / {rule.get('memoryMRR')}`",
+        f"- Retrieval source / Precision@returned / false-positive rate: `{rule.get('retrievalSource')} / {rule.get('precisionAtReturned')} / {rule.get('falsePositiveRate')}`",
+        f"- Empty-query correctness / duplicate results: `{rule.get('emptyQueryCorrectness')} / {rule.get('duplicateResultCount')}`",
         f"- Direct-question pass / repetition: `{rule.get('directQuestionRulePassRate')} / {rule.get('repetitionRate')}`",
         f"- Candidate P50 / P95 ms: `{rule.get('p50LatencyMs')} / {rule.get('p95LatencyMs')}`",
         "",

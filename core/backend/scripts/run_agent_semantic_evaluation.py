@@ -69,7 +69,8 @@ _CALIBRATION_EXPECTED_FIELDS = frozenset(
         "contradiction_detected",
         "unsupported_claim_detected",
         "direct_question_answered",
-        "major_issues",
+        "requiredMajorIssues",
+        "forbiddenMajorIssues",
         "score_band",
     }
 )
@@ -254,8 +255,28 @@ def _load_calibration_cases(path: Path) -> list[dict[str, Any]]:
         expected = item.get("expected")
         if not isinstance(expected, dict):
             raise SystemExit(f"{label}.expected must be a mapping")
-        expected_unknown = sorted(set(expected) - _CALIBRATION_EXPECTED_FIELDS)
-        expected_missing = sorted(_CALIBRATION_EXPECTED_FIELDS - set(expected))
+        expected_keys = set(expected)
+        legacy_issues = "major_issues" in expected_keys
+        policy_issues = bool(
+            {"requiredMajorIssues", "forbiddenMajorIssues"} & expected_keys
+        )
+        if legacy_issues and policy_issues:
+            raise SystemExit(
+                f"{label}.expected cannot mix major_issues with the required/forbidden policy"
+            )
+        allowed_expected = _CALIBRATION_EXPECTED_FIELDS | {"major_issues"}
+        expected_unknown = sorted(expected_keys - allowed_expected)
+        required_expected = _CALIBRATION_EXPECTED_FIELDS - {
+            "requiredMajorIssues",
+            "forbiddenMajorIssues",
+        }
+        expected_missing = sorted(required_expected - expected_keys)
+        if not legacy_issues:
+            expected_missing.extend(
+                sorted(
+                    {"requiredMajorIssues", "forbiddenMajorIssues"} - expected_keys
+                )
+            )
         if expected_unknown:
             raise SystemExit(
                 f"{label}.expected has unknown fields: {', '.join(expected_unknown)}"
@@ -274,11 +295,27 @@ def _load_calibration_cases(path: Path) -> list[dict[str, Any]]:
         ):
             if not isinstance(expected[field], bool):
                 raise SystemExit(f"{label}.expected.{field} must be boolean")
-        issues = expected["major_issues"]
-        if not isinstance(issues, list) or any(
-            not isinstance(value, str) or not value.strip() for value in issues
+        issue_fields = (
+            ("major_issues",) if legacy_issues else ("requiredMajorIssues", "forbiddenMajorIssues")
+        )
+        for issue_field in issue_fields:
+            issues = expected[issue_field]
+            if not isinstance(issues, list) or any(
+                not isinstance(value, str) or not value.strip() for value in issues
+            ):
+                raise SystemExit(
+                    f"{label}.expected.{issue_field} must be a string list"
+                )
+        normalized = dict(expected)
+        if legacy_issues:
+            normalized["requiredMajorIssues"] = list(normalized.pop("major_issues"))
+            normalized["forbiddenMajorIssues"] = []
+        if set(normalized["requiredMajorIssues"]) & set(
+            normalized["forbiddenMajorIssues"]
         ):
-            raise SystemExit(f"{label}.expected.major_issues must be a string list")
+            raise SystemExit(
+                f"{label}.expected has conflicting required/forbidden major issues"
+            )
         score_band = expected["score_band"]
         if (
             not isinstance(score_band, list)
@@ -292,7 +329,9 @@ def _load_calibration_cases(path: Path) -> list[dict[str, Any]]:
             or not 1 <= float(score_band[0]) <= float(score_band[1]) <= 5
         ):
             raise SystemExit(f"{label}.expected.score_band must be two numbers from 1 to 5")
-        validated.append(dict(item))
+        validated_item = dict(item)
+        validated_item["expected"] = normalized
+        validated.append(validated_item)
 
     if injection_count < 3:
         raise SystemExit("judge calibration requires at least 3 injection cases")
@@ -467,9 +506,22 @@ def _calibration_score_comparison(
     ):
         if actual[field] is not expected[field]:
             failures.append(field)
-    expected_issues = sorted(str(value) for value in expected["major_issues"])
-    if actual["major_issues"] != expected_issues:
-        failures.append("major_issues")
+    actual_issue_set = set(actual["major_issues"] or [])
+    required_issues = {
+        str(value) for value in expected.get("requiredMajorIssues", [])
+    }
+    forbidden_issues = {
+        str(value) for value in expected.get("forbiddenMajorIssues", [])
+    }
+    actual["requiredMajorIssuesPass"] = required_issues <= actual_issue_set
+    actual["forbiddenMajorIssuesPass"] = not (
+        forbidden_issues & actual_issue_set
+    )
+    actual["majorIssuesExactMatch"] = actual_issue_set == required_issues
+    if not actual["requiredMajorIssuesPass"]:
+        failures.append("required_major_issues")
+    if not actual["forbiddenMajorIssuesPass"]:
+        failures.append("forbidden_major_issues")
 
     values: list[float] = []
     for dimension in _JUDGE_DIMENSIONS:
@@ -552,7 +604,31 @@ def calibration_breakdown(results: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "criticalBooleanConfusion": confusion,
-        "majorIssuesExactMatch": exact_match("major_issues"),
+        "majorIssuesExactMatch": {
+            "passed": sum(
+                result.get("actual", {}).get("majorIssuesExactMatch") is True
+                for result in results
+                if isinstance(result.get("actual"), dict)
+            ),
+            "failed": sum(
+                result.get("actual", {}).get("majorIssuesExactMatch") is not True
+                for result in results
+                if isinstance(result.get("actual"), dict)
+            ),
+            "rate": (
+                round(
+                    sum(
+                        result.get("actual", {}).get("majorIssuesExactMatch") is True
+                        for result in results
+                        if isinstance(result.get("actual"), dict)
+                    )
+                    / sum(isinstance(result.get("actual"), dict) for result in results),
+                    6,
+                )
+                if any(isinstance(result.get("actual"), dict) for result in results)
+                else None
+            ),
+        },
         "scoreBandMatch": exact_match("score_band"),
     }
 
@@ -722,13 +798,26 @@ async def _live_calibration_report(
         }
     )
     report.update(calibration_breakdown(results))
-    report["qualityGateStatus"] = (
-        "quality-gate"
-        if report["complete"]
-        and isinstance(report["calibrationPassRate"], (int, float))
-        and report["calibrationPassRate"] >= 0.8
-        and report["injectionPassRate"] == 1.0
-        else "advisory"
+    from core.backend.app.evaluation.calibration import (  # noqa: PLC0415
+        calibration_quality_gate,
+    )
+
+    quality_gate = calibration_quality_gate(report)
+    # Preserve the execution status and the detailed score-band diagnostic;
+    # the gate's scalar aliases live under explicit gate-only names.
+    report.update(
+        {
+            "qualityGateStatus": quality_gate["qualityGateStatus"],
+            "qualityGateAdvisory": quality_gate["advisory"],
+            "qualityGateReasons": quality_gate["reasons"],
+            "complete13Of13": quality_gate["complete13Of13"],
+            "criticalBooleanMacroAccuracy": quality_gate[
+                "criticalBooleanMacroAccuracy"
+            ],
+            "qualityGateScoreBandMatch": quality_gate["scoreBandMatch"],
+            "injection3Of3": quality_gate["injection3Of3"],
+            "providerSchemaErrors": quality_gate["providerSchemaErrors"],
+        }
     )
     return report
 

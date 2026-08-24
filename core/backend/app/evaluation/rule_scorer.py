@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -423,6 +423,12 @@ def _repetition(text: str, previous: Iterable[str]) -> tuple[bool, float]:
 
 
 def _ranking_metrics(expected: Sequence[str], retrieved: Sequence[str], k: int) -> tuple[float, float, float]:
+    """Return the immutable, historical strict ``Precision@K`` tuple.
+
+    This helper deliberately keeps the K denominator even when a retriever
+    returns fewer than K items.  Use :func:`retrieval_metrics` for the newer
+    returned-count and diagnostic metrics; never substitute that metric here.
+    """
     expected_set = set(expected)
     top = list(retrieved[:k])
     hits = sum(1 for value in set(top) if value in expected_set)
@@ -434,6 +440,65 @@ def _ranking_metrics(expected: Sequence[str], retrieved: Sequence[str], k: int) 
             reciprocal = 1.0 / index
             break
     return precision, recall, reciprocal
+
+
+def retrieval_metrics(
+    expected: Sequence[str],
+    retrieved: Sequence[str],
+    k: int,
+    *,
+    query_is_empty: bool = False,
+) -> dict[str, float | int | bool | None]:
+    """Calculate strict and returned-count retrieval metrics.
+
+    ``strictPrecisionAtK`` is retained as the historical K-denominator
+    metric.  ``precisionAtReturned`` uses the number of rows actually
+    returned, so a retriever is not rewarded for padding a short, relevant
+    result with weak memories.  Duplicate IDs are reported independently and
+    are not counted as false positives; they remain visible through
+    ``duplicateResultCount`` and reduce strict Precision@K via its unique-hit
+    calculation.
+    """
+
+    expected_values = [str(value) for value in expected]
+    returned_values = [str(value) for value in retrieved]
+    expected_set = set(expected_values)
+    strict_precision, recall, mrr = _ranking_metrics(
+        expected_values, returned_values, max(0, int(k))
+    )
+    returned_count = len(returned_values)
+    relevant_returned = sum(value in expected_set for value in returned_values)
+    false_positive_count = sum(value not in expected_set for value in returned_values)
+    precision_at_returned = (
+        relevant_returned / returned_count
+        if returned_count
+        else (1.0 if not expected_set else 0.0)
+    )
+    false_positive_rate = (
+        false_positive_count / returned_count if returned_count else 0.0
+    )
+    duplicate_count = returned_count - len(set(returned_values))
+    empty_query_correct: bool | None = None
+    if query_is_empty:
+        # Empty MemoryQuery input must not accidentally retrieve a recent or
+        # graph-seeded memory.  The expected set is part of the fixture or
+        # benchmark declaration, never inferred from the returned IDs.
+        empty_query_correct = not expected_set and not returned_values
+    return {
+        # Preserve full Python precision here.  Report renderers apply their
+        # stable six-decimal presentation rounding; RuleScore callers may
+        # still compare the historical exact fraction (e.g. 2 / 3).
+        "strict_precision_at_k": strict_precision,
+        "precision_at_returned": precision_at_returned,
+        "recall_at_k": recall,
+        "mrr": mrr,
+        "false_positive_rate": false_positive_rate,
+        "false_positive_count": false_positive_count,
+        "duplicate_result_count": duplicate_count,
+        "empty_query_correct": empty_query_correct,
+        "returned_count": returned_count,
+        "relevant_returned_count": relevant_returned,
+    }
 
 
 class RuleScorer:
@@ -769,7 +834,49 @@ class RuleScorer:
         if retrieval_k is None:
             context_k = _context_value(context, "retrieval_k", "memory_limit", "k")
             retrieval_k = context_k if isinstance(context_k, int) and context_k > 0 else self.default_k
-        precision, recall, mrr = _ranking_metrics(evaluation_case.expected_memory_ids, retrieved, retrieval_k)
+        query_text = candidate.memory_query_text
+        if not query_text:
+            context_query_text = _context_value(context, "query_text", "query")
+            if isinstance(context_query_text, str):
+                query_text = context_query_text
+            else:
+                # The case context is trusted benchmark metadata.  These
+                # aliases make empty-query fixtures explicit without treating
+                # candidate-returned IDs as query hints.
+                context_query_text = _context_value(context, "queryText")
+                if isinstance(context_query_text, str):
+                    query_text = context_query_text
+        context_query_actors = _string_list(
+            _context_value(context, "actor_ids", "memory_query_actor_ids")
+        )
+        context_query_goals = _string_list(
+            _context_value(context, "goal_ids", "memory_query_goal_ids")
+        )
+        context_query_topics = _string_list(
+            _context_value(context, "topic_hints", "memory_query_topic_hints")
+        )
+        query_is_empty = not (
+            query_text.strip()
+            or candidate.memory_query_actor_ids
+            or candidate.memory_query_goal_ids
+            or candidate.memory_query_topic_hints
+            or query_actors
+            or query_goals
+            or context_query_actors
+            or context_query_goals
+            or context_query_topics
+        )
+        retrieval = retrieval_metrics(
+            evaluation_case.expected_memory_ids,
+            retrieved,
+            retrieval_k,
+            query_is_empty=query_is_empty,
+        )
+        # Keep the old local names for the non-retrieval portions of the
+        # scorer and expose both metric generations in the RuleScore.
+        precision = float(cast(float, retrieval["strict_precision_at_k"]))
+        recall = float(cast(float, retrieval["recall_at_k"]))
+        mrr = float(cast(float, retrieval["mrr"]))
 
         direct = candidate.direct_question
         if direct is None:
@@ -852,6 +959,13 @@ class RuleScorer:
             memory_tool_call_count=memory_tool_calls,
             memory_tool_limit_valid=memory_tool_limit_valid,
             precision_at_k=precision,
+            strict_precision_at_k=precision,
+            precision_at_returned=float(cast(float, retrieval["precision_at_returned"])),
+            false_positive_rate=float(cast(float, retrieval["false_positive_rate"])),
+            false_positive_count=int(cast(int, retrieval["false_positive_count"])),
+            empty_query_correct=cast(bool | None, retrieval["empty_query_correct"]),
+            duplicate_result_count=int(cast(int, retrieval["duplicate_result_count"])),
+            retrieval_source=candidate.retrieval_source,
             recall_at_k=recall,
             mrr=mrr,
             retrieval_k=retrieval_k,
@@ -890,4 +1004,4 @@ def score_rules(
     return score_case(case, observation, **kwargs)
 
 
-__all__ = ["RuleScorer", "score_case", "score_rules"]
+__all__ = ["RuleScorer", "retrieval_metrics", "score_case", "score_rules"]

@@ -79,6 +79,17 @@ class DatabaseMemoryRetriever:
         owner_npc_id: str,
         query: MemoryQuery,
     ) -> MemoryToolResult:
+        # An empty model-produced query is not permission to fetch recent
+        # private memories.  Returning no rows keeps retrieval intentional and
+        # makes the empty-query safety contract deterministic.
+        if not (
+            query.query_text.strip()
+            or query.actor_ids
+            or query.goal_ids
+            or query.topic_hints
+        ):
+            return MemoryToolResult()
+
         vector: Sequence[float] | None = None
         if self._embedding_port is not None and query.query_text.strip():
             try:
@@ -132,9 +143,8 @@ class DatabaseMemoryRetriever:
                 topic_links=topic_links,
                 resolved_topic_ids=topic_ids,
             )
-            # A query with no explicit hints is allowed to seed from recent,
-            # important memories.  Otherwise irrelevant rows do not become
-            # graph seeds merely because they are recent.
+            # Irrelevant rows do not become graph seeds merely because they
+            # are recent. Empty queries have already returned above.
             has_hints = bool(
                 query.query_text.strip()
                 or query.actor_ids

@@ -337,6 +337,21 @@ async def test_postgres_retrieval_flows_into_owner_safe_semantic_rule_score() ->
         )
         keyword_retriever = DatabaseMemoryRetriever(repository.session_factory)
 
+        empty_recalled = await keyword_retriever.search(
+            run_id=run_id,
+            owner_npc_id="npc_001",
+            query=MemoryQuery.model_construct(
+                query_text="",
+                actor_ids=[],
+                goal_ids=[],
+                topic_hints=[],
+                limit=3,
+            ),
+        )
+        assert list(empty_recalled.memory_ids) == []
+        assert empty_recalled.vector_hits == 0
+        assert empty_recalled.graph_hits == 0
+
         vector_recalled = await vector_retriever.search(
             run_id=run_id,
             owner_npc_id="npc_001",

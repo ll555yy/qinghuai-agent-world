@@ -31,6 +31,12 @@ CaseCategory = Literal[
     "coherence",
 ]
 
+# Retrieval fixtures, the dedicated PostgreSQL benchmark, and a future live
+# embedding run are intentionally different evidence sources.  Keeping the
+# source in the observation contract prevents a report consumer from silently
+# averaging fixture IDs together with database results.
+RetrievalSource = Literal["fixture", "postgres", "live_embedding"]
+
 EvaluationProtocol = Literal[
     "daily_action",
     "invitation",
@@ -285,6 +291,18 @@ class CandidateObservation(EvaluationModel):
         validation_alias=AliasChoices("retrieved_memory_ids", "retrievedMemoryIds"),
         serialization_alias="retrievedMemoryIds",
     )
+    retrieval_source: RetrievalSource = Field(
+        default="fixture",
+        validation_alias=AliasChoices("retrieval_source", "retrievalSource"),
+        serialization_alias="retrievalSource",
+    )
+    memory_query_text: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "memory_query_text", "memoryQueryText", "query_text", "queryText"
+        ),
+        serialization_alias="memoryQueryText",
+    )
     memory_query_actor_ids: list[str] = Field(
         default_factory=list,
         validation_alias=AliasChoices("memory_query_actor_ids", "memoryQueryActorIds"),
@@ -451,6 +469,52 @@ class RuleScore(EvaluationModel):
     memory_tool_call_count: int = Field(default=0, ge=0)
     memory_tool_limit_valid: bool = True
     precision_at_k: float = Field(default=0.0, ge=0, le=1)
+    # ``precision_at_k`` is the historical strict K-denominator metric.  The
+    # explicit spelling below makes it impossible for a consumer to mistake
+    # the newer returned-count metric for a replacement of that baseline.
+    strict_precision_at_k: float = Field(
+        default=0.0,
+        ge=0,
+        le=1,
+        validation_alias=AliasChoices("strict_precision_at_k", "strictPrecisionAtK"),
+        serialization_alias="strictPrecisionAtK",
+    )
+    precision_at_returned: float = Field(
+        default=0.0,
+        ge=0,
+        le=1,
+        validation_alias=AliasChoices("precision_at_returned", "precisionAtReturned"),
+        serialization_alias="precisionAtReturned",
+    )
+    false_positive_rate: float = Field(
+        default=0.0,
+        ge=0,
+        le=1,
+        validation_alias=AliasChoices("false_positive_rate", "falsePositiveRate"),
+        serialization_alias="falsePositiveRate",
+    )
+    false_positive_count: int = Field(
+        default=0,
+        ge=0,
+        validation_alias=AliasChoices("false_positive_count", "falsePositiveCount"),
+        serialization_alias="falsePositiveCount",
+    )
+    empty_query_correct: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("empty_query_correct", "emptyQueryCorrect"),
+        serialization_alias="emptyQueryCorrect",
+    )
+    duplicate_result_count: int = Field(
+        default=0,
+        ge=0,
+        validation_alias=AliasChoices("duplicate_result_count", "duplicateResultCount"),
+        serialization_alias="duplicateResultCount",
+    )
+    retrieval_source: RetrievalSource = Field(
+        default="fixture",
+        validation_alias=AliasChoices("retrieval_source", "retrievalSource"),
+        serialization_alias="retrievalSource",
+    )
     recall_at_k: float = Field(default=0.0, ge=0, le=1)
     mrr: float = Field(default=0.0, ge=0, le=1)
     retrieval_k: int = Field(default=0, ge=0)
@@ -613,4 +677,5 @@ __all__ = [
     "JudgeScore",
     "NpcId",
     "RuleScore",
+    "RetrievalSource",
 ]

@@ -11,6 +11,7 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:e2e": "node scripts/run-e2e.mjs",
+    "test:e2e:fullstack": "playwright test --config playwright.fullstack.config.ts",
     "generate:api": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated.ts"
   },
   "dependencies": {
