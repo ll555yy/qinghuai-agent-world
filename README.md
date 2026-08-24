@@ -1,114 +1,120 @@
 # 青槐老巷聊天世界
 
-当前仓库按职责分为三个主要目录：
+一个由五名自治 NPC 持续推进的七日互动叙事：玩家可以旁观，也可以通过公开对话协调立场；世界状态、私有记忆和最终结局始终由后端权威规则裁决。
 
-- `core/`：前后端代码、运行时场景配置和生成类型。
-- `test/`：所有测试、模拟和测试数据。
-- `project/`：已确认的设计文档与一致性审计。
+![青槐老巷书店世界界面](project/visual-qa/world-1440x900.png)
 
-当前已完成无需前端即可运行的七天后端闭环：世界时间与事件、NPC 错峰行动、移动和邀请、最多三人聊天、玩家加入与自由发言、私有 Memory Graph 召回、离场沉淀、D-065 自动收束、长聊天滚动摘要以及 Day7 固定结算。火山方舟六类文本协议、2048 维 Embedding、真实 Day1 闭环以及 observer / pro_lin / pro_zhao 三条真实七日路线均已通过验收；后端前端门禁已解除。
+## 当前可信证据
 
-权威状态可选择进程内存或 Docker PostgreSQL + pgvector。数据库模式会持久化 Run、消息、Goal、关系、Memory Graph 和章节状态，后端重启后可以继续运行。React + Phaser 前端已实现开局、任务选择、二维书店场景、邀请/加入/聊天、日终、断线恢复和 Day7 结局。权威玩法见 `project/PROJECT_DESIGN.md`，前端设计与验收见 `project/FRONTEND_DESIGN.md` 和 `project/FRONTEND_ACCEPTANCE_REPORT.md`。
+| 能力 | Canonical 证据 | 当前结论 |
+|---|---|---|
+| Agent 语义 | 2026-08-23 单批 47 Case、81 个 observation | 47/47 完成，hard failure `0`，最终/首轮 Schema `100%`，29 个直接通过、18 个进入人工复核 |
+| 直接问题 | 同一 canonical 复评 | Rule 通过率 `100%`；P95 `10,371.531 ms` |
+| Memory 安全 | 14 次真实 PostgreSQL + pgvector tuning/holdout | holdout Precision@returned / Recall@K / MRR 均 `1.0`，FPR `0`，owner 越界与重复均 `0`，空查询 `1/1` |
+| 七日可达性 | 历史三路线、9 个新格式真实样本 | observer、成功联盟、低投入失败均可达；这是固定策略可达性，不是自然玩家成功率 |
+| 最终七日门禁 | 三轮预注册真实批次 | 均因 Ark Provider 连续超时而不完整；最新 v3 为 `planned=15 / attempted=11 / infraValid=10`，未通过最终门禁 |
+| 前后端 | FastAPI + React/Phaser | 23/23 Vitest、11/11 浏览器契约、1/1 无 REST/WS Mock 的 PostgreSQL 全栈黄金链路通过 |
 
-## 启动前端
+Judge 校准已真实完成 13/13，但 critical boolean macro accuracy 为 `79.4872%`、Injection 为 `2/3`，未过预注册阈值，因此 Judge 仍是 advisory，不能覆盖规则结果。三路线各 5 个连续 seed 的最终七日门禁尚未通过：v1、v2、v3 都保留完整分母，不替换失败 seed；最新 v3 保住 5 个 observer 和 5 个 pro_lin 检查点，但 Provider 故障阻断全部 pro_zhao。v3 还发现旧 pro_lin 策略只有 `1/5` 达到玩家任务 completed，因此新增了尚待新 holdout 验证的 `strategy.pro_lin.v2`。当前项目可用于展示架构、语义整改、检索与 CI/E2E，但不能声称“最终七日统计门禁已完成”。最终数字以 [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md) 和其链接的 canonical JSON 为准。
 
-先启动数据库和后端，再在另一个终端运行：
+## 架构
+
+```mermaid
+flowchart LR
+    UI[React UI] --> Phaser[Phaser 书店场景]
+    UI -->|REST / WebSocket| API[FastAPI]
+    Phaser -->|公开权威投影| API
+    API --> Service[RunService / WorldEngine]
+    Service --> Graph[LangGraph NPC Agents]
+    Graph --> Memory[Owner-safe hybrid Memory]
+    Service --> DB[(PostgreSQL + pgvector)]
+    Memory --> DB
+    Graph -->|六类结构化协议| Ark[Volcengine Ark]
+```
+
+- FastAPI/RunService 是世界时间、参与者、Goal、关系、立场和结局的唯一权威写入入口。
+- LangGraph Agent 负责行动、邀请、聊天、台词、摘要和离场沉淀，但不能绕过 ID、时间、证据和 owner 校验。
+- Memory 使用关键词、Actor、Goal、Topic、向量和最多两跳 Graph 的混合检索；每次查询重新应用 `run_id + owner_npc_id` 边界。
+- React + Phaser 只消费公开快照和按 `eventSeq` 排序的事件，不渲染私有 Goal、Memory 或内部 Prompt。
+
+## 五分钟启动
+
+需要 Docker、Python/Conda 和 pnpm。复制 `.env.example` 为本机 `.env`，只填写本地数据库密码；没有真实模型 Key 时仍可运行离线测试和无网络全栈 E2E。
 
 ```powershell
+# 1. PostgreSQL + pgvector
+docker compose up -d database
+
+# 2. 从空库迁移并启动后端
+$env:DATABASE_URL="postgresql+psycopg://qinghuai:你的本地密码@127.0.0.1:5432/qinghuai"
+cd core/backend
+alembic upgrade head
+cd ../..
+python -m core.backend.app
+
+# 3. 另开终端启动前端
 cd core/frontend
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-浏览器访问 `http://127.0.0.1:5173`。Vite 会把 `/api` 和 `/ws` 转发到 `http://127.0.0.1:8000`。首次运行浏览器验收前执行 `pnpm exec playwright install chromium`。
+浏览器打开 `http://127.0.0.1:5173`。Vite 将 `/api` 和 `/ws` 转发到 `http://127.0.0.1:8000`。
 
-## 启动 PostgreSQL
+## 全量验证
 
-复制 `.env.example` 为 `.env`，把 `POSTGRES_PASSWORD` 和 `DATABASE_URL` 中的密码改成同一个本地密码，然后运行：
-
-```powershell
-docker compose up -d database
-cd core/backend
-$env:DATABASE_URL="postgresql+psycopg://qinghuai:你的本地密码@127.0.0.1:5432/qinghuai"
-alembic upgrade head
-cd ../..
-```
-
-数据库模式启动 API：
+普通测试和 CI 不设置 `ARK_API_KEY`，不会访问真实方舟。
 
 ```powershell
-$env:QINGHUAI_PERSISTENCE_BACKEND="postgres"
-$env:DATABASE_URL="postgresql+psycopg://qinghuai:你的本地密码@127.0.0.1:5432/qinghuai"
-python -m core.backend.app
-```
-
-只做快速单元测试时不设置上述变量，后端会显式使用内存仓储。数据库模式连接失败或未迁移会直接报错，不会悄悄退回内存。
-
-## 本地验证
-
-在 Conda 环境 `qinghuai-chat` 中，从仓库根目录运行：
-
-```powershell
+# 后端离线门禁
 python -m pytest -c core/backend/pyproject.toml -q
 cd core/backend
 python -m ruff check app scripts migrations ../../test/backend
 python -m mypy
 cd ../..
+
+# 前端门禁
+cd core/frontend
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm test:e2e
 ```
 
-要包含 PostgreSQL 集成测试，先把 `QINGHUAI_TEST_DATABASE_URL` 指向专用测试库；不要让测试连接开发库或生产库。
-
-需要启动 API 时：
+PostgreSQL 关键测试必须使用专用测试库；不要把它指向开发库或生产库：
 
 ```powershell
-python -m core.backend.app
+$env:QINGHUAI_TEST_DATABASE_URL="postgresql+psycopg://<test-user>:<password>@127.0.0.1:<test-port>/<test-db>"
+python -m pytest -c core/backend/pyproject.toml -q test/backend/integration
 ```
 
-需要真实模型时，复制 `.env.example` 到本机 `.env`，填写已经轮换的新 `ARK_API_KEY`。应用和验收脚本会自动读取仓库根目录的 `.env`；不要把它加入 Git。
+## 证据与演示
 
-先验证六类文本协议（默认命令只做 dry-run）：
+- [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md)（记录已通过项与当前阻塞项）
+- [47 Case 真实复评](project/evaluation-results/live-final-canonical-2026-08-23/agent_semantic_evaluation.md)
+- [PostgreSQL 检索留出集](project/evaluation-results/postgres-retrieval-final-2026-08-23/postgres_retrieval_benchmark.md)
+- [Agent 语义整改验收](project/AGENT_SEMANTIC_REMEDIATION_ACCEPTANCE.md)
+- [Agent Before / After](project/AGENT_SEMANTIC_REMEDIATION_BEFORE_AFTER.md)
+- [七日真实模拟结果](project/REAL_SEVEN_DAY_SIMULATION_RESULTS.md)
+- [七日最终批次 v1 中断证据](project/simulation-results/final-preregistered-v1-interrupted-2026-08-23/seven_day_gameplay_evidence.md)
+- [七日恢复批次 v2 中断证据](project/simulation-results/final-preregistered-recovery-v2-interrupted-2026-08-24/seven_day_gameplay_evidence.md)
+- [七日恢复批次 v3 中断证据](project/simulation-results/final-preregistered-recovery-v3-interrupted-2026-08-24/seven_day_gameplay_evidence.md)
+- [七日模拟说明](project/SEVEN_DAY_SIMULATION_GUIDE.md)
+- [前端验收报告](project/FRONTEND_ACCEPTANCE_REPORT.md)
+- [演示录制说明](project/DEMO_RECORDING_GUIDE.md)（最终阶段完成后生成）
 
-```powershell
-python core/backend/scripts/check_ark_connection.py
-python core/backend/scripts/check_ark_connection.py --live
-```
+公开 UI 截图：
 
-Embedding 已选择 Agent Plan 的 `doubao-embedding-vision`。真实探测返回 2048 维，配置示例已包含对应 Base URL；仍可用固定公开文本复验当前账号：
+![1280×720 世界界面](project/visual-qa/world-1280x720.png)
 
-```powershell
-python core/backend/scripts/check_ark_embedding.py
-python core/backend/scripts/check_ark_embedding.py --live
-```
+![聊天申请面板](project/visual-qa/world-980x720-panel.png)
 
-探测通过后，按指定 Run 幂等回填 Memory；不写 `--live` 不会产生调用：
+## 证据边界
 
-```powershell
-cd core/backend
-python scripts/backfill_embeddings.py --run-id run_xxx
-python scripts/backfill_embeddings.py --live --run-id run_xxx --limit 100 --batch-size 32
-cd ../..
-```
+- 固定路线只能证明成功、失败和旁观路径可达，不能证明普通玩家自然发现成功路径的概率。
+- 在两名真实人工完成相互独立标注与仲裁前，LLM Judge 只提供 advisory 信号，不能成为自动发布门。
+- fixture 中预置的 `retrievedMemoryIds` 只验证评测口径；线上检索质量必须由真正调用 `DatabaseMemoryRetriever.search()` 的 PostgreSQL 留出集证明。
+- 仓库不保存真实 Key、数据库密码、完整私有 Prompt、coreSecrets、生产私有 Memory、原始用户聊天或未脱敏 Trace。
 
-在长模拟前运行一次真实小型聊天闭环（默认 dry-run）：
-
-```powershell
-python core/backend/scripts/run_real_chat_acceptance.py
-python core/backend/scripts/run_real_chat_acceptance.py --live
-```
-
-真实七日模拟必须使用 PostgreSQL。默认依次运行旁观、支持林慧兰和支持赵磊三条路线，每局最多 600 次模型适配器调用、总计最多 1800 次；报告只保存指标和结构化结果：
-
-```powershell
-python core/backend/scripts/run_seven_day_simulation.py --real --backend postgres --route all --runs 1 --output simulation_reports
-```
-
-加 `--keep-runs` 才保留模拟 Run；否则在完成 Repository 重启恢复验证后清理这些模拟数据，并在安全报告中记录删除结果。真实报告目录不要提交；当前三路线结果见 `project/REAL_SEVEN_DAY_SIMULATION_RESULTS.md`，完整调参依据见 `project/PROMPT_GAMEPLAY_TUNING_LOG.md`。
-
-若确实要清空本机开发数据库（会删除全部本地 Run，无法恢复）：
-
-```powershell
-docker compose down -v
-docker compose up -d database
-cd core/backend
-alembic upgrade head
-```
+如需显式运行真实 Ark 验收，请先阅读对应报告和脚本的 dry-run 输出。只有带 `--live` 或 `--real` 的命令才允许产生网络调用和费用。

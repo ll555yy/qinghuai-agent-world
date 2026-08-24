@@ -144,6 +144,43 @@ ROUTE_PLAYER_STEPS: dict[SimulationRoute, tuple[PlayerStrategyStep, ...]] = {
     ),
 }
 
+# v1 remains immutable because three preregistered experiments already bind
+# its canonical step digests.  v2 changes only the final public clarification:
+# conditions that the fixed proposal already satisfies should not be repeated
+# as unresolved conditions, while genuinely unmet conditions remain allowed.
+PRO_LIN_V2_STEPS: tuple[PlayerStrategyStep, ...] = (
+    *ROUTE_PLAYER_STEPS["pro_lin"][:-1],
+    PlayerStrategyStep(
+        "zhou_final_authorization_v2",
+        7,
+        "npc_005",
+        "今天是截止日。公益核心、旧书保护、品牌授权边界、公开账目和各方职责都已经写入联合方案。"
+        "请逐项核对：如果这些条件已经满足，请明确表示支持青槐文社并授权正式提交，不要把已经满足的条件"
+        "再次列为附加条件；只有仍有具体未满足事项时，才请选择附条件支持或附条件授权，并指出缺少哪一项。"
+        "如果你拒绝，也请直接说明。",
+    ),
+)
+
+ROUTE_PLAYER_STRATEGIES: dict[str, tuple[PlayerStrategyStep, ...]] = {
+    "strategy.observer.v1": ROUTE_PLAYER_STEPS["observer"],
+    "strategy.pro_lin.v1": ROUTE_PLAYER_STEPS["pro_lin"],
+    "strategy.pro_lin.v2": PRO_LIN_V2_STEPS,
+    "strategy.pro_zhao.v1": ROUTE_PLAYER_STEPS["pro_zhao"],
+}
+
+
+def player_strategy_steps(
+    route: SimulationRoute,
+    strategy_id: str | None = None,
+) -> tuple[PlayerStrategyStep, ...]:
+    """Resolve the immutable strategy version named by a manifest attempt."""
+
+    resolved_id = strategy_id or f"strategy.{route}.v1"
+    steps = ROUTE_PLAYER_STRATEGIES.get(resolved_id)
+    if steps is None or not resolved_id.startswith(f"strategy.{route}."):
+        raise ValueError(f"strategy {resolved_id!r} does not match route {route!r}")
+    return steps
+
 # Kept as a compact compatibility/readability projection for tests and report
 # tooling that only needs to inspect the public player text.
 ROUTE_PLAYER_MESSAGES: dict[SimulationRoute, tuple[str, ...]] = {
@@ -846,6 +883,12 @@ class SevenDaySimulationRunner:
             if isinstance(attempt, dict)
             else attempt
         )
+        strategy_id = (
+            str(attempt.get("strategyId"))
+            if isinstance(attempt, dict) and attempt.get("strategyId") is not None
+            else None
+        )
+        strategy_steps = player_strategy_steps(route, strategy_id)
         if attempt_ledger is not None and attempt_id is None:
             raise ValueError("attempt_ledger requires a planned attempt")
         if manifest_digest is None and attempt_ledger is not None:
@@ -979,6 +1022,7 @@ class SevenDaySimulationRunner:
                     metrics,
                     day=1,
                     completed_step_ids=completed_strategy_steps,
+                    strategy_steps=strategy_steps,
                 ),
                 timeout=self._remaining_timeout(deadline),
             )
@@ -1010,6 +1054,7 @@ class SevenDaySimulationRunner:
                         metrics,
                         day=day,
                         completed_step_ids=completed_strategy_steps,
+                        strategy_steps=strategy_steps,
                     ),
                     timeout=self._remaining_timeout(deadline),
                 )
@@ -1120,8 +1165,9 @@ class SevenDaySimulationRunner:
         *,
         day: int,
         completed_step_ids: set[str],
+        strategy_steps: tuple[PlayerStrategyStep, ...],
     ) -> None:
-        for step in ROUTE_PLAYER_STEPS[route]:
+        for step in strategy_steps:
             if step.day != day or step.step_id in completed_step_ids:
                 continue
             sent = await self._script_player_action(

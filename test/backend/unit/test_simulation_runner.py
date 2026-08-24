@@ -11,11 +11,13 @@ from core.backend.app.simulation.manifest import (
     planned_attempts,
 )
 from core.backend.app.simulation.runner import (
+    PRO_LIN_V2_STEPS,
     ROUTE_PLAYER_MESSAGES,
     ROUTE_PLAYER_STEPS,
     SevenDaySimulationRunner,
     SimulationReport,
     _safe_exception_label,
+    player_strategy_steps,
     real_quality_gate_failures,
 )
 from core.backend.scripts import run_seven_day_simulation as simulation_cli
@@ -68,6 +70,26 @@ def test_coalition_route_contacts_all_npcs_without_private_state_branching() -> 
     }
     assert sum(step.target_actor_id == "npc_005" for step in steps) == 2
     assert "授权" in steps[-1].message
+
+
+def test_coalition_v2_preserves_v1_history_and_closes_satisfied_conditions() -> None:
+    v1 = ROUTE_PLAYER_STEPS["pro_lin"]
+    v2 = PRO_LIN_V2_STEPS
+
+    assert v2[:-1] == v1[:-1]
+    assert v2[-1] != v1[-1]
+    assert v2[-1].day == 7
+    assert v2[-1].target_actor_id == "npc_005"
+    assert "已经写入" in v2[-1].message
+    assert "不要把已经满足的条件" in v2[-1].message
+    assert "只有仍有具体未满足事项时" in v2[-1].message
+    assert player_strategy_steps("pro_lin", "strategy.pro_lin.v1") == v1
+    assert player_strategy_steps("pro_lin", "strategy.pro_lin.v2") == v2
+
+
+def test_strategy_version_must_match_route() -> None:
+    with pytest.raises(ValueError, match="does not match route"):
+        player_strategy_steps("observer", "strategy.pro_lin.v2")
 
 
 class OfflineWaitModel:
