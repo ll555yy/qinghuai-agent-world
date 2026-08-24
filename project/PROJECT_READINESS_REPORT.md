@@ -1,4 +1,4 @@
-# 最终面试交付验收
+# 项目就绪度与验证报告
 
 - 状态：已完成真实性收口；语义、检索和 CI/E2E 已通过；v4 的 pro_lin v2 指标失败已保留，v5 因 Candidate 与 Embedding Provider 均不可用而以 `15 planned / 0 attempted / 15 not_started` 的负向 canonical 结论收口
 - 冻结起点：`50d6c88`
@@ -9,7 +9,7 @@
 - strategy v2 holdout 预注册提交：`aa71928`
 - v4 失败证据、strategy v3 与恢复修复：`e9a4a52`
 - strategy v3 holdout 预注册提交：`15f0dd7`
-- 最终提交：本提交（`ci: complete final interview readiness gate`）
+- 验证基线：完成 v5 Provider 结论、语义闭环与 CI/E2E 收口的提交
 
 ## 1. 可审计提交链
 

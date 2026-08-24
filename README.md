@@ -8,7 +8,7 @@
 
 _系统主链路：世界事件 → NPC Agent 决策 → 按需记忆召回 → 结构化动作 → 后端规则裁决 → REST / WebSocket 投影_
 
-[快速开始](#-快速开始) · [项目架构](#️-项目架构) · [核心实现](#-核心实现) · [评测与测试](#-评测与测试) · [已知边界](#-已知边界)
+[快速开始](#-快速开始) · [项目架构](#️-项目架构) · [核心实现](#-核心实现) · [自定义场景](#-自定义场景) · [评测与测试](#-评测与测试) · [已知边界](#-已知边界)
 
 ![青槐老巷书店世界界面](project/visual-qa/world-1440x900.png)
 
@@ -108,6 +108,18 @@ pnpm dev
 ```
 
 浏览器打开 `http://127.0.0.1:5173`。Vite 会把 `/api` 和 `/ws` 代理到本地后端。
+
+### 步骤 5 · 启用真实模型（可选）
+
+若要让 NPC 使用真实文本模型并启用向量记忆，在根目录 `.env` 中填写自己的火山方舟凭证：
+
+```dotenv
+ARK_API_KEY=<你的 API Key>
+ARK_MODEL=doubao-seed-2.0-lite
+ARK_EMBEDDING_MODEL=doubao-embedding-vision
+```
+
+文本模型、Embedding 和 Judge 分别配置，便于独立替换。`ARK_JUDGE_*` 仅用于显式执行语义评测，不会接入正常游戏流程。
 
 ### 启动前自检
 
@@ -251,7 +263,29 @@ GitHub Actions 包含四个独立 Job：后端离线门禁、PostgreSQL 语义�
 
 仓库只提交 `.env.example`。真实 Key、数据库密码、完整私有 Prompt、私有 Memory、原始玩家对话和未脱敏 Trace 都不进入版本控制。
 
-## 📚 设计与证据
+## 🧩 自定义场景
+
+世界内容位于 `core/scenario/`，无需修改 Agent 编排代码即可替换角色与剧情：
+
+| 文件 | 内容 |
+|---|---|
+| `NPC_PERSONAS.yaml` | NPC 身份、性格、边界与表达方式 |
+| `INITIAL_GOALS.yaml` | 公开/私有目标、目标角色与话题 |
+| `INITIAL_RELATIONSHIPS.yaml` | 初始关系、熟悉度与互动状态 |
+| `INITIAL_MEMORIES.yaml` | 每名 NPC 的 owner-scoped 开局记忆 |
+| `WORLD_EVENTS_DAY1_7.yaml` | 七日时间线、事件和章节结束条件 |
+| `CHAPTER_AGENDAS.yaml` | 玩家可选择推动的公开议案 |
+
+修改后先运行场景加载与后端测试：
+
+```bash
+python -m pytest -c core/backend/pyproject.toml -q test/backend/unit/test_scenario_loader.py
+python -m pytest -c core/backend/pyproject.toml -q
+```
+
+启动后端时场景会被严格校验；未知 Actor、无效 Goal/Topic 引用、时间越界或私有字段错误会直接阻止启动，避免带着损坏数据运行。
+
+## 📚 延伸文档
 
 - [系统设计](project/SYSTEM_DESIGN.md)
 - [LangGraph NPC Agent 设计](project/NPC_AGENT_LANGGRAPH_DESIGN.md)
@@ -260,14 +294,14 @@ GitHub Actions 包含四个独立 Job：后端离线门禁、PostgreSQL 语义�
 - [47 Case 最终语义报告](project/evaluation-results/live-final-canonical-2026-08-23/agent_semantic_evaluation.md)
 - [PostgreSQL Memory 留出集](project/evaluation-results/postgres-retrieval-final-2026-08-23/postgres_retrieval_benchmark.md)
 - [七日模拟结果与边界](project/REAL_SEVEN_DAY_SIMULATION_RESULTS.md)
-- [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md)
+- [项目就绪度与验证报告](project/PROJECT_READINESS_REPORT.md)
 - [视觉资产来源](project/VISUAL_ASSET_MANIFEST.md)
 
 ## 📌 已知边界
 
 - 最新一次预注册七日 v5 矩阵因 Candidate 与 Embedding Provider 不可用而没有启动，不能宣称该轮统计门禁通过；历史样本只支持“路线可达”。
 - LLM Judge 当前是辅助信号，不是发布门；高风险语义样本仍需要双人独立标注与仲裁。
-- 项目聚焦单进程开发部署与面试级工程闭环，尚未实现多实例分布式锁、租户级配额和生产运维面板。
-- 演示视频尚未纳入仓库，当前以可运行界面、截图、自动化测试和脱敏报告作为展示材料。
+- 当前采用本地单进程应用架构，尚未实现多实例分布式锁、租户级配额和生产运维面板。
+- 仓库暂不提供托管在线实例，需要按照“快速开始”在本地运行。
 
-本项目适合在面试中讨论：Agent 与业务状态的职责边界、工具式记忆召回、Prompt 注入与 owner 隔离、长程对话压缩、评测可信度，以及如何把失败的真实模型实验转化为可复现的工程证据。
+如果要接入新的模型服务，实现 `TextModel` / Embedding 端口并保持现有结构化协议即可；领域状态、API 和前端不需要随模型供应商一起改写。
