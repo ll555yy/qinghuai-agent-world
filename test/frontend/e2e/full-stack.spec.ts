@@ -73,8 +73,9 @@ test('runs the real PostgreSQL/FastAPI/LangGraph/React golden path', async ({ pa
   await page.getByPlaceholder('自由输入你想说的话……').fill(playerText)
   await page.getByRole('button', { name: '发送' }).click()
   const npcText = '我愿意先把书店的底线和方案说清楚。'
-  await expect(page.getByText(playerText, { exact: true })).toBeVisible()
-  await expect(page.getByText(npcText, { exact: true })).toBeVisible({ timeout: 30_000 })
+  const messageList = page.locator('.message-list')
+  await expect(messageList.getByText(playerText, { exact: true }).first()).toBeVisible()
+  await expect(messageList.getByText(npcText, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
 
   snapshot = await publicRun(page, id)
   const conversation = snapshot.conversations.find((item: JsonRecord) =>
@@ -95,7 +96,7 @@ test('runs the real PostgreSQL/FastAPI/LangGraph/React golden path', async ({ pa
   assertNoPrivateFields(messages)
   for (const message of messages.messages as JsonRecord[]) {
     if (typeof message.text === 'string') {
-      await expect(page.getByText(message.text, { exact: true })).toBeVisible()
+      await expect(messageList.getByText(message.text, { exact: true }).first()).toBeVisible()
     }
   }
 
