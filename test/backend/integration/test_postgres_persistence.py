@@ -5,11 +5,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import func, select, update
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import IntegrityError
-
 from core.backend.app.ai.ark_client import ArkClient
 from core.backend.app.ai.embedding import MEMORY_EMBEDDING_DIMENSIONS
 from core.backend.app.ai.models import TextGenerationResult
@@ -36,6 +31,10 @@ from core.backend.app.persistence.run_repository import RepositoryConflictError
 from core.backend.app.persistence.sqlalchemy_repository import SQLAlchemyRunRepository
 from core.backend.app.scenario.loader import ScenarioLoader
 from core.backend.app.settings import Settings
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 
 
 class _FixedEmbedding:

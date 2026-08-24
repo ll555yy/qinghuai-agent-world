@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from core.backend.app.evaluation.case_loader import CaseLoader, CaseValidationError
 from core.backend.app.evaluation.models import EvaluationCase
 

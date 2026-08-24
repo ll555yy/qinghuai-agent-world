@@ -4,7 +4,6 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
-
 from core.backend.app.scenario.loader import ScenarioLoader, ScenarioValidationError
 
 

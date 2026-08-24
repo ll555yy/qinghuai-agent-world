@@ -4,7 +4,6 @@ import json
 from types import SimpleNamespace
 
 import pytest
-
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.simulation.manifest import (
     AttemptLedger,

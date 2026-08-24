@@ -63,7 +63,7 @@ v4 holdout 在 `aa71928` 预注册后真实运行：5 个 observer、5 个 pro_l
 
 只读检查 5 个 Day7 对话确认 v2 原文均成功送达，但同一条话术没有稳定更新两个独立状态：周仍把已写入的保护条件表达为 conditional，或没有形成授权。`e9a4a52` 新增 `strategy.pro_lin.v3`，把“青槐文社议案无条件支持”和“正式提交批准授权”拆成两个公开、非自适应动作；离线 Fake 模型必须通过真实 RunService/resolver 得到 `consensus_submitted`、`core_adopted`、`completed`。同一提交还让 attempt 创建 Run 后立即持久绑定 runId，resume 只复用已完成 checkpoint、把陈旧 started 终态化为 runner_failed，绝不重跑同一 seed。
 
-v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。预注册后第一轮六协议健康检查为 `0/6`，全部 `ai_provider_unavailable`，所以 v5 保持 15 个 attempt 全部未启动；没有用不健康 Provider 消耗另一批样本。
+v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。预注册后分轮进行的两次六协议健康检查均为 `0/6`，全部在首次请求返回 `ai_provider_unavailable`，所以 v5 保持 15 个 attempt 全部未启动；没有进行 Embedding 检查，也没有用不健康 Provider 消耗另一批样本。
 
 Canonical 证据：
 
@@ -89,8 +89,8 @@ v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Toke
 
 | 门禁 | 结果 | 证据 |
 |---|---|---|
-| backend pytest | 通过 | `258 passed, 11 skipped`；数据库项另以专用库强制执行 |
-| Ruff | 通过 | `core/backend/app scripts migrations test/backend` |
+| backend pytest | 通过 | `264 passed, 11 skipped`；数据库项另以专用库强制执行 |
+| Ruff | 通过 | `ruff 0.16.3`；`core/backend/app scripts migrations test/backend` |
 | mypy | 通过 | `Success: no issues found in 78 source files` |
 | FastAPI app import | 通过 | 无 Key 导入输出 `Qinghuai Chat Backend` |
 | 空库 Alembic upgrade/check | 通过 | `No new upgrade operations detected` |
@@ -98,7 +98,7 @@ v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Toke
 | frontend lint/typecheck/Vitest/build | 通过 | Vitest `23 passed`；build 仅有 chunk-size warning |
 | 现有 Playwright | 通过 | `11 passed` |
 | full-stack Playwright | 通过 | `1 passed`，真实 REST/WS/PostgreSQL |
-| CI 无真实 Ark Key/网络 | 通过（本地门禁 + 配置审计） | workflow 显式空 Key + invalid base URL；模型仅测试 app DI；四个 job 可解析 |
+| CI 无真实 Ark Key/网络 | 通过（本地门禁 + 配置审计） | workflow 显式空 Key + invalid base URL；模型仅测试 app DI；pytest/Ruff/mypy 版本已固定；四个 job 可解析 |
 | manifest 15/15 全分母完整性 | 未通过 | v1 `15/11/10`，v2 `15/2/1`，v3 `15/11/10`，v4 `15/13/12`（planned/attempted/infraValid）；均 `complete=false`，失败与 not_started 未替换；v5 已预注册但未启动 |
 | README 与 canonical 指标一致 | 通过（包括 v4 失败状态） | README 不把七日门禁或尚未启动的 v5 写成完成 |
 | `git diff --check`、凭据和绝对路径扫描 | 通过，最终提交前再核对 | canonical 无绝对路径或真实凭据；README 只含显式密码占位符 |

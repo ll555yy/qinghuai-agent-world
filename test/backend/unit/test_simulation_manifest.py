@@ -7,7 +7,6 @@ from dataclasses import asdict
 from pathlib import Path
 
 import pytest
-
 from core.backend.app.simulation.manifest import (
     DEFAULT_MANIFEST_PATH,
     DEFAULT_MANIFEST_SHA256_PATH,

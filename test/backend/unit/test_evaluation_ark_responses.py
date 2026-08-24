@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-
 from core.backend.app.ai.ark_client import ArkSettings
 from core.backend.app.ai.errors import AIError, AIErrorCode
 from core.backend.app.ai.models import ChatMessage, TextGenerationRequest

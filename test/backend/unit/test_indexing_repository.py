@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
 from core.backend.app.persistence.embedding_indexer import EmbeddingIndexResult
 from core.backend.app.persistence.indexing_repository import IndexingRunRepository
 

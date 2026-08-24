@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from pydantic import ValidationError
-
 from core.backend.app.ai.errors import AIError, AIErrorCode
 from core.backend.app.evaluation.judge import (
     CANDIDATE_DATA_BEGIN,
@@ -17,6 +15,7 @@ from core.backend.app.evaluation.judge import (
     protocol_rubric_v2,
 )
 from core.backend.app.evaluation.judge_protocols import DIMENSION_NAMES, ReviewReason
+from pydantic import ValidationError
 
 
 def case(**overrides: object) -> dict[str, object]:
