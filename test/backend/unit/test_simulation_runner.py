@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.simulation.manifest import (
     AttemptLedger,
@@ -12,6 +13,7 @@ from core.backend.app.simulation.manifest import (
 )
 from core.backend.app.simulation.runner import (
     PRO_LIN_V2_STEPS,
+    PRO_LIN_V3_STEPS,
     ROUTE_PLAYER_MESSAGES,
     ROUTE_PLAYER_STEPS,
     SevenDaySimulationRunner,
@@ -87,6 +89,24 @@ def test_coalition_v2_preserves_v1_history_and_closes_satisfied_conditions() -> 
     assert player_strategy_steps("pro_lin", "strategy.pro_lin.v2") == v2
 
 
+def test_coalition_v3_separates_agenda_support_from_submission_authorization() -> None:
+    v1 = ROUTE_PLAYER_STEPS["pro_lin"]
+    v3 = PRO_LIN_V3_STEPS
+
+    assert v3[:-2] == v1[:-1]
+    assert len(v3) == len(v1) + 1
+    agenda_step, authorization_step = v3[-2:]
+    assert agenda_step.day == authorization_step.day == 7
+    assert agenda_step.target_actor_id == authorization_step.target_actor_id == "npc_005"
+    assert "先只确认青槐文社议案本身" in agenda_step.message
+    assert "无附加条件支持青槐文社作为核心议案" in agenda_step.message
+    assert "现在单独确认截止日提交权限" in authorization_step.message
+    assert "批准并授权今天正式提交联合方案" in authorization_step.message
+    assert "不是未来承诺" in agenda_step.message
+    assert "不要再次附加已经写入" in authorization_step.message
+    assert player_strategy_steps("pro_lin", "strategy.pro_lin.v3") == v3
+
+
 def test_strategy_version_must_match_route() -> None:
     with pytest.raises(ValueError, match="does not match route"):
         player_strategy_steps("observer", "strategy.pro_lin.v2")
@@ -132,6 +152,83 @@ class OfflineAcceptModel(OfflineWaitModel):
         return result
 
 
+class OfflineV3CoalitionModel(OfflineAcceptModel):
+    async def generate(self, request):
+        result = await super().generate(request)
+        visible_text = "\n".join(message.content for message in request.messages)
+        if "协议=ChatDecision" in request.system_prompt and any(
+            marker in visible_text
+            for marker in (
+                "青槐文社成为核心主张",
+                "以青槐文社为核心",
+                "青槐文社主张",
+                "青槐文社这项核心主张",
+                "明确支持整体提交和青槐文社",
+                "先只确认青槐文社议案本身",
+                "现在单独确认截止日提交权限",
+            )
+        ):
+            effects = [
+                {"kind": "overall_stance", "value": "support", "evidenceMessageIds": []},
+                {
+                    "kind": "agenda_stance",
+                    "agendaId": "agenda_001_literary_society",
+                    "value": "support",
+                    "evidenceMessageIds": [],
+                },
+            ]
+            if "现在单独确认截止日提交权限" in visible_text:
+                effects.append(
+                    {
+                        "kind": "zhou_authorization",
+                        "value": "approved",
+                        "evidenceMessageIds": [],
+                    }
+                )
+            return result.model_copy(
+                update={
+                    "text": json.dumps(
+                        {
+                            "result": "decided",
+                            "action": "speak",
+                            "responseDesire": 3,
+                            "intent": "分别确认议案支持与提交授权",
+                            "chapterEffects": effects,
+                        },
+                        ensure_ascii=False,
+                    )
+                }
+            )
+        if (
+            "协议=SpeechGeneration" in request.system_prompt
+            and "分别确认议案支持与提交授权" in visible_text
+        ):
+            return result.model_copy(
+                update={"text": json.dumps({"text": "我确认支持，并按约定授权提交。"})}
+            )
+        return result
+
+
+@pytest.mark.anyio
+async def test_coalition_v3_reaches_state_level_completed_result(registry) -> None:
+    report = await SevenDaySimulationRunner(registry, seed=73).run(
+        route="pro_lin",
+        mode="offline",
+        text_model=OfflineV3CoalitionModel(),
+        attempt={
+            "attemptId": "offline-v3:pro_lin:73",
+            "strategyId": "strategy.pro_lin.v3",
+        },
+    )
+
+    assert report.metrics.scripted_actions["strategy_step_sent"] == 8
+    assert report.metrics.chapter_stances["npc_005"] == "support"
+    assert report.metrics.chapter_stances["zhouAuthorization"] == "approved"
+    assert report.metrics.agenda_results["agenda_001_literary_society"] == "core_adopted"
+    assert report.metrics.final_day7_branch == "consensus_submitted"
+    assert report.metrics.player_result == "completed"
+
+
 @pytest.mark.anyio
 async def test_attempt_checkpoint_is_atomic_and_uses_safe_identity(registry, tmp_path) -> None:
     original = await SevenDaySimulationRunner(registry, seed=37).run(
@@ -161,6 +258,54 @@ async def test_attempt_checkpoint_is_atomic_and_uses_safe_identity(registry, tmp
         "# Qinghuai seven-day simulation report"
     )
     assert not list((tmp_path / "attempt_reports").glob("*.tmp"))
+
+
+def test_resume_plan_reuses_completed_and_terminalizes_stale_started(tmp_path) -> None:
+    manifest, digest = load_manifest()
+    planned = planned_attempts(manifest)[:3]
+    ledger = AttemptLedger(
+        tmp_path / "attempts",
+        experiment_id=manifest["experimentId"],
+        manifest_digest=digest,
+        planned=planned,
+    )
+    ledger.prepare()
+    ledger.start(planned[0])
+    ledger.attach_run(planned[0], "run_completed")
+    ledger.finish(
+        planned[0],
+        "completed",
+        run_id="run_completed",
+        infra_valid=True,
+        gameplay_pass=True,
+    )
+    simulation_cli._write_resume_checkpoint(
+        {
+            "attemptId": planned[0]["attemptId"],
+            "attemptStatus": "completed",
+            "manifestDigest": digest,
+            "runId": "run_completed",
+            "metrics": {"physicalProviderRequests": 7},
+        },
+        tmp_path,
+    )
+    ledger.start(planned[1])
+    ledger.attach_run(planned[1], "run_interrupted")
+
+    pending, resumed, stale_run_ids = simulation_cli._resume_manifest_plan(
+        planned,
+        attempt_ledger=ledger,
+        output=tmp_path,
+        manifest_digest=digest,
+    )
+
+    assert pending == (planned[2],)
+    assert [item["attemptId"] for item in resumed] == [planned[0]["attemptId"]]
+    assert stale_run_ids == {"run_completed", "run_interrupted"}
+    interrupted = ledger.get(planned[1]["attemptId"])
+    assert interrupted["status"] == "runner_failed"
+    assert interrupted["reason"] == "stale_started_attempt_on_resume"
+    assert interrupted["runId"] == "run_interrupted"
 
 
 class OfflineRouteStanceModel(OfflineAcceptModel):
@@ -436,6 +581,34 @@ async def test_preregistered_attempt_is_terminal_when_run_creation_fails(registr
     assert record["status"] == "runner_failed"
     assert record["startedAt"]
     assert record["terminalAt"]
+
+
+@pytest.mark.anyio
+async def test_preregistered_attempt_binds_created_run_to_ledger(registry, tmp_path) -> None:
+    manifest, digest = load_manifest()
+    planned = planned_attempts(manifest)
+    ledger = AttemptLedger(
+        tmp_path,
+        experiment_id=manifest["experimentId"],
+        manifest_digest=digest,
+        planned=planned,
+    )
+    ledger.prepare()
+
+    report = await SevenDaySimulationRunner(registry, seed=planned[0]["seed"]).run(
+        route="observer",
+        mode="offline",
+        text_model=OfflineWaitModel(),
+        attempt_ledger=ledger,
+        attempt=planned[0],
+        manifest_digest=digest,
+    )
+
+    record = ledger.get(planned[0]["attemptId"])
+    assert report.attempt_status == "completed"
+    assert report.run_id
+    assert record["status"] == "completed"
+    assert record["runId"] == report.run_id
 
 
 @pytest.mark.anyio

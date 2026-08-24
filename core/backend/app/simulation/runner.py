@@ -161,10 +161,38 @@ PRO_LIN_V2_STEPS: tuple[PlayerStrategyStep, ...] = (
     ),
 )
 
+# v3 keeps the same public coalition work through Day6, but separates the two
+# independent decisions that the chapter resolver records for Zhou.  Five v2
+# holdout seeds showed that asking for both in one message collapsed into
+# conditional support.  No runtime stance or private input is read here.
+PRO_LIN_V3_STEPS: tuple[PlayerStrategyStep, ...] = (
+    *ROUTE_PLAYER_STEPS["pro_lin"][:-1],
+    PlayerStrategyStep(
+        "zhou_final_agenda_support_v3",
+        7,
+        "npc_005",
+        "今天是截止日，联合方案已经定稿并当日生效：青槐文社是公益核心；书店核心布局、旧书保存环境"
+        "和贵重旧籍均不改动、不触碰；品牌授权边界、公开账目和责任人也写入正文。先只确认青槐文社"
+        "议案本身。上述保护条件现在已经满足，不是未来承诺。若你没有其他具体未满足项，请明确说"
+        "“我无附加条件支持青槐文社作为核心议案”，不要用“只要……就……”重新表述已经满足的条件；"
+        "若仍不同意，请指出当前尚未满足的具体事实。",
+    ),
+    PlayerStrategyStep(
+        "zhou_final_submission_authorization_v3",
+        7,
+        "npc_005",
+        "现在单独确认截止日提交权限。联合方案的保护条款已经写入并生效，正式提交不会改变书店核心"
+        "布局、旧书保存环境或贵重旧籍保护。若没有新的具体未满足事项，请明确说“我批准并授权今天"
+        "正式提交联合方案”，不要再次附加已经写入的旧书保护条件；若拒绝授权，请指出当前缺少的"
+        "具体事实。",
+    ),
+)
+
 ROUTE_PLAYER_STRATEGIES: dict[str, tuple[PlayerStrategyStep, ...]] = {
     "strategy.observer.v1": ROUTE_PLAYER_STEPS["observer"],
     "strategy.pro_lin.v1": ROUTE_PLAYER_STEPS["pro_lin"],
     "strategy.pro_lin.v2": PRO_LIN_V2_STEPS,
+    "strategy.pro_lin.v3": PRO_LIN_V3_STEPS,
     "strategy.pro_zhao.v1": ROUTE_PLAYER_STEPS["pro_zhao"],
 }
 
@@ -1007,6 +1035,8 @@ class SevenDaySimulationRunner:
                 timeout=self._remaining_timeout(deadline),
             )
             run_id = str(created["runId"])
+            if attempt_ledger is not None and attempt is not None:
+                attempt_ledger.attach_run(attempt, run_id)
             run = await run_service.get_run_entity(run_id)
             self._check_world_budget(run, metrics)
             initial_relationships = {

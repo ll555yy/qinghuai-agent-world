@@ -506,6 +506,29 @@ class AttemptLedger:
         _atomic_write_json(path, updated)
         return updated
 
+    def attach_run(
+        self,
+        planned: dict[str, Any] | str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Durably bind a created Run to an in-flight attempt."""
+
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("run_id must be a non-empty string")
+        item = self._planned_item(planned)
+        path = self._path(str(item["attemptId"]))
+        current = self._read(path)
+        self._check_identity(current, item)
+        if current.get("status") != "started":
+            raise RuntimeError(f"attempt is not started: {item['attemptId']}")
+        existing = current.get("runId")
+        if existing is not None and existing != run_id:
+            raise RuntimeError(f"attempt Run is already bound: {item['attemptId']}")
+        updated = dict(current)
+        updated["runId"] = run_id
+        _atomic_write_json(path, updated)
+        return updated
+
     def annotate(
         self,
         planned: dict[str, Any] | str,

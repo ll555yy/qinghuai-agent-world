@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import pytest
+
 from core.backend.app.simulation.manifest import (
     DEFAULT_MANIFEST_PATH,
     DEFAULT_MANIFEST_SHA256_PATH,
@@ -235,15 +236,23 @@ def test_attempt_ledger_atomically_records_started_and_terminal_rows(tmp_path) -
     first = planned[0]
     assert ledger.get(first["attemptId"])["status"] == "not_started"
     assert ledger.start(first)["status"] == "started"
+    attached = ledger.attach_run(first, "run_test_001")
+    assert attached["runId"] == "run_test_001"
+    assert ledger.attach_run(first, "run_test_001")["runId"] == "run_test_001"
+    with pytest.raises(RuntimeError, match="already bound"):
+        ledger.attach_run(first, "run_test_002")
     terminal = ledger.finish(
         first,
         "runner_failed",
+        run_id="run_test_001",
         reason="create_run_failed",
         infra_valid=False,
     )
     assert terminal["status"] == "runner_failed"
     assert terminal["terminalAt"]
     assert ledger.get(first["attemptId"])["manifestDigest"] == digest
+    with pytest.raises(RuntimeError, match="not started"):
+        ledger.attach_run(first, "run_test_001")
 
 
 def test_attempt_ledger_cannot_overwrite_terminal_state(tmp_path) -> None:

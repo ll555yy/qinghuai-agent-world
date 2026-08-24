@@ -77,6 +77,96 @@ def _write_attempt_checkpoint(report: SimulationReport, output: Path) -> tuple[P
     return json_path, markdown_path
 
 
+def _attempt_checkpoint_json_path(output: Path, attempt_id: str) -> Path:
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", attempt_id).strip("_")
+    return output / "attempt_reports" / f"{stem}.json"
+
+
+def _load_resume_checkpoint(
+    output: Path,
+    record: dict[str, Any],
+    *,
+    manifest_digest: str,
+) -> dict[str, Any]:
+    attempt_id = str(record["attemptId"])
+    path = _attempt_checkpoint_json_path(output, attempt_id)
+    if not path.exists():
+        raise RuntimeError(f"completed attempt is missing checkpoint: {attempt_id}")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise RuntimeError(f"invalid attempt checkpoint: {attempt_id}")
+    if value.get("attemptId") != attempt_id:
+        raise RuntimeError(f"attempt checkpoint identity mismatch: {attempt_id}")
+    if value.get("attemptStatus") != "completed":
+        raise RuntimeError(f"attempt checkpoint is not completed: {attempt_id}")
+    if value.get("manifestDigest") != manifest_digest:
+        raise RuntimeError(f"attempt checkpoint digest mismatch: {attempt_id}")
+    if record.get("runId") not in {None, value.get("runId")}:
+        raise RuntimeError(f"attempt checkpoint Run mismatch: {attempt_id}")
+    return value
+
+
+def _write_resume_checkpoint(value: dict[str, Any], output: Path) -> Path:
+    attempt_id = str(value["attemptId"])
+    path = _attempt_checkpoint_json_path(output, attempt_id)
+    _atomic_write_text(
+        path,
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
+    return path
+
+
+def _resume_manifest_plan(
+    selected_plans: tuple[dict[str, Any], ...],
+    *,
+    attempt_ledger: AttemptLedger,
+    output: Path,
+    manifest_digest: str,
+) -> tuple[tuple[dict[str, Any], ...], list[dict[str, Any]], set[str]]:
+    """Return only never-started work while preserving the frozen denominator."""
+
+    pending_plans: list[dict[str, Any]] = []
+    resumed_reports: list[dict[str, Any]] = []
+    stale_run_ids: set[str] = set()
+    for planned_item in selected_plans:
+        record = attempt_ledger.get(str(planned_item["attemptId"]))
+        status = record.get("status")
+        run_id = record.get("runId")
+        if status == "completed":
+            resumed_reports.append(
+                _load_resume_checkpoint(
+                    output,
+                    record,
+                    manifest_digest=manifest_digest,
+                )
+            )
+            if isinstance(run_id, str) and run_id:
+                stale_run_ids.add(run_id)
+            continue
+        if status == "started":
+            if not isinstance(run_id, str) or not run_id:
+                raise RuntimeError(
+                    "cannot safely resume a started attempt without a bound Run ID: "
+                    f"{planned_item['attemptId']}"
+                )
+            attempt_ledger.finish(
+                planned_item,
+                "runner_failed",
+                run_id=run_id,
+                reason="stale_started_attempt_on_resume",
+                infra_valid=False,
+                gameplay_pass=False,
+            )
+            stale_run_ids.add(run_id)
+            continue
+        if status == "not_started" and record.get("terminalAt") is None:
+            pending_plans.append(planned_item)
+            continue
+        if isinstance(run_id, str) and run_id:
+            stale_run_ids.add(run_id)
+    return tuple(pending_plans), resumed_reports, stale_run_ids
+
+
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -111,6 +201,14 @@ def _args() -> argparse.Namespace:
         help="directory for atomic redacted attempt records (defaults below output)",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "continue only unfinished manifest attempts, reuse completed checkpoints, "
+            "and terminalize a stale started attempt without rerunning its seed"
+        ),
+    )
+    parser.add_argument(
         "--keep-runs",
         action="store_true",
         help="reuse one service/repository for the batch; Postgres rows remain durable either way",
@@ -138,6 +236,8 @@ def _args() -> argparse.Namespace:
 
 async def _main() -> int:
     args = _args()
+    if args.resume and args.keep_runs:
+        raise SystemExit("--resume cannot be combined with --keep-runs")
     manifest: dict[str, Any] | None = None
     manifest_digest: str | None = None
     planned_matrix: tuple[dict[str, Any], ...] = ()
@@ -294,8 +394,11 @@ async def _main() -> int:
 
         service = RunService(registry, text_model=client, seed=args.seed)
 
-    reports = []
+    reports: list[SimulationReport] = []
+    resumed_reports: list[dict[str, Any]] = []
+    stale_run_ids: set[str] = set()
     total_calls = 0
+    run_plan: tuple[dict[str, Any] | None, ...]
     if manifest is not None:
         if args.runs != 1:
             raise SystemExit("--runs must remain 1 when a preregistration manifest is used")
@@ -309,15 +412,33 @@ async def _main() -> int:
         route_cycle: tuple[str, ...] = tuple(
             dict.fromkeys(str(item["route"]) for item in selected_plans)
         )
-        run_plan: tuple[dict[str, Any] | None, ...] = selected_plans
+        requested_run_count = len(selected_plans)
+        if args.resume:
+            if attempt_ledger is None or manifest_digest is None:
+                raise RuntimeError("resume requires an initialized attempt ledger")
+            run_plan, resumed_reports, stale_run_ids = _resume_manifest_plan(
+                selected_plans,
+                attempt_ledger=attempt_ledger,
+                output=args.output,
+                manifest_digest=manifest_digest,
+            )
+            total_calls = sum(
+                int(report.get("metrics", {}).get("physicalProviderRequests") or 0)
+                for report in resumed_reports
+                if isinstance(report.get("metrics"), dict)
+            )
+        else:
+            run_plan = selected_plans
     else:
+        if args.resume:
+            raise SystemExit("--resume requires --manifest")
         route_cycle = (
             ("observer", "pro_lin", "pro_zhao")
             if args.route == "all"
             else (args.route,)
         )
         run_plan = tuple(None for _ in range(args.runs * len(route_cycle)))
-    requested_run_count = len(run_plan)
+        requested_run_count = len(run_plan)
     for index, planned_item in enumerate(run_plan):
         route = cast(
             SimulationRoute,
@@ -403,12 +524,29 @@ async def _main() -> int:
         recovered_repository = SQLAlchemyRunRepository(
             database_url, chapter_id=registry.chapter_id
         )
-        run_ids = [report.run_id for report in reports if report.run_id]
+        run_ids = sorted(
+            {
+                *(report.run_id for report in reports if report.run_id),
+                *(
+                    str(report["runId"])
+                    for report in resumed_reports
+                    if isinstance(report.get("runId"), str) and report.get("runId")
+                ),
+                *stale_run_ids,
+            }
+        )
         for report in reports:
             if report.run_id:
                 report.metrics.repository_recovered = (
                     await recovered_repository.get(report.run_id)
                 ) is not None
+        for report in resumed_reports:
+            run_id = report.get("runId")
+            metrics = report.get("metrics")
+            if not isinstance(run_id, str) or not isinstance(metrics, dict):
+                continue
+            if await recovered_repository.get(run_id) is not None:
+                metrics["repositoryRecovered"] = True
         if run_ids and not args.keep_runs:
             async with recovered_repository.session_factory() as session:
                 async with session.begin():
@@ -427,6 +565,24 @@ async def _main() -> int:
                     report.metrics.temporary_run_deleted = (
                         await verification_repository.get(report.run_id)
                     ) is None
+            for report in resumed_reports:
+                run_id = report.get("runId")
+                metrics = report.get("metrics")
+                if not isinstance(run_id, str) or not isinstance(metrics, dict):
+                    continue
+                metrics["temporaryRunDeleted"] = (
+                    await verification_repository.get(run_id)
+                ) is None
+                if metrics.get("repositoryRecovered") is True:
+                    metrics["qualityGateFailures"] = [
+                        item
+                        for item in metrics.get("qualityGateFailures", [])
+                        if item
+                        not in {
+                            "repository_not_recovered",
+                            "temporary_run_not_deleted",
+                        }
+                    ]
             await verification_repository.close()
         else:
             await recovered_repository.close()
@@ -459,8 +615,11 @@ async def _main() -> int:
             )
     for report in reports:
         _write_attempt_checkpoint(report, args.output)
+    for report in resumed_reports:
+        _write_resume_checkpoint(report, args.output)
 
     attempt_records = attempt_ledger.records() if attempt_ledger is not None else []
+    report_payloads = [*resumed_reports, *(report.to_dict() for report in reports)]
 
     payload = {
         "experimentId": manifest["experimentId"] if manifest is not None else None,
@@ -473,7 +632,7 @@ async def _main() -> int:
         "mode": "real" if args.real else "offline",
         "seed": args.seed,
         "runsRequested": requested_run_count,
-        "runsCompleted": len(reports),
+        "runsCompleted": len(report_payloads),
         "keepRuns": args.keep_runs,
         "backend": args.backend,
         "maxCallsPerRun": args.max_calls_per_run,
@@ -489,7 +648,7 @@ async def _main() -> int:
         "embeddingPreflight": embedding_preflight,
         "plannedRuns": [dict(item) for item in planned_matrix],
         "attempts": attempt_records,
-        "reports": [report.to_dict() for report in reports],
+        "reports": report_payloads,
     }
     args.output.mkdir(parents=True, exist_ok=True)
     json_path = args.output / "seven_day_simulation_batch.json"
@@ -503,18 +662,18 @@ async def _main() -> int:
         "",
         f"- Route: `{args.route}`",
         f"- Mode: `{'real' if args.real else 'offline'}`",
-        f"- Runs: `{len(reports)}/{requested_run_count}`",
+        f"- Runs: `{len(report_payloads)}/{requested_run_count}`",
         f"- Backend: `{args.backend}`",
         f"- Provider calls: `{total_calls}`",
-        f"- Temporary Runs deleted: `{all(report.metrics.temporary_run_deleted is True for report in reports if report.run_id) if not args.keep_runs else 'kept by request'}`",
+        f"- Temporary Runs deleted: `{all(report.get('metrics', {}).get('temporaryRunDeleted') is True for report in report_payloads if report.get('runId')) if not args.keep_runs else 'kept by request'}`",
         "",
         "| Run | Seed | Route | Player lines | Changed NPC stances | Goal completion | Day7 branch | Player result | Cost CNY | Recall | Vector/Graph | Recovered | Deleted | Gates |",
         "|---:|---:|---|---:|---:|---:|---|---|---:|---:|---:|---|---|---|",
     ]
-    for index, report in enumerate(reports, start=1):
-        metrics = report.metrics.to_dict()
+    for index, report in enumerate(report_payloads, start=1):
+        metrics = report["metrics"]
         markdown_lines.append(
-            f"| {index} | {report.seed} | `{report.route}` "
+            f"| {index} | {report['seed']} | `{report['route']}` "
             f"| {metrics['speech']['player']} "
             f"| {metrics['chapterStanceChangeCount']} "
             f"| {metrics['goalCompletionRate'] if metrics['goalCompletionRate'] is not None else 'n/a'} "
@@ -532,11 +691,11 @@ async def _main() -> int:
         await client.close()
     print(f"JSON report: {json_path}")
     print(f"Markdown report: {markdown_path}")
-    if reports and any(
-        report.metrics.rejected
-        or report.metrics.abnormal_termination is not None
-        or report.metrics.quality_gate_failures
-        for report in reports
+    if report_payloads and any(
+        report.get("metrics", {}).get("rejected")
+        or report.get("metrics", {}).get("abnormalTermination") is not None
+        or report.get("metrics", {}).get("qualityGateFailures")
+        for report in report_payloads
     ):
         print("Simulation batch did not pass its acceptance gates; inspect the safe report.")
         return 2
