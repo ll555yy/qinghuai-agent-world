@@ -63,7 +63,7 @@ v4 holdout 在 `aa71928` 预注册后真实运行：5 个 observer、5 个 pro_l
 
 只读检查 5 个 Day7 对话确认 v2 原文均成功送达，但同一条话术没有稳定更新两个独立状态：周仍把已写入的保护条件表达为 conditional，或没有形成授权。`e9a4a52` 新增 `strategy.pro_lin.v3`，把“青槐文社议案无条件支持”和“正式提交批准授权”拆成两个公开、非自适应动作；离线 Fake 模型必须通过真实 RunService/resolver 得到 `consensus_submitted`、`core_adopted`、`completed`。同一提交还让 attempt 创建 Run 后立即持久绑定 runId，resume 只复用已完成 checkpoint、把陈旧 started 终态化为 runner_failed，绝不重跑同一 seed。
 
-v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。预注册后分轮进行的两次六协议健康检查均为 `0/6`，全部在首次请求返回 `ai_provider_unavailable`，所以 v5 保持 15 个 attempt 全部未启动；没有进行 Embedding 检查，也没有用不健康 Provider 消耗另一批样本。
+v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。预注册后分轮进行的三次六协议健康检查均为 `0/6`，全部在首次请求返回 `ai_provider_unavailable`，所以 v5 保持 15 个 attempt 全部未启动；没有进行 Embedding 检查，也没有用不健康 Provider 消耗另一批样本。
 
 Canonical 证据：
 
