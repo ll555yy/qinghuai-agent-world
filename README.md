@@ -12,10 +12,10 @@
 | 直接问题 | 同一 canonical 复评 | Rule 通过率 `100%`；P95 `10,371.531 ms` |
 | Memory 安全 | 14 次真实 PostgreSQL + pgvector tuning/holdout | holdout Precision@returned / Recall@K / MRR 均 `1.0`，FPR `0`，owner 越界与重复均 `0`，空查询 `1/1` |
 | 七日可达性 | 历史三路线、9 个新格式真实样本 | observer、成功联盟、低投入失败均可达；这是固定策略可达性，不是自然玩家成功率 |
-| 最终七日门禁 | 四轮预注册真实批次 | 最新 v4 为 `planned=15 / attempted=13 / infraValid=12`；pro_lin gameplay `3/5`、玩家 completed `0/5`，且 Provider 故障使最后 3 局未完成，最终门禁未通过 |
+| 最终七日门禁 | v5 预注册全分母 canonical | `planned=15 / attempted=0 / infraValid=0 / gameplayPass=0`；Candidate 和 Embedding 预检均不可用，15 项全部如实终态化为 `not_started`，统计门禁未通过 |
 | 前后端 | FastAPI + React/Phaser | 23/23 Vitest、11/11 浏览器契约、1/1 无 REST/WS Mock 的 PostgreSQL 全栈黄金链路通过 |
 
-Judge 校准已真实完成 13/13，但 critical boolean macro accuracy 为 `79.4872%`、Injection 为 `2/3`，未过预注册阈值，因此 Judge 仍是 advisory，不能覆盖规则结果。v4 保留 5 个 observer、5 个 pro_lin 和 2 个 pro_zhao 完整检查点；pro_lin v2 的真实结果为 `0 completed / 3 partial / 2 failed`，证明单条 Day7 话术没有稳定映射到“议案支持”和“提交授权”两个独立状态。修复后的 `strategy.pro_lin.v3` 已把两项确认拆开，并通过真实 resolver 的离线 `core_adopted + completed` 测试；v5 已在 `15f0dd7` 预注册新连续 seed `20260860..20260864`，但最新六协议健康检查为 `0/6 ai_provider_unavailable`，因此尚未启动任何 v5 attempt。当前项目可用于展示架构、语义整改、检索、失败分析与 CI/E2E，但不能声称“最终七日统计门禁已完成”。最终数字以 [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md) 和其链接的 canonical JSON 为准。
+Judge 校准已真实完成 13/13，但 critical boolean macro accuracy 为 `79.4872%`、Injection 为 `2/3`，未过预注册阈值，因此 Judge 仍是 advisory，不能覆盖规则结果。v4 保留 5 个 observer、5 个 pro_lin 和 2 个 pro_zhao 完整检查点；pro_lin v2 的真实结果为 `0 completed / 3 partial / 2 failed`，证明单条 Day7 话术没有稳定映射到“议案支持”和“提交授权”两个独立状态。修复后的 `strategy.pro_lin.v3` 已把两项确认拆开，并通过真实 resolver 的离线 `core_adopted + completed` 测试；v5 已在 `15f0dd7` 预注册新连续 seed `20260860..20260864`。最终唯一一轮健康检查为 Candidate `0/6 ai_provider_unavailable`、Embedding `APIConnectionError`，因此正式矩阵没有启动，15 个预注册项均保留为终态 `not_started`。项目的最终交付已按这一负向结论收口：可展示架构、语义整改、检索、失败分析与 CI/E2E，但不能声称“最终七日统计门禁已通过”。最终数字以 [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md) 和其链接的 canonical JSON 为准。
 
 ## 架构
 
@@ -91,7 +91,7 @@ python -m pytest -c core/backend/pyproject.toml -q test/backend/integration
 
 ## 证据与演示
 
-- [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md)（记录已通过项与当前阻塞项）
+- [最终面试验收](project/FINAL_INTERVIEW_READINESS_ACCEPTANCE.md)（区分已通过、指标失败、Provider 不可用与人工边界）
 - [47 Case 真实复评](project/evaluation-results/live-final-canonical-2026-08-23/agent_semantic_evaluation.md)
 - [PostgreSQL 检索留出集](project/evaluation-results/postgres-retrieval-final-2026-08-23/postgres_retrieval_benchmark.md)
 - [Agent 语义整改验收](project/AGENT_SEMANTIC_REMEDIATION_ACCEPTANCE.md)
@@ -100,6 +100,9 @@ python -m pytest -c core/backend/pyproject.toml -q test/backend/integration
 - [七日最终批次 v1 中断证据](project/simulation-results/final-preregistered-v1-interrupted-2026-08-23/seven_day_gameplay_evidence.md)
 - [七日恢复批次 v2 中断证据](project/simulation-results/final-preregistered-recovery-v2-interrupted-2026-08-24/seven_day_gameplay_evidence.md)
 - [七日恢复批次 v3 中断证据](project/simulation-results/final-preregistered-recovery-v3-interrupted-2026-08-24/seven_day_gameplay_evidence.md)
+- [七日 strategy v2 v4 失败证据](project/simulation-results/final-preregistered-strategy-v2-v4-2026-08-24/seven_day_gameplay_evidence.md)
+- [v5 Provider 不可用全分母结论](project/simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/seven_day_gameplay_evidence.md)
+- [v5 真实健康检查](project/simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/provider_health_check.md)
 - [七日模拟说明](project/SEVEN_DAY_SIMULATION_GUIDE.md)
 - [前端验收报告](project/FRONTEND_ACCEPTANCE_REPORT.md)
 - [演示录制说明](project/DEMO_RECORDING_GUIDE.md)（最终阶段完成后生成）

@@ -1,0 +1,1 @@
+python core/backend/scripts/summarize_seven_day_evidence.py --manifest core/backend/app/simulation/manifests/final_agent_validation_strategy_v3_v5.json --attempt-root simulation_reports/final_preregistered_strategy_v3_v5/attempts --output project/simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24

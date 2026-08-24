@@ -1,6 +1,6 @@
 # 最终面试交付验收
 
-- 状态：未完成；语义、检索和 CI/E2E 已通过；v4 同时暴露 pro_lin v2 质量失败与外部 Provider 故障，v5 已预注册但因最新健康检查 `0/6` 尚未启动
+- 状态：已完成真实性收口；语义、检索和 CI/E2E 已通过；v4 的 pro_lin v2 指标失败已保留，v5 因 Candidate 与 Embedding Provider 均不可用而以 `15 planned / 0 attempted / 15 not_started` 的负向 canonical 结论收口
 - 冻结起点：`50d6c88`
 - 七日基线提交：`738ef11`
 - 预注册提交：`235b36b`
@@ -9,7 +9,7 @@
 - strategy v2 holdout 预注册提交：`aa71928`
 - v4 失败证据、strategy v3 与恢复修复：`e9a4a52`
 - strategy v3 holdout 预注册提交：`15f0dd7`
-- 最终提交：待生成
+- 最终提交：本提交（`ci: complete final interview readiness gate`）
 
 ## 1. 可审计提交链
 
@@ -23,7 +23,7 @@
 | strategy v2 holdout 预注册 | `aa71928` | v4 连续 seed `20260855..20260859`、混合策略 digest 与原门槛冻结后再运行 |
 | v4 失败证据与恢复修复 | `e9a4a52` | v4 canonical、pro_lin v3 状态拆分、Run ID 持久绑定和不中途重跑 seed 的 resume 逻辑 |
 | strategy v3 holdout 预注册 | `15f0dd7` | v5 连续 seed `20260860..20260864`、策略/Prompt digest 与原门槛在真实调用前冻结 |
-| 最终交付 | 待生成 | 真实全分母结果、语义闭环、CI/E2E、README 和本验收报告 |
+| 最终交付 | 本提交 | v5 Provider 不可用全分母结论、语义闭环、CI/E2E、README 和本验收报告 |
 
 ## 2. Agent 语义与检索
 
@@ -63,7 +63,7 @@ v4 holdout 在 `aa71928` 预注册后真实运行：5 个 observer、5 个 pro_l
 
 只读检查 5 个 Day7 对话确认 v2 原文均成功送达，但同一条话术没有稳定更新两个独立状态：周仍把已写入的保护条件表达为 conditional，或没有形成授权。`e9a4a52` 新增 `strategy.pro_lin.v3`，把“青槐文社议案无条件支持”和“正式提交批准授权”拆成两个公开、非自适应动作；离线 Fake 模型必须通过真实 RunService/resolver 得到 `consensus_submitted`、`core_adopted`、`completed`。同一提交还让 attempt 创建 Run 后立即持久绑定 runId，resume 只复用已完成 checkpoint、把陈旧 started 终态化为 runner_failed，绝不重跑同一 seed。
 
-v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。预注册后分轮进行的三次六协议健康检查均为 `0/6`，全部在首次请求返回 `ai_provider_unavailable`，所以 v5 保持 15 个 attempt 全部未启动；没有进行 Embedding 检查，也没有用不健康 Provider 消耗另一批样本。
+v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。本收口 Goal 只执行一轮最小真实预检：Candidate 六协议 `0/6`，6 次物理请求均为 `ai_provider_unavailable`，无格式重试；Embedding 对 2 条固定公开文本发出 1 次物理请求，返回 `embedding_provider_error / APIConnectionError`。两者均无 Provider request ID 和 Token 用量。按预先规则不再轮询、不启动正式矩阵；ledger 已将 15 个 planned attempt 全部终态化为 `not_started / provider_unavailable_preflight_candidate_and_embedding`。v5 canonical 为 `planned=15`、`attempted=0`、`infraValid=0`、`gameplayPass=0`、coverage `0.0`、`complete=false`；这是外部 Provider 不可用结论，不是 strategy v3 质量通过或失败的样本证据。
 
 Canonical 证据：
 
@@ -71,6 +71,8 @@ Canonical 证据：
 - [v2 恢复批次中断全分母 JSON](simulation-results/final-preregistered-recovery-v2-interrupted-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `891cf03ecdc0a7490d047c29e2235728b4324a21701ed950ede010884b50a6d1`；
 - [v3 第二恢复批次中断全分母 JSON](simulation-results/final-preregistered-recovery-v3-interrupted-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `9e2a7e07eeb7e49340631b06d12467d7c7d7d68357f05d5316f8be086b68e424`；
 - [v4 strategy v2 中断全分母 JSON](simulation-results/final-preregistered-strategy-v2-v4-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `00da5ba495be1e70885f6ee2a7b50ff2cf5d4761ba0d42a019811b1825e180c2`；
+- [v5 Provider 不可用全分母 JSON](simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `09573d47a05e35bca83f0d7643028c3bf16c9dcb535d2bc10b7d6c095b0aa677`；
+- [v5 真实健康检查 JSON](simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/provider_health_check.json)，SHA-256 `3fd207de11fdd20a48bd025be8d3ca5870079e0d88341b16e14f42ce1c3b576e`；
 - 所有汇总均从各自 manifest 枚举完整 15 项，保留 completed、runner_failed 与 not_started，结果都明确为 `complete=false`。
 
 ## 5. CI 与真实 full-stack E2E
@@ -85,6 +87,8 @@ Canonical 证据：
 
 v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Token 与费用无法可靠追溯，故不估算。v2 首个完整检查点记录文本 Provider 物理请求 `214` 次、Prompt `669,411` Token、Completion `208,907` Token，Embedding `17` 次 / `5,127` Token，估算总费用 `1.157301 CNY`。v3 的 10 个完整检查点合计文本物理请求 `2,427` 次、Prompt `6,805,554` Token、Completion `2,145,259` Token，Embedding `195` 次 / `53,670` Token，估算总费用 `11.843834 CNY`。v4 的 12 个完整检查点合计文本物理请求 `2,857` 次、Prompt `8,906,811` Token、Completion `2,837,043` Token，Embedding `249` 次 / `67,587` Token，估算总费用 `15.604751 CNY`；被中止 attempt 没有完整用量，因此不伪造。资源控制按用户最新授权采用“任意滚动 5 小时不超过 2000 AFP 积分”，不设金额硬上限；调用保持单批串行，未收到 AFP 限额告警。
 
+v5 收口健康检查发出 Candidate `6` 次、Embedding `1` 次物理请求，成功数均为 `0`；Provider 没有返回 Token 用量，因此估算费用记为“不可得”而不是伪造为零。正式 v5 矩阵为 `0` 次模型调用、`0` Token；资源使用未接近滚动 5 小时 2000 AFP 积分上限。
+
 ## 7. 总门禁
 
 | 门禁 | 结果 | 证据 |
@@ -98,11 +102,11 @@ v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Toke
 | frontend lint/typecheck/Vitest/build | 通过 | Vitest `23 passed`；build 仅有 chunk-size warning |
 | 现有 Playwright | 通过 | `11 passed` |
 | full-stack Playwright | 通过 | `1 passed`，真实 REST/WS/PostgreSQL |
-| CI 无真实 Ark Key/网络 | 通过（本地门禁 + 配置审计） | workflow 显式空 Key + invalid base URL；模型仅测试 app DI；pytest/Ruff/mypy 版本已固定；四个 job 可解析 |
-| manifest 15/15 全分母完整性 | 未通过 | v1 `15/11/10`，v2 `15/2/1`，v3 `15/11/10`，v4 `15/13/12`（planned/attempted/infraValid）；均 `complete=false`，失败与 not_started 未替换；v5 已预注册但未启动 |
-| README 与 canonical 指标一致 | 通过（包括 v4 失败状态） | README 不把七日门禁或尚未启动的 v5 写成完成 |
+| CI 无真实 Ark Key/网络 | 通过（本地门禁 + 配置审计） | workflow 仅显式置空 Key，ArkClient 在缺 Key 时拒绝发请求；不覆盖默认 model/base URL，避免污染默认值单测；模型仅测试 app DI；pytest/Ruff/mypy 版本已固定；四个 job 可解析 |
+| manifest 15/15 全分母完整性 | 结论已固化（统计门禁未通过） | v5 canonical 包含全部 15 个预注册项，均为终态 `not_started`；`15/0/0/0`（planned/attempted/infraValid/gameplayPass），`complete=false`，没有替换 seed 或遗漏失败项 |
+| README 与 canonical 指标一致 | 通过 | README 与 v5 canonical 均报告 `15/0/0/0`，不把 Provider 不可用写成 strategy v3 通过或质量失败 |
 | `git diff --check`、凭据和绝对路径扫描 | 通过，最终提交前再核对 | canonical 无绝对路径或真实凭据；README 只含显式密码占位符 |
-| 工作树干净 | 通过（当前阶段提交后复核） | 已提交全部可验证进度；最终七日门禁未通过，因此不生成冒充完成的最终提交 |
+| 工作树干净 | 通过（最终提交后复核） | 所有可审计证据由最终收口提交统一纳入，不将“交付完成”写成“七日统计门禁通过” |
 
 ## 8. 自动化不能替代的证据
 

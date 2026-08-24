@@ -12,8 +12,6 @@ env:
   # Ordinary CI must never have a real provider credential.  The full-stack
   # job wires its deterministic test ports in test/backend/fullstack_app.py.
   ARK_API_KEY: ''
-  ARK_MODEL: ci-no-network
-  ARK_BASE_URL: https://invalid.invalid/no-network
 
 jobs:
   backend:

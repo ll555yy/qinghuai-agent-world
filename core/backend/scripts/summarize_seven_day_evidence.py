@@ -133,10 +133,12 @@ def main() -> int:
     json_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
     markdown_path.write_text(
         gameplay_evidence_markdown(summary),
         encoding="utf-8",
+        newline="\n",
     )
     print(f"JSON evidence: {json_path}")
     print(f"Markdown evidence: {markdown_path}")

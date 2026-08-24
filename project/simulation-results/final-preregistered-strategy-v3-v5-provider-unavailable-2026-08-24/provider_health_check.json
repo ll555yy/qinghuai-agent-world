@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1.0",
+  "performedAt": "2026-08-24T21:37:12.0770125+08:00",
+  "provider": "volcengine_ark",
+  "candidate": {
+    "configuredModel": "doubao-seed-2.0-lite",
+    "protocolChecksPlanned": 6,
+    "physicalRequests": 6,
+    "successfulChecks": 0,
+    "formatRetries": 0,
+    "success": false,
+    "errorCode": "ai_provider_unavailable",
+    "providerRequestIdsPresent": false,
+    "tokenUsage": null
+  },
+  "embedding": {
+    "configuredModel": "doubao-embedding-vision",
+    "inputCount": 2,
+    "physicalRequests": 1,
+    "successfulRequests": 0,
+    "success": false,
+    "errorCode": "embedding_provider_error",
+    "exceptionType": "APIConnectionError",
+    "providerRequestIdPresent": false,
+    "tokenUsage": null
+  },
+  "batchDecision": {
+    "plannedAttempts": 15,
+    "attempted": 0,
+    "status": "not_started",
+    "reason": "provider_unavailable_preflight_candidate_and_embedding",
+    "additionalPollingPerformed": false
+  },
+  "cost": {
+    "estimatedCostCny": null,
+    "basis": "provider returned no token usage; cost cannot be estimated"
+  }
+}
