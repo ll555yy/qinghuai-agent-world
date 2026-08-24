@@ -1,7 +1,7 @@
 # Agent 语义整改 Before / After
 
 - 历史 before：`project/evaluation-results/live-baseline-2026-08-23`
-- canonical after：`project/evaluation-results/live-remediation-2026-08-23`
+- canonical after：`project/evaluation-results/live-final-canonical-2026-08-23`
 - Candidate：`doubao-seed-2.0-lite`，未更换
 - Case：47 个原 ID 全部保留；5 个有证据的歧义 Case 升到 v2
 

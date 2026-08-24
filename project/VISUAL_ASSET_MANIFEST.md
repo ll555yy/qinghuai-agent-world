@@ -1,19 +1,18 @@
 # 视觉资产来源清单
 
 > 建立日期：2026-08-22
-> 当前状态：没有把任何第三方代码或美术素材导入项目；阶段三的 5 张原创 AI 样稿已确认，另有 7 张原创 AI 正式资产接入生产代码。
+> 当前状态：没有把任何第三方代码或美术素材导入项目；7 张原创 AI 正式资产已接入生产代码。
 > 管理原则：只有原创、AI 生成、CC0，或明确允许项目所需使用方式的资产，才可以进入正式资源目录。
 
 ## 1. 当前仓库视觉资产状态
 
 截至 2026-08-22 正式实施完成时：
 
-- `public/assets/actors` 已包含五名 NPC 三态 sprite sheet 和玩家中性头像，`public/assets/scenes` 已包含正式书店背景；`public/assets/samples` 继续保存确认依据，不参与生产映射；
+- `public/assets/actors` 已包含五名 NPC 三态 sprite sheet 和玩家中性头像，`public/assets/scenes` 已包含正式书店背景；
 - 聊天气泡、聊天圈、时间覆盖层和加载失败占位由项目内 TypeScript/Phaser 几何图形与 CSS 原创绘制；
-- 本轮没有下载、复制、改编或提交任何外部图片、字体、音频、地图、图块、图标或示例代码；样稿由内置图像生成工具从文字描述生成；
-- `VISUAL_REFERENCE_RESEARCH.md` 中列出的项目均为研究参考，不代表获准使用其全部内容。
+- 本轮没有下载、复制、改编或提交任何外部图片、字体、音频、地图、图块、图标或示例代码；正式资产由内置图像生成工具从文字描述生成。
 
-因此当前没有需要随发行物附带的新增第三方视觉资产署名。AI 样稿与正式资产的生成记录见第 4、5 节。
+因此当前没有需要随发行物附带的新增第三方视觉资产署名。正式资产的生成记录见第 4 节。
 
 ## 2. 已核验但尚未导入的候选资产
 
@@ -36,21 +35,7 @@
 | Rundale 的代码、名称、logo 与第三方地图内容 | 代码 GPL-3.0-only，名称/logo 不在 GPL 授权内，地图另有 ODbL/CC-BY 等要求；本项目不复制 |
 | Dialogic 的内置 UI、图标或示例内容 | 本项目技术栈不同且没有必要复制；只参考表现模块化原则 |
 
-## 4. AI 样稿生成记录
-
-生成工具统一为 **Codex 内置图像生成工具**；工具未向调用方暴露更具体的底层模型名称。本次成功保存的五张图片均没有输入参考图，只使用文字提示词；未使用在世艺术家姓名、商业游戏精确风格或外部受版权保护图片。
-
-| Asset ID | 项目内文件 | 用途 | 提示词摘要 | 输入参考图 | 日期 | 尺寸 | SHA-256 | 状态 |
-|---|---|---|---|---|---|---|---|---|
-| `sample_lin_huilan_states_v1` | `core/frontend/public/assets/samples/lin-huilan-states-sample.png` | 林慧兰 neutral / speaking / tense 三态合图 | 六十余岁退休语文教师、银灰短卷发、墨绿与米白、温暖旧纸绘本、同一身份和裁切、克制表情、无文字和秘密暗示 | 无 | 2026-08-22 | 1717×916 | `e225607b2a756adfc201131358f4f14a5a25671c6af2c013b26c9e79d2203f23` | `candidate` |
-| `sample_zhou_shenzhi_states_v1` | `core/frontend/public/assets/samples/zhou-shenzhi-states-sample.png` | 周慎之 neutral / speaking / tense 三态合图 | 四十余岁旧书店老板与修书人、深灰蓝与木色、沉静克制、同一身份和裁切、无古籍秘密暗示 | 无 | 2026-08-22 | 1672×941 | `6bf1889c7738d0d6c5111c0154c3f8d7953bf1ba88bc58735f60e9985e40cb8d` | `candidate` |
-| `sample_bookstore_composition_v1` | `core/frontend/public/assets/samples/bookstore-composition-sample.png` | 慎之旧书店整体构图 | 俯视三分之二视角、入口、书架走道、修书台、中央长桌、窗边、文社位、健康角预留、西北受潮角、无人物和文字 | 无 | 2026-08-22 | 1672×941 | `e551139dc4b5fe5bf54b874681401cf62d130c641e64a5c95110a90371f70f5e` | `candidate` |
-| `sample_speech_bubbles_v1` | `core/frontend/public/assets/samples/speech-bubbles-sample.png` | 普通台词与拒绝气泡样式板 | 旧纸白正常气泡、低饱和朱砂拒绝气泡、抽象文字条、适合代码渲染中文、克制纸纹与阴影 | 无 | 2026-08-22 | 1536×1024 | `d0d0ccf31fa124cbc948aaae5a770bc4198237aba0e9a880e9568eea63d92b99` | `candidate` |
-| `sample_combined_ui_v1` | `core/frontend/public/assets/samples/combined-ui-sample.png` | React + Phaser 组合效果 | 1440×900 意图的桌面游戏 UI、左侧俯视书店和六人、聊天圈与气泡、右侧人物/聊天面板、旧纸和木色统一语言 | 无（一次带本地样稿参考的编辑因网络错误失败，失败结果未保存；随后以同一文字规范独立生成） | 2026-08-22 | 1586×992 | `a316dfe270cb73bdaffaa03b7fba0fbf89e703925fa15e5367a20dc6c90e5f2a` | `candidate` |
-
-初步人工检查：五张图片无 logo、无水印；两名人物三态身份一致且没有明显换装；场景包含主要分区；气泡没有可读文本；组合界面只出现要求的简单时间文字，没有 Goal、关系、Memory 或秘密。样稿仅用于确认视觉方向，不会直接成为正式切片资产。
-
-## 5. 后续正式资产登记表
+## 4. 正式资产登记表
 
 任何文件进入 `core/frontend/public/assets` 时，必须先在下表新增记录。不能用“网络素材”“AI 生成”“免费素材”等模糊描述。
 
@@ -71,7 +56,7 @@
 - `rejected`：许可、质量或风格不合适；
 - `replaced`：已由新资产替换，保留历史记录。
 
-## 6. AI 生成资产的补充记录
+## 5. AI 生成资产的补充记录
 
 AI 生成的头像或场景也必须登记，并额外保存：
 

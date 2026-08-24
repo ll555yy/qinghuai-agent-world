@@ -16,7 +16,7 @@
 5. `rules_002_daily_wait_shape`、`rules_007_time_boundary` 和 `rules_008_departed_npc` 保留了真实 Candidate 行为问题：无候选时仍 seek_chat、17:00 仍寻求新聊天、departed 后仍 accept。
 6. 历史 canonical 报告为了隐私删除了完整 observation，并截断 candidateSummary。因此历史输出只能生成明确标注为 `synthetic reconstruction` 的脱敏回归样本，不能伪装成完整原始 Trace。
 
-完整逐 observation 归属见 `AGENT_SEMANTIC_REMEDIATION_TRIAGE.md`。
+逐 observation 的历史分析已收敛到下述问题簇与最终回归用例中。
 
 ## 2. 四层评测模型
 
