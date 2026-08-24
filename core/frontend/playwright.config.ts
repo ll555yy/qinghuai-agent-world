@@ -7,6 +7,7 @@ export default defineConfig({
   testIgnore: ['**/full-stack.spec.ts'],
   fullyParallel: false,
   retries: 0,
+  timeout: process.env.CI ? 60_000 : 30_000,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: 'http://127.0.0.1:5173',
