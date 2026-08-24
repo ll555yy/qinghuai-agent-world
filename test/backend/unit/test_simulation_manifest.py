@@ -17,7 +17,7 @@ from core.backend.app.simulation.manifest import (
     planned_attempts,
     validate_manifest,
 )
-from core.backend.app.simulation.runner import ROUTE_PLAYER_STEPS
+from core.backend.app.simulation.runner import ROUTE_PLAYER_STEPS, player_strategy_steps
 
 RECOVERY_MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
@@ -36,6 +36,15 @@ RECOVERY_V3_MANIFEST_PATH = (
     / "simulation"
     / "manifests"
     / "final_agent_validation_recovery_v3.json"
+)
+STRATEGY_V2_MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "core"
+    / "backend"
+    / "app"
+    / "simulation"
+    / "manifests"
+    / "final_agent_validation_strategy_v2_v4.json"
 )
 
 
@@ -112,6 +121,46 @@ def test_recovery_v3_manifest_is_distinct_preregistered_full_matrix() -> None:
     for route in ("observer", "pro_lin", "pro_zhao"):
         assert manifest["routes"][route]["seeds"] == list(range(20260850, 20260855))
         assert manifest["routes"][route]["plannedRuns"] == 5
+
+
+def test_strategy_v2_manifest_freezes_new_holdout_without_relaxing_gates() -> None:
+    manifest, digest = load_manifest(STRATEGY_V2_MANIFEST_PATH)
+    prior_manifests = [
+        load_manifest(path)[0]
+        for path in (DEFAULT_MANIFEST_PATH, RECOVERY_MANIFEST_PATH, RECOVERY_V3_MANIFEST_PATH)
+    ]
+
+    assert manifest["experimentId"] == "final-agent-validation-strategy-v2-20260824"
+    assert manifest["preregistrationBaseCommit"] == "c24eafd"
+    assert len(planned_attempts(manifest)) == 15
+    assert digest == "ebc8d913f2f5f74366ce26f865451b796d1e98e53b07bc7fc076626445a4bbd5"
+    attempt_ids = {item["attemptId"] for item in planned_attempts(manifest)}
+    for prior in prior_manifests:
+        assert attempt_ids.isdisjoint(
+            item["attemptId"] for item in planned_attempts(prior)
+        )
+    assert manifest["routes"]["pro_lin"]["strategyId"] == "strategy.pro_lin.v2"
+    assert manifest["acceptance"]["pro_lin"] == {
+        "minimumGameplayPasses": 4,
+        "minimumPlayerCompletedRuns": 2,
+    }
+    for route in ("observer", "pro_lin", "pro_zhao"):
+        assert manifest["routes"][route]["seeds"] == list(range(20260855, 20260860))
+        assert manifest["routes"][route]["plannedRuns"] == 5
+
+    selected = {
+        route: [asdict(step) for step in player_strategy_steps(route, config["strategyId"])]
+        for route, config in manifest["routes"].items()
+    }
+    assert manifest["artifacts"]["promptPolicy"]["sha256"] == _canonical_json_digest(
+        selected
+    )
+    pro_lin_strategy = next(
+        item for item in manifest["strategies"] if item["strategyId"] == "strategy.pro_lin.v2"
+    )
+    assert pro_lin_strategy["sha256"] == _canonical_json_digest(
+        [asdict(step) for step in player_strategy_steps("pro_lin", "strategy.pro_lin.v2")]
+    )
 
 
 def test_manifest_artifact_and_strategy_digests_match_frozen_sources() -> None:
