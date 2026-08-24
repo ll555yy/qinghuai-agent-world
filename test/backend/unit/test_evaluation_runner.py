@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from core.backend.app.ai.models import TextGenerationResult, TokenUsage
 from core.backend.app.evaluation.judge import FakeJudge as StrictFakeJudge
 from core.backend.app.evaluation.models import EvaluationCase

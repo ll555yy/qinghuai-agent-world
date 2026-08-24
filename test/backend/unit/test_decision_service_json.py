@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from core.backend.app.ai.decision_service import PROTOCOL_RULES, extract_json_object
 
 

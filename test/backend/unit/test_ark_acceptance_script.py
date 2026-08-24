@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Any
 
 import pytest
+
 from core.backend.app.ai.errors import AIError, AIErrorCode
 from core.backend.app.ai.models import TextGenerationResult, TokenUsage
 from core.backend.scripts import check_ark_connection as checker

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from core.backend.app.simulation.evidence import (
     gameplay_evidence_markdown,
     load_batch_reports,

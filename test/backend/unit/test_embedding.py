@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
+
 from core.backend.app.ai.ark_embedding import (
     DEFAULT_ARK_EMBEDDING_BASE_URL,
     ArkEmbeddingClient,

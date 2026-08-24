@@ -17,6 +17,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
 from core.backend.app.ai.models import TextGenerationRequest, TextGenerationResult
 from core.backend.app.api.router import router as api_router
 from core.backend.app.db.bootstrap import sync_scenario
@@ -28,8 +31,6 @@ from core.backend.app.persistence.memory_retriever import DatabaseMemoryRetrieve
 from core.backend.app.persistence.run_repository import RunRepository
 from core.backend.app.persistence.sqlalchemy_repository import SQLAlchemyRunRepository
 from core.backend.app.scenario.loader import ScenarioLoader, ScenarioValidationError
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 
 # The production entrypoint applies the same policy. This test-only app is
 # imported directly by Uvicorn, so keep psycopg's Windows event-loop contract

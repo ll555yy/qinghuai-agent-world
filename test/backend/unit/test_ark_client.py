@@ -5,6 +5,9 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from openai import AuthenticationError, RateLimitError
+from pydantic import ValidationError
+
 from core.backend.app.ai.ark_client import (
     DEFAULT_ARK_BASE_URL,
     DEFAULT_ARK_MODEL,
@@ -13,8 +16,6 @@ from core.backend.app.ai.ark_client import (
 )
 from core.backend.app.ai.errors import AIError, AIErrorCode
 from core.backend.app.ai.models import ChatMessage, TextGenerationRequest
-from openai import AuthenticationError, RateLimitError
-from pydantic import ValidationError
 
 
 @dataclass

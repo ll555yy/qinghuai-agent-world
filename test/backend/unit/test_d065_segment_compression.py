@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.clock import WorldTime
 from core.backend.app.orchestration.run_service import (

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import delete, select, update
+
 from core.backend.app.ai.embedding import MEMORY_EMBEDDING_DIMENSIONS
 from core.backend.app.ai.protocols import MemoryQuery
 from core.backend.app.db.bootstrap import sync_scenario
@@ -17,7 +19,6 @@ from core.backend.app.orchestration.run_service import RunService
 from core.backend.app.persistence.memory_retriever import DatabaseMemoryRetriever
 from core.backend.app.persistence.sqlalchemy_repository import SQLAlchemyRunRepository
 from core.backend.app.scenario.loader import ScenarioLoader
-from sqlalchemy import delete, select, update
 
 
 def _postgres_case() -> EvaluationCase:

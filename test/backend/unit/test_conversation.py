@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from core.backend.app.domain.conversation import Conversation
 from core.backend.app.domain.errors import (
     ActorAlreadyInConversationError,

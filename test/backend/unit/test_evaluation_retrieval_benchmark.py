@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
 from core.backend.app.ai.protocols import MemoryQuery
 from core.backend.app.evaluation.annotation import (
     build_annotation_package,
