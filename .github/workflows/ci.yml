@@ -28,7 +28,7 @@ jobs:
         working-directory: core/backend
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . pytest==9.1.1 ruff==0.16.3 mypy==1.20.2
+          python -m pip install -e . pytest==9.1.1 ruff==0.16.3 mypy==1.20.2 types-PyYAML==6.0.12.20260815
       - name: Scan tracked files for credentials
         shell: bash
         run: |
@@ -100,7 +100,7 @@ jobs:
         working-directory: core/backend
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . pytest==9.1.1 ruff==0.16.3 mypy==1.20.2
+          python -m pip install -e . pytest==9.1.1 ruff==0.16.3 mypy==1.20.2 types-PyYAML==6.0.12.20260815
       - name: Upgrade empty database and check migration drift
         working-directory: core/backend
         env:
