@@ -32,13 +32,15 @@ Qinghuai Agent World 是一个可持续推进的七日互动世界。玩家在�
 | 🔐 私有信息边界 | Owner-scoped 查询、公开投影白名单、证据 ID 校验与 Prompt 注入回归用例 |
 | ⚖️ 权威世界规则 | FastAPI `RunService` / `WorldEngine` 是世界状态唯一写入口，模型不能直接改结局 |
 | 💾 可恢复持久化 | PostgreSQL 17 + pgvector、Alembic 空库迁移、Run 重载与向量幂等回填 |
-| 🎮 可玩前端 | React 19 + Phaser 3 场景、Zustand 状态、REST / WebSocket 实时事件 |
+| 🎮 可玩前端 | React 19 + Phaser 3 双房间俯视场景、四方向寻路、Zustand 状态与全屏关系地图 |
 | 📊 Agent Eval | 47 Case 语义集、确定性规则、Judge 校准、人工复核边界和脱敏报告 |
 | ✅ 工程门禁 | Pytest、Ruff、Mypy、Vitest、Playwright、真实 PostgreSQL 全栈黄金链路 |
 
 ## 💻 运行界面
 
-世界画面展示公开时间、角色位置、聊天圈与台词；侧栏负责人物卡片、邀请、会话和玩家输入。前端只消费公开快照，不接触 NPC 私有 Prompt、Goal 或 Memory 正文。
+世界画面展示公开时间、两间连续房间、像素人物路径、聊天圈与台词；普通侧栏负责邀请和会话，全屏关系地图展示玩家亲历的公开互动。点击图谱人物可查看立绘、人设、当前状态、公开关系和互动经历。前端只消费公开快照，不接触 NPC 私有 Prompt、Goal、Memory 正文或隐藏关系数值。
+
+场景背景仍是原创连续图片，TypeScript/Phaser 额外提供墙体与家具碰撞、四方向 A* 导航、动态人物避障、社交站位搜索和基于脚点的前景遮挡。逻辑坐标始终由后端快照决定，中间行走帧不会回写权威世界状态。
 
 ![1280×720 世界界面](project/visual-qa/world-1280x720.png)
 
@@ -128,7 +130,7 @@ ARK_EMBEDDING_MODEL=doubao-embedding-vision
 | PostgreSQL | `docker compose ps` | `database` 为 healthy |
 | 数据库迁移 | `cd core/backend && python -m alembic check` | `No new upgrade operations detected` |
 | 后端 | 打开 `/api/health` | `scenarioLoaded: true`、`storageHealthy: true` |
-| 前端 | 打开 `http://127.0.0.1:5173` | 可创建世界并看到五名 NPC |
+| 前端 | 打开 `http://127.0.0.1:5173` | 可创建世界、看到五名像素 NPC，并打开全屏关系地图 |
 | 密钥安全 | `git status --short` | `.env` 不在待提交文件中 |
 
 ## 🏗️ 项目架构
@@ -291,6 +293,8 @@ python -m pytest -c core/backend/pyproject.toml -q
 - [系统设计](project/SYSTEM_DESIGN.md)
 - [LangGraph NPC Agent 设计](project/NPC_AGENT_LANGGRAPH_DESIGN.md)
 - [PostgreSQL + pgvector 设计](project/DATABASE_BACKEND_DESIGN.md)
+- [前端场景与交互设计](project/FRONTEND_DESIGN.md)
+- [全屏人物关系图谱设计](project/RELATIONSHIP_GRAPH_VISUALIZATION_DESIGN.md)
 - [Agent 语义整改 Before / After](project/AGENT_SEMANTIC_REMEDIATION_BEFORE_AFTER.md)
 - [47 Case 最终语义报告](project/evaluation-results/live-final-canonical-2026-08-23/agent_semantic_evaluation.md)
 - [Judge v2 兼容性负向结果](project/evaluation-results/judge-v2-compatibility-provider-unavailable-2026-08-25/judge_v2_compatibility.md)

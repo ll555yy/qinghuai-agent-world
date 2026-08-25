@@ -1,14 +1,16 @@
 # 视觉资产来源清单
 
 > 建立日期：2026-08-22
-> 当前状态：没有把任何第三方代码或美术素材导入项目；7 张原创 AI 正式资产已接入生产代码。
+> 当前状态：没有把任何第三方代码或美术素材导入项目；14 张原创 AI 正式运行资产已接入生产代码，另保留 9 张像素化源概念图用于追溯。
 > 管理原则：只有原创、AI 生成、CC0，或明确允许项目所需使用方式的资产，才可以进入正式资源目录。
 
 ## 1. 当前仓库视觉资产状态
 
-截至 2026-08-22 正式实施完成时：
+截至 2026-08-25 本轮实施完成时：
 
-- `public/assets/actors` 已包含五名 NPC 三态 sprite sheet 和玩家中性头像，`public/assets/scenes` 已包含正式书店背景；
+- `public/assets/actors` 已包含五名 NPC 三态立绘、玩家中性立绘，以及玩家和五名 NPC 的 4×4 像素 spritesheet；
+- `public/assets/scenes` 同时保留旧单房间背景和当前生产使用的前厅/后书房连续俯视背景；
+- `project/visual-concepts` 保存像素人物和双房间场景的生成原件，运行时版本只做缩放、透明化和 spritesheet 网格规范化；
 - 聊天气泡、聊天圈、时间覆盖层和加载失败占位由项目内 TypeScript/Phaser 几何图形与 CSS 原创绘制；
 - 本轮没有下载、复制、改编或提交任何外部图片、字体、音频、地图、图块、图标或示例代码；正式资产由内置图像生成工具从文字描述生成。
 
@@ -48,6 +50,13 @@
 | `actor_zhou_shenzhi_states_v1` | `core/frontend/public/assets/actors/zhou-shenzhi-states.jpg` | 周慎之三帧 | Codex 内置图像生成工具 | 四十三岁旧书店老板、深色衣装和修书围裙、沉静/简短/划界 | 项目原创 AI 生成 | 2026-08-22 | `5206a3c188c1dc8619e545f425cc01521836b661a96c3ff778d3f721e073707a` | PNG 原件以质量 88 编码为 JPEG；运行时按帧与圆形 mask 显示 | 不需要 | `approved` |
 | `actor_player_neutral_v1` | `core/frontend/public/assets/actors/player-neutral.png` | 玩家低信息量中性头像 | Codex 内置图像生成工具 | 年轻中国成年人、中性呈现、无职业/性格/经历暗示 | 项目原创 AI 生成 | 2026-08-22 | `6ea8b30bd5a60f04be6f752ff66133f181a8182cf536702a06d21c59f77a7d86` | 保留 PNG 以避免 Phaser 在部分 Chromium 会话中拒绝处理该 JPEG；运行时圆形 mask 显示 | 不需要 | `approved` |
 | `scene_shenzhi_bookstore_v1` | `core/frontend/public/assets/scenes/shenzhi-bookstore-background.jpg` | 正式书店俯视背景 | Codex 内置图像生成工具 | 青槐巷旧书店、入口、书架、修书台、中央长桌、窗边和西北受潮角 | 项目原创 AI 生成 | 2026-08-22 | `61e9a1e4296c38e402ce3ae376121f96d4d2633119208e36fd30ed141c142c05` | PNG 原件以质量 88 编码为 JPEG；Phaser cover 缩放到 880×534 | 不需要 | `approved` |
+| `actor_player_pixel_v1` | `core/frontend/public/assets/actors/pixel/player-pixel-runtime-v1.png` | 玩家世界像素人物 4×4 spritesheet | Codex 内置图像生成工具 | `project/visual-concepts/player-pixel-spritesheet-draft-v1.png` | 项目原创 AI 生成 | 2026-08-25 | `6bfc98d30dbe5af0259a52d264e61f74692c1eb5c4858ce24cdd3932c73831e7` | 缩放为 256×384，规范为 down/up/left/right × idle/walk/pass/walk 网格并保留透明背景 | 不需要 | `approved` |
+| `actor_lin_huilan_pixel_v1` | `core/frontend/public/assets/actors/pixel/lin-huilan-pixel-runtime-v1.png` | 林慧兰世界像素人物 4×4 spritesheet | Codex 内置图像生成工具 | `project/visual-concepts/lin-huilan-pixel-spritesheet-v1.png` | 项目原创 AI 生成 | 2026-08-25 | `1a795535ba821ac1f7c2c83112a3a3b010f2f091a203cd305f54b937b9e18ef2` | 规范为 360×360 四向动作网格；记录首帧非透明边界供图谱居中裁切 | 不需要 | `approved` |
+| `actor_shen_xingyao_pixel_v1` | `core/frontend/public/assets/actors/pixel/shen-xingyao-pixel-runtime-v1.png` | 沈星遥世界像素人物 4×4 spritesheet | Codex 内置图像生成工具 | `project/visual-concepts/shen-xingyao-pixel-spritesheet-draft-v1.png` | 项目原创 AI 生成 | 2026-08-25 | `31c8b5630ff2110ecae636575f4465ec1ff7b6afaa0ae4fa3ebbf363cb47d57b` | 缩放为 256×384 四向动作网格并保留透明背景 | 不需要 | `approved` |
+| `actor_zhao_lei_pixel_v1` | `core/frontend/public/assets/actors/pixel/zhao-lei-pixel-runtime-v1.png` | 赵磊世界像素人物 4×4 spritesheet | Codex 内置图像生成工具 | `project/visual-concepts/zhao-lei-pixel-spritesheet-draft-v1.png` | 项目原创 AI 生成 | 2026-08-25 | `58b839f6bb63caec3c155d1aee3f18098ce77b36418422926c9f00f9dfa31498` | 缩放为 256×384 四向动作网格并保留透明背景 | 不需要 | `approved` |
+| `actor_chen_yue_pixel_v1` | `core/frontend/public/assets/actors/pixel/chen-yue-pixel-runtime-v1.png` | 陈月世界像素人物 4×4 spritesheet | Codex 内置图像生成工具 | `project/visual-concepts/chen-yue-pixel-spritesheet-draft-v1.png` | 项目原创 AI 生成 | 2026-08-25 | `29bdd35a2d3d53a6a73e258a725d06b863f25a2bfc5b0ac45ccfe3c8a21b5553` | 缩放为 256×384 四向动作网格并保留透明背景 | 不需要 | `approved` |
+| `actor_zhou_shenzhi_pixel_v1` | `core/frontend/public/assets/actors/pixel/zhou-shenzhi-pixel-runtime-v1.png` | 周慎之世界像素人物 4×4 spritesheet | Codex 内置图像生成工具 | `project/visual-concepts/zhou-shenzhi-pixel-spritesheet-v1.png` | 项目原创 AI 生成 | 2026-08-25 | `b200a9c00f3419942d35c1c468c2495079609c58f7c52fa3bcb825ef7ecea51a` | 规范为 360×360 四向动作网格；记录首帧非透明边界供图谱居中裁切 | 不需要 | `approved` |
+| `scene_shenzhi_bookstore_two_room_v1` | `core/frontend/public/assets/scenes/shenzhi-bookstore-two-room.png` | 前厅与后书房连续俯视背景 | Codex 内置图像生成工具 | `project/visual-concepts/shenzhi-bookstore-two-room-layout-v1.png` | 项目原创 AI 生成 | 2026-08-25 | `61f3405d30adaa345350d8113cd51709c60ee73db68bac1fbaeb41af101d9e50` | 保留 PNG；Phaser cover 缩放到 880×534，碰撞、寻路和前景遮挡由 TypeScript 图层提供 | 不需要 | `approved` |
 
 审核状态只允许：
 
