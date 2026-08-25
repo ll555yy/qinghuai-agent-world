@@ -35,7 +35,7 @@ export function WorldCanvas({ snapshot, onActorContext, onConversationClick, sce
       height: 534,
       backgroundColor: '#d8c5a5',
       scene,
-      render: { antialias: true, pixelArt: false },
+      render: { antialias: false, pixelArt: true, roundPixels: true },
       scale: {
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH,

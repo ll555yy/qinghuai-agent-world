@@ -137,6 +137,7 @@ export default function WorldScreen() {
   const pendingPlayerJoins = Object.values(joinRequests).filter(
     (item) => item.status === 'pending' && item.pendingPlayerDecision,
   )
+  const showSidePanel = panel !== 'none' && panel !== 'relationships'
 
   return (
     <main className="world-screen" onClick={() => contextMenu && closeContextMenu()}>
@@ -161,7 +162,7 @@ export default function WorldScreen() {
         <div className={`connection-dot ${socketStatus}`}>{socketStatus === 'connected' ? '已连接' : '连接中'}</div>
       </header>
 
-      <section className={`world-layout ${panel !== 'none' ? 'with-panel' : ''}`}>
+      <section className={`world-layout ${showSidePanel ? 'with-panel' : ''}`}>
         <div className="scene-column">
           <Suspense fallback={<div className="world-canvas scene-loading">正在布置慎之旧书店……</div>}>
             <WorldCanvas
@@ -180,19 +181,22 @@ export default function WorldScreen() {
           </div>
           <div className="scene-help">右键 NPC 了解信息或邀请聊天 · 点击聊天圈查看或申请加入</div>
         </div>
-        {panel !== 'none' ? (
+        {showSidePanel ? (
           <aside className="side-panel" onClick={(event) => event.stopPropagation()}>
             {panel === 'actor' ? <ActorPanel /> : null}
             {panel === 'chat' ? <ChatPanel /> : null}
             {panel === 'events' ? <EventsPanel /> : null}
-            {panel === 'relationships' ? (
-              <Suspense fallback={<div className="panel-loading">正在展开人物关系……</div>}>
-                <RelationshipGraphPanel />
-              </Suspense>
-            ) : null}
           </aside>
         ) : null}
       </section>
+
+      {panel === 'relationships' ? (
+        <section className="relationship-map-overlay" onClick={(event) => event.stopPropagation()}>
+          <Suspense fallback={<div className="panel-loading">正在展开人物关系地图……</div>}>
+            <RelationshipGraphPanel />
+          </Suspense>
+        </section>
+      ) : null}
 
       {contextMenu && menuActor ? (
         <div
