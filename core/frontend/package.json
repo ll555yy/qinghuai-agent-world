@@ -6,7 +6,8 @@
   "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && pnpm run check:bundle-size",
+    "check:bundle-size": "node scripts/check-bundle-size.mjs",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
@@ -18,6 +19,7 @@
     "phaser": "^3.90.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-force-graph-2d": "^1.29.1",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

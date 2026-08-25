@@ -260,9 +260,14 @@ button:focus-visible {
 }
 
 .secondary-button {
-  margin-left: auto;
   color: #fffaf0;
   background: rgb(255 255 255 / 10%);
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 0.55rem;
+  margin-left: auto;
 }
 
 .secondary-button span {
@@ -323,6 +328,15 @@ button:focus-visible {
 
 .world-canvas canvas {
   display: block;
+}
+
+.scene-loading {
+  display: grid;
+  place-items: center;
+  color: #684832;
+  background:
+    radial-gradient(circle at center, rgb(255 250 235 / 72%), transparent 55%),
+    #d8c5a5;
 }
 
 .scene-help {
@@ -636,6 +650,191 @@ button:focus-visible {
 .empty-state {
   color: #8a7b68;
   text-align: center;
+}
+
+.panel-loading {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #817261;
+}
+
+.relationship-panel {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.relationship-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+  padding: 0.75rem 0 0.55rem;
+  color: #6b5d50;
+  font-size: 0.7rem;
+}
+
+.relationship-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.relationship-legend i {
+  width: 9px;
+  height: 9px;
+  display: inline-block;
+  border-radius: 50%;
+  background: #667a5a;
+}
+
+.relationship-legend .player-node { background: #a86f4b; }
+
+.relationship-legend .active-link {
+  width: 16px;
+  height: 3px;
+  border-radius: 3px;
+  background: #c8793b;
+}
+
+.relationship-canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: clamp(220px, 45vh, 360px);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgb(104 72 50 / 15%);
+  border-radius: 14px;
+  background: #f3ebd8;
+}
+
+.relationship-canvas:focus-visible {
+  outline: 3px solid #c8793b;
+  outline-offset: 3px;
+}
+
+.relationship-canvas-render {
+  width: 100%;
+  height: 100%;
+}
+
+.relationship-canvas canvas {
+  display: block;
+  max-width: 100%;
+}
+
+.relationship-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.relationship-accessibility {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.relationship-accessibility:focus-within {
+  position: relative;
+  width: auto;
+  height: auto;
+  max-height: 8rem;
+  margin: 0.65rem 0 0;
+  overflow-y: auto;
+  clip: auto;
+  white-space: normal;
+}
+
+.relationship-accessibility p {
+  margin: 0 0 0.35rem;
+  color: #6b5d50;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.relationship-accessibility ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.relationship-accessibility li {
+  display: inline-flex;
+}
+
+.relationship-accessibility button,
+.relationship-accessibility li > span {
+  min-height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid rgb(82 98 71 / 28%);
+  border-radius: 8px;
+  color: #526247;
+  background: #e1e6d9;
+  font-size: 0.72rem;
+}
+
+.relationship-accessibility button {
+  cursor: pointer;
+}
+
+.relationship-accessibility button small {
+  color: #817261;
+}
+
+.relationship-empty,
+.relationship-hint {
+  margin: 0.65rem 0 0;
+  color: #817261;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.relationship-panel .privacy-note {
+  margin-top: 0;
+  padding-top: 0.55rem;
+  font-size: 0.7rem;
+}
+
+@media (max-width: 700px) {
+  .relationship-panel {
+    padding: 0.9rem;
+  }
+
+  .relationship-panel > header {
+    gap: 0.55rem;
+  }
+
+  .relationship-panel > header small {
+    line-height: 1.35;
+  }
+
+  .relationship-canvas {
+    min-height: clamp(220px, 42vh, 320px);
+    border-radius: 10px;
+  }
+
+  .relationship-legend {
+    column-gap: 0.65rem;
+  }
 }
 
 .context-menu {
@@ -965,6 +1164,18 @@ button:focus-visible {
   }
 
   .connection-dot {
+    display: none;
+  }
+
+  .topbar-actions {
+    gap: 0.25rem;
+  }
+
+  .topbar-actions button {
+    padding-inline: 0.65rem;
+  }
+
+  .topbar-actions button span {
     display: none;
   }
 }

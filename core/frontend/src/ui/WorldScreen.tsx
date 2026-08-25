@@ -1,14 +1,16 @@
-import { useCallback, useState } from 'react'
+import { lazy, Suspense, useCallback, useState } from 'react'
 
 import { ApiError, api } from '../api/client'
 import { PLAYER_ACTOR_ID, type PublicAgenda } from '../api/types'
-import { WorldCanvas } from '../game/WorldCanvas'
 import { useUiStore } from '../state/uiStore'
 import { useWorldStore } from '../state/worldStore'
 import { ActorPanel } from './panels/ActorPanel'
 import { ChatPanel } from './panels/ChatPanel'
 import { EventsPanel } from './panels/EventsPanel'
 import { useWorldRuntime } from './useWorldRuntime'
+
+const WorldCanvas = lazy(() => import('../game/WorldCanvas').then((module) => ({ default: module.WorldCanvas })))
+const RelationshipGraphPanel = lazy(() => import('./panels/RelationshipGraphPanel'))
 
 function actorName(actorId: string, actors: { actorId: string; name: string }[]): string {
   if (actorId === PLAYER_ACTOR_ID) return '你'
@@ -41,6 +43,7 @@ export default function WorldScreen() {
   const openActor = useUiStore((state) => state.openActor)
   const openChat = useUiStore((state) => state.openChat)
   const openEvents = useUiStore((state) => state.openEvents)
+  const openRelationships = useUiStore((state) => state.openRelationships)
   const [commandLabel, setCommandLabel] = useState<string | null>(null)
 
   const [agendas] = useState<PublicAgenda[]>(() => {
@@ -147,20 +150,27 @@ export default function WorldScreen() {
           <strong>{selectedAgenda?.title ?? '旁观五人的选择'}</strong>
         </div>
         {afterCutoff ? <div className="cutoff-note">{nearDayEnd ? '临近 18:00，当前聊天即将强制结束' : '17:00 后不能开始新聊天'}</div> : null}
-        <button type="button" className="secondary-button" onClick={(event) => { event.stopPropagation(); openEvents() }}>
-          事件记录 <span>{snapshot.worldEvents.length}</span>
-        </button>
+        <div className="topbar-actions">
+          <button type="button" className="secondary-button" onClick={(event) => { event.stopPropagation(); openRelationships() }}>
+            关系图谱 <span>{snapshot.conversations.length}</span>
+          </button>
+          <button type="button" className="secondary-button" onClick={(event) => { event.stopPropagation(); openEvents() }}>
+            事件记录 <span>{snapshot.worldEvents.length}</span>
+          </button>
+        </div>
         <div className={`connection-dot ${socketStatus}`}>{socketStatus === 'connected' ? '已连接' : '连接中'}</div>
       </header>
 
       <section className={`world-layout ${panel !== 'none' ? 'with-panel' : ''}`}>
         <div className="scene-column">
-          <WorldCanvas
-            snapshot={snapshot}
-            sceneCue={sceneCue}
-            onActorContext={onActorContext}
-            onConversationClick={onConversationClick}
-          />
+          <Suspense fallback={<div className="world-canvas scene-loading">正在布置慎之旧书店……</div>}>
+            <WorldCanvas
+              snapshot={snapshot}
+              sceneCue={sceneCue}
+              onActorContext={onActorContext}
+              onConversationClick={onConversationClick}
+            />
+          </Suspense>
           <div className="conversation-access-list" aria-label="当前聊天">
             {snapshot.conversations.filter((item) => item.status === 'open').map((conversation) => (
               <button key={conversation.conversationId} type="button" onClick={() => openChat(conversation.conversationId)}>
@@ -175,6 +185,11 @@ export default function WorldScreen() {
             {panel === 'actor' ? <ActorPanel /> : null}
             {panel === 'chat' ? <ChatPanel /> : null}
             {panel === 'events' ? <EventsPanel /> : null}
+            {panel === 'relationships' ? (
+              <Suspense fallback={<div className="panel-loading">正在展开人物关系……</div>}>
+                <RelationshipGraphPanel />
+              </Suspense>
+            ) : null}
           </aside>
         ) : null}
       </section>

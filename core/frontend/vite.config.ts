@@ -6,6 +6,20 @@ const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url))
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // Phaser is a deliberately lazy, independently cached engine runtime.
+    // Keep the 1.2 MB engine budget explicit while all application chunks
+    // continue to stay well below Vite's former 500 kB warning threshold.
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/phaser/')) return 'phaser-runtime'
+          return undefined
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       react: fileURLToPath(new URL('./node_modules/react', import.meta.url)),

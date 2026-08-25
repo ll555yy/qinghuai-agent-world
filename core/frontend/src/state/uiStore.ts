@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 export type AppPhase = 'intro' | 'agenda' | 'world' | 'ending'
-export type SidePanel = 'none' | 'actor' | 'chat' | 'events'
+export type SidePanel = 'none' | 'actor' | 'chat' | 'events' | 'relationships'
 
 interface ContextMenuState {
   actorId: string
@@ -19,6 +19,7 @@ interface UiStore {
   openActor: (actorId: string) => void
   openChat: (conversationId: string) => void
   openEvents: () => void
+  openRelationships: () => void
   closePanel: () => void
   showContextMenu: (menu: ContextMenuState) => void
   closeContextMenu: () => void
@@ -35,6 +36,7 @@ export const useUiStore = create<UiStore>((set) => ({
   openChat: (selectedConversationId) =>
     set({ panel: 'chat', selectedConversationId, contextMenu: null }),
   openEvents: () => set({ panel: 'events', contextMenu: null }),
+  openRelationships: () => set({ panel: 'relationships', contextMenu: null }),
   closePanel: () => set({ panel: 'none' }),
   showContextMenu: (contextMenu) => set({ contextMenu }),
   closeContextMenu: () => set({ contextMenu: null }),
