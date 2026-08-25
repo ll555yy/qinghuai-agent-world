@@ -1,0 +1,55 @@
+{
+  "candidate": {
+    "checks": [
+      {"errorCode": "ai_provider_unavailable", "formatRetries": 0, "latencyMs": 1120, "protocol": "DailyActionDecision", "success": false, "tokenUsage": null},
+      {"errorCode": "ai_provider_unavailable", "formatRetries": 0, "latencyMs": 17, "protocol": "InvitationDecision", "success": false, "tokenUsage": null},
+      {"errorCode": "ai_provider_unavailable", "formatRetries": 0, "latencyMs": 21, "protocol": "ChatDecision", "success": false, "tokenUsage": null},
+      {"errorCode": "ai_provider_unavailable", "formatRetries": 0, "latencyMs": 16, "protocol": "SpeechGeneration", "success": false, "tokenUsage": null},
+      {"errorCode": "ai_provider_unavailable", "formatRetries": 0, "latencyMs": 15, "protocol": "SegmentSummary", "success": false, "tokenUsage": null},
+      {"errorCode": "ai_provider_unavailable", "formatRetries": 0, "latencyMs": 19, "protocol": "ExitConsolidation", "success": false, "tokenUsage": null}
+    ],
+    "completedRequests": 0,
+    "gatePassed": false,
+    "logicalChecks": 6,
+    "model": "doubao-seed-2.0-lite",
+    "passed": 0,
+    "physicalRequests": 12,
+    "providerRetries": 6,
+    "required": 6
+  },
+  "createdAt": "2026-08-25T00:38:07.296986+00:00",
+  "embedding": {
+    "actualDimensions": null,
+    "actualModel": null,
+    "configuredModel": "doubao-embedding-vision",
+    "errorCode": "embedding_provider_error",
+    "exceptionType": "APIConnectionError",
+    "expectedDimensions": 2048,
+    "gatePassed": false,
+    "passed": 0,
+    "physicalRequests": 1,
+    "providerRequestId": null,
+    "required": 2,
+    "tokenUsage": null
+  },
+  "formalMatrix": {
+    "attempted": 0,
+    "executionId": null,
+    "infraValid": 0,
+    "ledgerCreated": false,
+    "planned": 15,
+    "recoveryOf": "final-agent-validation-strategy-v3-20260824",
+    "started": false
+  },
+  "gatePassed": false,
+  "humanValidated": false,
+  "localDate": "2026-08-25",
+  "manifestDigestVerification": "not_run_health_gate_failed",
+  "priorAttempted": 0,
+  "recheckOf": "final-preregistered-strategy-v3-v5-recovery-health-provider-unavailable-2026-08-25",
+  "schemaVersion": 1,
+  "stage": "v5-recovery-health-user-recheck",
+  "startV5Recovery": false,
+  "status": "provider_unavailable",
+  "userAuthorizedRecheck": true
+}

@@ -301,7 +301,7 @@ python -m pytest -c core/backend/pyproject.toml -q
 
 ## 📌 已知边界
 
-- 最新一次 v5 恢复健康门为 Candidate `0/6`、Embedding `0/2`，因此没有创建新 execution 或重跑 15 项；旧 v5 仍为 `15 planned / 0 attempted`。不能宣称该轮统计门禁通过，历史样本只支持“路线可达”。
+- 用户要求的最新一次 v5 健康复检仍为 Candidate `0/6`、Embedding `0/2`，因此没有创建新 execution 或重跑 15 项；旧 v5 仍为 `15 planned / 0 attempted`。不能宣称该轮统计门禁通过，历史样本只支持“路线可达”。
 - LLM Judge 当前是辅助信号，不是发布门；高风险语义样本仍需要双人独立标注与仲裁。
 - 当前采用本地单进程应用架构，尚未实现多实例分布式锁、租户级配额和生产运维面板。
 - 仓库暂不提供托管在线实例，需要按照“快速开始”在本地运行。

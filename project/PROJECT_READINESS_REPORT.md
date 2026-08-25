@@ -69,7 +69,9 @@ v4 holdout 在 `aa71928` 预注册后真实运行：5 个 observer、5 个 pro_l
 
 v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..20260864`，pro_lin 使用 v3，门槛和费用口径不变，manifest SHA-256 为 `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1`。本收口 Goal 只执行一轮最小真实预检：Candidate 六协议 `0/6`，6 次物理请求均为 `ai_provider_unavailable`，无格式重试；Embedding 对 2 条固定公开文本发出 1 次物理请求，返回 `embedding_provider_error / APIConnectionError`。两者均无 Provider request ID 和 Token 用量。按预先规则不再轮询、不启动正式矩阵；ledger 已将 15 个 planned attempt 全部终态化为 `not_started / provider_unavailable_preflight_candidate_and_embedding`。v5 canonical 为 `planned=15`、`attempted=0`、`infraValid=0`、`gameplayPass=0`、coverage `0.0`、`complete=false`；这是外部 Provider 不可用结论，不是 strategy v3 质量通过或失败的样本证据。
 
-本 Goal 获得新的 API 授权后只执行了一轮 v5 恢复健康门。Candidate 六协议仍为 `0/6`；每个逻辑检查触发底层唯一一次瞬时 Provider retry，合计 `12` 个物理请求、`6` 个 retry，全部为 `ai_provider_unavailable`。Embedding 对 2 条公开文本发出 1 个批量物理请求，结果仍为 `embedding_provider_error / APIConnectionError`，实际维度和 Token 均不可得。健康门失败后没有轮询，没有复核 manifest digest，没有创建 recovery execution/ledger/PostgreSQL Run，也没有启动 15 项；这不是“重新运行 15 个”，旧 v5 ledger 与 `15/0/0/0` canonical 均保持不动。
+在 `4eda615` 收口轮次中只执行了一轮 v5 恢复健康门。Candidate 六协议仍为 `0/6`；每个逻辑检查触发底层唯一一次瞬时 Provider retry，合计 `12` 个物理请求、`6` 个 retry，全部为 `ai_provider_unavailable`。Embedding 对 2 条公开文本发出 1 个批量物理请求，结果仍为 `embedding_provider_error / APIConnectionError`，实际维度和 Token 均不可得。健康门失败后没有轮询，没有复核 manifest digest，没有创建 recovery execution/ledger/PostgreSQL Run，也没有启动 15 项；这不是“重新运行 15 个”，旧 v5 ledger 与 `15/0/0/0` canonical 均保持不动。
+
+随后用户明确要求重新执行健康检查。该独立追加轮次再次得到 Candidate `0/6`（`12` 个物理请求、`6` 个 Provider retry）和 Embedding `0/2`（`1` 个批量物理请求、`APIConnectionError`）；所有请求仍无 Provider request ID 和 Token 用量。此次复检没有覆盖前一份证据，硬门失败后同样未核验 manifest、未创建 execution/ledger/PostgreSQL Run，也未启动 15 项。
 
 Canonical 证据：
 
@@ -80,6 +82,7 @@ Canonical 证据：
 - [v5 Provider 不可用全分母 JSON](simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/seven_day_gameplay_evidence.json)，SHA-256 `09573d47a05e35bca83f0d7643028c3bf16c9dcb535d2bc10b7d6c095b0aa677`；
 - [v5 真实健康检查 JSON](simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/provider_health_check.json)，SHA-256 `3fd207de11fdd20a48bd025be8d3ca5870079e0d88341b16e14f42ce1c3b576e`；
 - [v5 恢复健康检查 JSON](simulation-results/final-preregistered-strategy-v3-v5-recovery-health-provider-unavailable-2026-08-25/provider_health_check.json)，SHA-256 `d61a3313472e32a5891d6577c00baa9fd6f4ca1d4018c0cfca2cc85ad5bffa4d`；
+- [v5 用户要求的健康复检 JSON](simulation-results/final-preregistered-strategy-v3-v5-user-recheck-provider-unavailable-2026-08-25/provider_health_check.json)，SHA-256 `b12645372d1c67252db24aaadf49c1bec6f471837a6e5e1ba9438ae007f6eca2`；
 - 所有汇总均从各自 manifest 枚举完整 15 项，保留 completed、runner_failed 与 not_started，结果都明确为 `complete=false`。
 
 ## 5. CI 与真实 full-stack E2E
@@ -97,6 +100,8 @@ v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Toke
 v5 收口健康检查发出 Candidate `6` 次、Embedding `1` 次物理请求，成功数均为 `0`；Provider 没有返回 Token 用量，因此估算费用记为“不可得”而不是伪造为零。正式 v5 矩阵为 `0` 次模型调用、`0` Token；资源使用未接近滚动 5 小时 2000 AFP 积分上限。
 
 本 Goal 新增 Judge v2 兼容性物理请求 `1` 次、Candidate 健康物理请求 `12` 次、Embedding 健康物理请求 `1` 次；成功请求为 `0`，Provider 未返回 Token 或可核算费用。这里不能把未知用量写成 `0`。正式 Judge 校准、47 Case Judge-only 和 v5 15 项均未启动；账户页给出的约束为任意滚动 5 小时最多 `2000` AFP 积分，本轮没有出现限额告警。
+
+用户要求的追加健康复检又产生 Candidate `12` 个和 Embedding `1` 个物理请求，成功数仍为 `0`，Token 与费用仍不可得。该追加轮次没有产生正式 v5 模型调用；在同一滚动额度约束下未出现 AFP 限额告警。
 
 ## 7. 总门禁
 
