@@ -223,12 +223,14 @@ run_id + owner_npc_id 最终过滤
 | 评测 | 数据 | 结果 |
 |---|---:|---|
 | Agent 语义复评 | 47 Case / 68 Candidate 调用 | 47/47 完成，Schema `100%`，hard failure `0`；29 直接通过，18 进入人工复核 |
-| Judge v2 完成尝试 | Pro 技术兼容性 1 次 | Provider unavailable；未回退 Flash、未运行 13 Case 或 47 Case Judge-only |
+| Judge v2 校准 | Pro 兼容性 1 次 + 固定校准 13 Case | `deepseek-v4-pro` 兼容；13/13 完成、Boolean macro `84.62%`、score-band `92.31%`，但 Injection `2/3`，因此保持 advisory 且未运行 47 Case Judge-only |
 | PostgreSQL Memory 留出集 | tuning 7 + holdout 7 | Precision@returned / Recall@K 均 `1.0`，FPR、重复和 owner 越界均 `0` |
-| 可达性样本 | observer / 联盟成功 / 低投入失败 | 三种路径都有真实历史样本；只证明路径可达，不代表自然玩家成功率 |
+| 预注册七日 v5 | 3 路线 × 5 个冻结 seed | `15/15/15/14`（planned/attempted/infra-valid/gameplay-pass）；pro_lin `5/5` 玩家任务完成，pro_zhao 失败对照 `4/5`，达到预注册聚合门槛 |
 | 前端契约 | Vitest + Playwright | 单元、浏览器契约和无 REST/WS Mock 的全栈黄金链路均纳入 CI |
 
-LLM Judge 已接入独立模型与 rubric，但 v1 校准未达到预注册阈值。2026-08-25 的 Judge v2 主选 `deepseek-v4-pro` 在唯一一次严格 Schema `/responses` 兼容性请求中返回 Provider unavailable；这不是技术不兼容，因此没有切换 Flash，也没有运行校准或复评。Judge 仍不能覆盖确定性规则，不能把待人工复核样本自动改判为通过。
+LLM Judge 已接入独立模型与 rubric，但 v1、v2 都未达到各自预注册阈值。2026-08-25 在 Codex 网络沙箱外复核后，Judge v2 主选 `deepseek-v4-pro` 通过唯一一次严格 Schema `/responses` 兼容性请求，未调用 Flash；固定 13 Case 只运行一次，因 Injection `2/3` 未过门而停止，没有运行 47 Case Judge-only。此前的 `ai_provider_unavailable` 是项目对沙箱出站连接失败的归一化错误，不是 Ark 返回的认证或模型错误。Judge 仍不能覆盖确定性规则，也不能把待人工复核样本自动改判为通过。
+
+同日，Candidate 六协议 `6/6`、Embedding `2/2`（2048 维）健康门通过后，原预注册 v5 在独立 recovery execution 中完整执行，未改 manifest、seed、策略、Prompt digest 或阈值。canonical 覆盖率 `100%`，15 项全部为 completed/infra-valid；observer `5/5` 保持零玩家发言，pro_lin `5/5` gameplay pass 且玩家任务 `5/5` completed，pro_zhao 低投入失败对照 `4/5`，三项均达到 manifest 聚合门槛。原始 runner 因任一单局 `qualityGateFailures` 返回保守非零状态；canonical 按预注册的 `minimumFailureControlPasses=4` 计算，保留 `20260861` 的 partial，不把它删除或改判。
 
 ### 本地验证
 
@@ -297,7 +299,9 @@ python -m pytest -c core/backend/pyproject.toml -q
 - [全屏人物关系图谱设计](project/RELATIONSHIP_GRAPH_VISUALIZATION_DESIGN.md)
 - [Agent 语义整改 Before / After](project/AGENT_SEMANTIC_REMEDIATION_BEFORE_AFTER.md)
 - [47 Case 最终语义报告](project/evaluation-results/live-final-canonical-2026-08-23/agent_semantic_evaluation.md)
-- [Judge v2 兼容性负向结果](project/evaluation-results/judge-v2-compatibility-provider-unavailable-2026-08-25/judge_v2_compatibility.md)
+- [Judge v2 校准结果](project/evaluation-results/judge-v2-calibration-advisory-2026-08-25/judge_profile_completion.md)
+- [Judge v2 早期沙箱连接失败证据](project/evaluation-results/judge-v2-compatibility-provider-unavailable-2026-08-25/judge_v2_compatibility.md)
+- [v5 恢复执行 canonical](project/simulation-results/final-preregistered-strategy-v3-v5-recovery-2026-08-25/seven_day_gameplay_evidence.md)
 - [PostgreSQL Memory 留出集](project/evaluation-results/postgres-retrieval-final-2026-08-23/postgres_retrieval_benchmark.md)
 - [七日模拟结果与边界](project/REAL_SEVEN_DAY_SIMULATION_RESULTS.md)
 - [项目就绪度与验证报告](project/PROJECT_READINESS_REPORT.md)
@@ -305,7 +309,7 @@ python -m pytest -c core/backend/pyproject.toml -q
 
 ## 📌 已知边界
 
-- 用户要求的最新一次 v5 健康复检仍为 Candidate `0/6`、Embedding `0/2`，因此没有创建新 execution 或重跑 15 项；旧 v5 仍为 `15 planned / 0 attempted`。不能宣称该轮统计门禁通过，历史样本只支持“路线可达”。
+- v5 是冻结脚本路线的合成 holdout，不是自然玩家研究。正式 15 项虽达到预注册聚合门槛，但共出现 78 个安全降级结果，最终/首轮 Schema 成功率分别为 `97.74%` / `98.44%`；上线前仍需加强 Provider 超时韧性与 Embedding 降级可观测性。
 - LLM Judge 当前是辅助信号，不是发布门；高风险语义样本仍需要双人独立标注与仲裁。
 - 当前采用本地单进程应用架构，尚未实现多实例分布式锁、租户级配额和生产运维面板。
 - 仓库暂不提供托管在线实例，需要按照“快速开始”在本地运行。

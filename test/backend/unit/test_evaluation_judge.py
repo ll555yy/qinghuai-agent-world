@@ -255,9 +255,13 @@ def test_parse_rejects_markdown_trailing_text_and_duplicate_json_keys() -> None:
 
 def test_only_repository_registered_judge_profiles_are_accepted() -> None:
     assert "judge-v1" in registered_judge_profile_ids()
+    assert "judge-v2" in registered_judge_profile_ids()
     profile = load_judge_profile("judge-v1")
     assert profile.model == "doubao-seed-2.1-turbo"
     assert profile.humanValidated is False
+    v2 = load_judge_profile("judge-v2")
+    assert v2.model == "deepseek-v4-pro"
+    assert v2.inputCnyPerMillion == 0
     with pytest.raises(ValueError, match="unknown Judge profile"):
         load_judge_profile("judge-v3")
     with pytest.raises(ValueError, match="unknown Judge profile"):

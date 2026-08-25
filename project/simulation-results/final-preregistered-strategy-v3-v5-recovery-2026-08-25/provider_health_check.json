@@ -1,0 +1,156 @@
+{
+  "candidate": {
+    "gatePassed": true,
+    "model": "doubao-seed-2.0-lite",
+    "passed": 6,
+    "providerMetrics": {
+      "completedRequests": 6,
+      "failedRequests": 0,
+      "providerAttempts": 6,
+      "providerRetries": 0
+    },
+    "required": 6
+  },
+  "candidateReport": {
+    "checks": [
+      {
+        "attemptCount": 1,
+        "errorCode": null,
+        "formatRetries": 0,
+        "latencyMs": 3327,
+        "protocol": "DailyActionDecision",
+        "providerRequestId": "0217876196762179180a659d9e591342a6e4188502fc83059ee12",
+        "requestId": "ark-acceptance-DailyActionDecision-f702291793c4450e92cac853e1dd2db3",
+        "success": true,
+        "usage": {
+          "completionTokens": 114,
+          "promptTokens": 491,
+          "totalTokens": 605
+        }
+      },
+      {
+        "attemptCount": 1,
+        "errorCode": null,
+        "formatRetries": 0,
+        "latencyMs": 1002,
+        "protocol": "InvitationDecision",
+        "providerRequestId": "0217876196783509180a659d9e591342a6e4188502fc83065606d",
+        "requestId": "ark-acceptance-InvitationDecision-35a73ef95116445ebe9577519298d6a3",
+        "success": true,
+        "usage": {
+          "completionTokens": 35,
+          "promptTokens": 298,
+          "totalTokens": 333
+        }
+      },
+      {
+        "attemptCount": 1,
+        "errorCode": null,
+        "formatRetries": 0,
+        "latencyMs": 3436,
+        "protocol": "ChatDecision",
+        "providerRequestId": "0217876196792639180a659d9e591342a6e4188502fc830fe650f",
+        "requestId": "ark-acceptance-ChatDecision-88f6fae4f9c345f3b4a52b1cc6450a71",
+        "success": true,
+        "usage": {
+          "completionTokens": 277,
+          "promptTokens": 1957,
+          "totalTokens": 2234
+        }
+      },
+      {
+        "attemptCount": 1,
+        "errorCode": null,
+        "formatRetries": 0,
+        "latencyMs": 2090,
+        "protocol": "SpeechGeneration",
+        "providerRequestId": "0217876196827189180a659d9e591342a6e4188502fc8308229d5",
+        "requestId": "ark-acceptance-SpeechGeneration-d6c959c907b94527a894277e1f17d89e",
+        "success": true,
+        "usage": {
+          "completionTokens": 106,
+          "promptTokens": 373,
+          "totalTokens": 479
+        }
+      },
+      {
+        "attemptCount": 1,
+        "errorCode": null,
+        "formatRetries": 0,
+        "latencyMs": 2287,
+        "protocol": "SegmentSummary",
+        "providerRequestId": "0217876196847879180a659d9e591342a6e4188502fc830b569a0",
+        "requestId": "ark-acceptance-SegmentSummary-b049d1dc41a24b3eab60e8a8aec8e3fd",
+        "success": true,
+        "usage": {
+          "completionTokens": 116,
+          "promptTokens": 320,
+          "totalTokens": 436
+        }
+      },
+      {
+        "attemptCount": 1,
+        "errorCode": null,
+        "formatRetries": 0,
+        "latencyMs": 1529,
+        "protocol": "ExitConsolidation",
+        "providerRequestId": "0217876196870999180a659d9e591342a6e4188502fc830741559",
+        "requestId": "ark-acceptance-ExitConsolidation-17915b70743a43369061eb459c5b5358",
+        "success": true,
+        "usage": {
+          "completionTokens": 101,
+          "promptTokens": 1511,
+          "totalTokens": 1612
+        }
+      }
+    ],
+    "errorCode": null,
+    "live": true,
+    "model": "doubao-seed-2.0-lite",
+    "provider": "volcengine_ark",
+    "providerMetrics": {
+      "completedRequests": 6,
+      "failedRequests": 0,
+      "providerAttempts": 6,
+      "providerRetries": 0
+    },
+    "requestSent": true,
+    "status": "completed",
+    "success": true,
+    "tool": "ark_six_protocol_acceptance"
+  },
+  "createdAt": "2026-08-25T01:01:28.915355+00:00",
+  "embedding": {
+    "actualDimensions": 2048,
+    "actualModel": "doubao-embedding-vision-251215",
+    "configuredModel": "doubao-embedding-vision",
+    "expectedDimensions": 2048,
+    "gatePassed": true,
+    "passed": 2,
+    "required": 2
+  },
+  "embeddingReport": {
+    "actualDimensions": 2048,
+    "actualModel": "doubao-embedding-vision-251215",
+    "baseUrlHost": "ark.cn-beijing.volces.com",
+    "configuredModel": "doubao-embedding-vision",
+    "errorCode": null,
+    "expectedDimensions": 2048,
+    "latencyMs": 417,
+    "live": true,
+    "providerRequestId": "02178761969010782fbdb39865d08dcb106487b8dd17a6d5e9e17",
+    "requestSent": true,
+    "status": "completed",
+    "success": true,
+    "totalTokens": 57,
+    "vectorCount": 2
+  },
+  "gatePassed": true,
+  "humanValidated": false,
+  "live": true,
+  "requestSent": true,
+  "schemaVersion": 1,
+  "stage": "v5-recovery-health",
+  "startV5Recovery": true,
+  "status": "passed"
+}

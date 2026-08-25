@@ -1,6 +1,6 @@
 # 项目就绪度与验证报告
 
-- 状态：已完成真实性收口；语义、检索和 CI/E2E 已通过；Judge v2 与 v5 恢复尝试均因 Provider unavailable 按预注册停止，旧 v5 保持 `15 planned / 0 attempted / 15 not_started`
+- 状态：语义、检索和 CI/E2E 已通过；Judge v2 已完成一次冻结校准并因 Injection `2/3` 保持 advisory；原预注册 v5 已在独立 recovery execution 中完成 `15/15` 全分母并达到 manifest 聚合门槛
 - 冻结起点：`50d6c88`
 - 七日基线提交：`738ef11`
 - 预注册提交：`235b36b`
@@ -23,7 +23,7 @@
 | strategy v2 holdout 预注册 | `aa71928` | v4 连续 seed `20260855..20260859`、混合策略 digest 与原门槛冻结后再运行 |
 | v4 失败证据与恢复修复 | `e9a4a52` | v4 canonical、pro_lin v3 状态拆分、Run ID 持久绑定和不中途重跑 seed 的 resume 逻辑 |
 | strategy v3 holdout 预注册 | `15f0dd7` | v5 连续 seed `20260860..20260864`、策略/Prompt digest 与原门槛在真实调用前冻结 |
-| 最终交付 | 本提交 | v5 Provider 不可用全分母结论、语义闭环、CI/E2E、README 和本验收报告 |
+| 最终交付 | 本提交 | Judge v2 advisory、v5 recovery `15/15` canonical、调用/成本、CI/E2E、README 和本验收报告 |
 
 ## 2. Agent 语义与检索
 
@@ -49,9 +49,11 @@ Canonical 47 Case 是 2026-08-23 的单一 live 批次，没有拼接历史或�
 
 真实 Judge 校准完成 13/13，无 provider/schema error，score-band match `92.3077%`；但 critical boolean macro accuracy `79.4872% < 80%`，Injection `2/3 < 3/3`，因此 `qualityGateStatus=advisory`。47 Case Judge 六维均分为 persona `3.918919`、context `3.646341`、relevance `3.439024`、naturalness `4.357143`、goal progress `3.144737`、player agency `4.036585`。这些数字只用于诊断和人工队列排序。
 
-2026-08-25 的 Judge v2 完成尝试先对主选 `deepseek-v4-pro` 执行完整严格 `JudgeScore` Schema 的 Ark `/responses` 技术检查，固定 temperature `0`、thinking disabled、`store=false`。唯一一次物理请求在 `5636.642 ms` 后返回 `ai_provider_unavailable`，没有 Provider retry、request ID 或 Token 用量。该错误不是明确的 model/endpoint/schema 不兼容，所以未切换 `deepseek-v4-flash`，未冻结 v2 profile，未运行 13 Case 校准，也未对保存的 47 个 Candidate summary 做 Judge-only 复评。v1 profile 已转为仓库注册合同，未知 profile 在发请求前失败；v1 canonical 保持不变且仍为 advisory。
+2026-08-25 的首次 Judge v2 完成尝试在 Codex 网络沙箱内返回项目归一化错误 `ai_provider_unavailable`。随后只读网络诊断证明：沙箱内 DNS 被映射到 `198.18.1.106` 且 443 连接失败，而沙箱外同一域名可达并对无认证 `curl` 正常返回 Ark `401/AuthN_MissOrInvalidAuthorizationHeader`；因此早期错误是沙箱出站隔离造成的 `APIConnectionError`，不是 Ark 的模型、端点、Schema、认证或额度结论。负向证据保留不覆盖。
 
-证据：[Judge v2 兼容性 JSON](evaluation-results/judge-v2-compatibility-provider-unavailable-2026-08-25/judge_v2_compatibility.json)，SHA-256 `7c2934e26b34a14fe56d6cbc18273aee33456b0c55077a80f9eb29e149709eb7`。
+在沙箱外，主选 `deepseek-v4-pro` 用完整严格 `JudgeScore` Schema 的 Ark `/responses` 路径一次通过兼容性检查：temperature `0`、thinking disabled、`store=false`，本地 Pydantic 通过，`1` 次请求、`1498` Token、`3758.828 ms`、无 Provider retry。由此冻结 `judge-v2` profile，未调用 Flash。固定 13 Case 原样运行一次并 `13/13` 得分：critical boolean macro accuracy `84.6154%`、score-band match `92.3077%`、Provider/Schema error `0`，但 Injection 仅 `2/3`，所以 `qualityGateStatus=advisory`。按预注册停止，不改 Prompt、不换模型、不重跑，也不执行 47 Case Judge-only；Candidate/Embedding 调用均为 `0`，`humanValidated=false`。
+
+证据：[早期沙箱连接失败 JSON](evaluation-results/judge-v2-compatibility-provider-unavailable-2026-08-25/judge_v2_compatibility.json)，SHA-256 `7c2934e26b34a14fe56d6cbc18273aee33456b0c55077a80f9eb29e149709eb7`；[兼容性通过 JSON](evaluation-results/judge-v2-calibration-advisory-2026-08-25/judge_v2_compatibility.json)，SHA-256 `fd5072da3f5438c22b8c7a290b6f06f9efcd00be4f2aae4e94fbd635824ebbfc`；[13 Case 校准 JSON](evaluation-results/judge-v2-calibration-advisory-2026-08-25/judge_profile_completion.json)，SHA-256 `d56832275c518393bea858f8eabbaead6eaae453a5ba184cb8dca38d8a853da3`。
 
 ## 4. 预注册七日全分母
 
@@ -73,6 +75,12 @@ v5 已在 `15f0dd7` 预注册：三路线使用全新连续 seed `20260860..2026
 
 随后用户明确要求重新执行健康检查。该独立追加轮次再次得到 Candidate `0/6`（`12` 个物理请求、`6` 个 Provider retry）和 Embedding `0/2`（`1` 个批量物理请求、`APIConnectionError`）；所有请求仍无 Provider request ID 和 Token 用量。此次复检没有覆盖前一份证据，硬门失败后同样未核验 manifest、未创建 execution/ledger/PostgreSQL Run，也未启动 15 项。
 
+2026-08-25 在 Codex 网络沙箱外重新诊断后，Ark 域名和 443 可达；一轮冻结健康门得到 Candidate 六协议 `6/6`（6 次物理请求、0 retry、5,699 Token）和 Embedding `2/2`（1 次批量请求、57 Token、2048 维）。随后核验 manifest canonical digest `97053b7a53b3c2d1803d8f090e29475bab13f5cad52c94decb8a0e2628a80aa1` 与原始文件 SHA-256 `ade4fef6517619da6e4445a520889aa780692fbe7b985f248211bd851b02511c`，创建独立 recovery execution；原 `15/0/0/0` Provider-unavailable canonical 和所有更早失败证据保持不变。
+
+恢复执行严格使用原 v5 的 3 路线、15 个 attempt、seed `20260860..20260864`、策略/Prompt digest、预算和阈值，未创建 v6。用户手工终止的旧第 3 次未完成记录经明确授权精确删除后，第 3 次从头运行；第 1、2 次 checkpoint 直接复用，没有重跑。最终 `planned/attempted/infraValid/gameplayPass=15/15/15/14`、coverage `1.0`、ITT `0.933333`，15 个 attempt 均 completed。observer `5/5` 零玩家发言；pro_lin `5/5` gameplay pass 且玩家任务 `5/5 completed`；pro_zhao 低投入失败对照 `4/5`，达到预注册的 `minimumFailureControlPasses=4`。seed `20260861` 为真实 partial，保留 `failure_control_changed_branch` 与 `failure_control_not_failed`，不删除、不改判。原始 runner 因“任一单局 qualityGateFailures”给出保守非零退出状态；canonical 按 manifest 的聚合阈值判断 `requirementFailures=[]`、`complete=true`，两层口径均保留。
+
+15 个临时 PostgreSQL Run 均绑定唯一 runId 并在批次尾逐一精确删除；15/15 报告的 `repositoryRecovered=true`、`temporaryRunDeleted=true`。全批文本物理请求 `3,619` 次、Provider retry `98` 次、Prompt `11,041,344` Token、Completion `3,442,445` Token；Embedding `301` 次 / `84,118` Token；估算费用 `19.076491 CNY`。Schema 最终 `3,367/3,445 = 97.7358%`，首轮 `3,340/3,393 = 98.4380%`，安全降级结果 `78` 个；这些是上线韧性风险，不因统计门槛通过而隐藏。
+
 Canonical 证据：
 
 - [v1 中断全分母 JSON](simulation-results/final-preregistered-v1-interrupted-2026-08-23/seven_day_gameplay_evidence.json)，SHA-256 `df7163924460d3499799eadc45c9e1faeb3b57809e1a58f33767389e67c6f36c`；
@@ -83,13 +91,15 @@ Canonical 证据：
 - [v5 真实健康检查 JSON](simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/provider_health_check.json)，SHA-256 `3fd207de11fdd20a48bd025be8d3ca5870079e0d88341b16e14f42ce1c3b576e`；
 - [v5 恢复健康检查 JSON](simulation-results/final-preregistered-strategy-v3-v5-recovery-health-provider-unavailable-2026-08-25/provider_health_check.json)，SHA-256 `d61a3313472e32a5891d6577c00baa9fd6f4ca1d4018c0cfca2cc85ad5bffa4d`；
 - [v5 用户要求的健康复检 JSON](simulation-results/final-preregistered-strategy-v3-v5-user-recheck-provider-unavailable-2026-08-25/provider_health_check.json)，SHA-256 `b12645372d1c67252db24aaadf49c1bec6f471837a6e5e1ba9438ae007f6eca2`；
-- 所有汇总均从各自 manifest 枚举完整 15 项，保留 completed、runner_failed 与 not_started，结果都明确为 `complete=false`。
+- [v5 recovery 健康门 JSON](simulation-results/final-preregistered-strategy-v3-v5-recovery-2026-08-25/provider_health_check.json)，SHA-256 `d843aa47c29280eba3c4385bd7c4040896263b132bb0d9a7c40c7545dbac4e5b`；
+- [v5 recovery canonical JSON](simulation-results/final-preregistered-strategy-v3-v5-recovery-2026-08-25/seven_day_gameplay_evidence.json)，SHA-256 `d3b613f70209bee27abfd3a3702a3bedc139a55608ff448572c43ceb67976155`；
+- 历史汇总均保留各自 completed、runner_failed 与 not_started 原貌；最新 recovery canonical 只使用本次独立 execution 的 15 个原 v5 attempt，不拼接 v1-v4。
 
 ## 5. CI 与真实 full-stack E2E
 
 无真实 Key 的 CI 已配置。测试 app 仅通过显式构造注入确定性 TextModel/Embedding，生产 app 不存在 fake 环境变量后门。黄金链路没有 `page.route` 或 WebSocket Mock，真实经过 React/Phaser、FastAPI、RunService、LangGraph、Repository、PostgreSQL/pgvector 和原生 WebSocket，覆盖 Run 创建、邀请、玩家消息、owner-safe Memory retrieval、NPC 回复、refresh、`afterSeq` replay、18:00 关日及持久化恢复。
 
-本地结果：Vitest `23/23`、已有 Playwright `11/11`、full-stack Playwright `1/1`。全栈测试曾先后暴露可交互 notice 遮挡和 Day1→Day2 reload 的合法时间竞态，均修正测试交互/断言后由完整黄金链路复验通过。
+本 Goal 最终复验：Vitest `52/52`、标准 Playwright `11/11`；full-stack Playwright 保留既有 `1/1` 证据，本轮因未设置专用 `QINGHUAI_TEST_DATABASE_URL` 未重跑。全栈测试曾先后暴露可交互 notice 遮挡和 Day1→Day2 reload 的合法时间竞态，均修正测试交互/断言后由完整黄金链路复验通过。
 
 ## 6. 成本与调用
 
@@ -97,11 +107,9 @@ Canonical 证据：
 
 v1 中断前的 10 个完成项因旧 runner 未逐项落丰富报告，其 Token 与费用无法可靠追溯，故不估算。v2 首个完整检查点记录文本 Provider 物理请求 `214` 次、Prompt `669,411` Token、Completion `208,907` Token，Embedding `17` 次 / `5,127` Token，估算总费用 `1.157301 CNY`。v3 的 10 个完整检查点合计文本物理请求 `2,427` 次、Prompt `6,805,554` Token、Completion `2,145,259` Token，Embedding `195` 次 / `53,670` Token，估算总费用 `11.843834 CNY`。v4 的 12 个完整检查点合计文本物理请求 `2,857` 次、Prompt `8,906,811` Token、Completion `2,837,043` Token，Embedding `249` 次 / `67,587` Token，估算总费用 `15.604751 CNY`；被中止 attempt 没有完整用量，因此不伪造。资源控制按用户最新授权采用“任意滚动 5 小时不超过 2000 AFP 积分”，不设金额硬上限；调用保持单批串行，未收到 AFP 限额告警。
 
-v5 收口健康检查发出 Candidate `6` 次、Embedding `1` 次物理请求，成功数均为 `0`；Provider 没有返回 Token 用量，因此估算费用记为“不可得”而不是伪造为零。正式 v5 矩阵为 `0` 次模型调用、`0` Token；资源使用未接近滚动 5 小时 2000 AFP 积分上限。
+本 Goal 的 Judge v2：兼容性 `1` 次请求 / `1,498` Token，校准 `13` 次请求 / `19,602` Token，合计 `14` 次 / `21,100` Token；Provider 未提供可核算的 Judge rate-card，因此费用明确记为不可得。Candidate/Embedding 没有参与 Judge 校准，47 Case Judge-only 未启动。
 
-本 Goal 新增 Judge v2 兼容性物理请求 `1` 次、Candidate 健康物理请求 `12` 次、Embedding 健康物理请求 `1` 次；成功请求为 `0`，Provider 未返回 Token 或可核算费用。这里不能把未知用量写成 `0`。正式 Judge 校准、47 Case Judge-only 和 v5 15 项均未启动；账户页给出的约束为任意滚动 5 小时最多 `2000` AFP 积分，本轮没有出现限额告警。
-
-用户要求的追加健康复检又产生 Candidate `12` 个和 Embedding `1` 个物理请求，成功数仍为 `0`，Token 与费用仍不可得。该追加轮次没有产生正式 v5 模型调用；在同一滚动额度约束下未出现 AFP 限额告警。
+v5 recovery 健康门为 Candidate `6` 次 / `5,699` Token、Embedding `1` 次 / `57` Token；正式矩阵为文本 `3,619` 次 / `14,483,789` Token、Embedding `301` 次 / `84,118` Token，估算 `19.076491 CNY`。执行全程串行，未出现 401/403、404、429、余额不足或 AFP 限额告警；账户的 AFP 使用只能由 Provider 控制台确认，项目不把无告警伪写为精确积分消耗。
 
 ## 7. 总门禁
 
@@ -113,12 +121,12 @@ v5 收口健康检查发出 Candidate `6` 次、Embedding `1` 次物理请求，
 | FastAPI app import | 通过 | 无 Key 导入输出 `Qinghuai Chat Backend` |
 | 空库 Alembic upgrade/check | 通过 | `No new upgrade operations detected` |
 | persistence/semantic PostgreSQL tests，关键项不 skip | 通过 | 专用库 `12 passed` |
-| frontend lint/typecheck/Vitest/build | 通过 | Vitest `23/23`；build 仅有 chunk-size warning |
+| frontend lint/typecheck/Vitest/build | 通过 | Vitest `52/52`；production build 与 bundle-size gate 通过 |
 | 现有 Playwright | 通过 | `11/11` |
 | full-stack Playwright | 历史通过，本 Goal 未重跑 | 当前环境没有专用 PostgreSQL URL；保留既有 `1/1` 真实 REST/WS/PostgreSQL 证据，不伪报本轮通过 |
 | CI 无真实 Ark Key/网络 | 通过（本地门禁 + 配置审计） | workflow 仅显式置空 Key，ArkClient 在缺 Key 时拒绝发请求；不覆盖默认 model/base URL，避免污染默认值单测；模型仅测试 app DI；pytest/Ruff/mypy 版本已固定；四个 job 可解析 |
-| manifest 15/15 全分母完整性 | 结论已固化（统计门禁未通过） | v5 canonical 包含全部 15 个预注册项，均为终态 `not_started`；`15/0/0/0`（planned/attempted/infraValid/gameplayPass），`complete=false`，没有替换 seed 或遗漏失败项 |
-| README 与 canonical 指标一致 | 通过 | README 与 v5 canonical 均报告 `15/0/0/0`，不把 Provider 不可用写成 strategy v3 通过或质量失败 |
+| manifest 15/15 全分母完整性 | 通过 | recovery canonical 为 `15/15/15/14`、coverage `1.0`、`complete=true`；15 个 attempt/Run ID 唯一，未替换 seed、未遗漏 partial；三条路线均达到 manifest 聚合阈值 |
+| README 与 canonical 指标一致 | 通过 | README 与 recovery canonical 均报告 `15/15/15/14`；同时保留旧 Provider-unavailable `15/0/0/0` 作为历史 execution，不相互覆盖 |
 | `git diff --check`、凭据和绝对路径扫描 | 通过，最终提交前再核对 | canonical 无绝对路径或真实凭据；README 只含显式密码占位符 |
 | 工作树干净 | 最终提交后复核 | 本 Goal 路径精确暂存；用户原有未跟踪 Goal 文档保持在工作树且不纳入本提交 |
 
