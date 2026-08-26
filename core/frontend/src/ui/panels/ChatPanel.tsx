@@ -21,6 +21,7 @@ export function ChatPanel() {
   const messagesByConversation = useWorldStore((state) => state.messages)
   const setConversationMessages = useWorldStore((state) => state.setConversationMessages)
   const appendConversationMessage = useWorldStore((state) => state.appendConversationMessage)
+  const confirmAcceptedMessage = useWorldStore((state) => state.confirmAcceptedMessage)
   const setMessageDeliveryStatus = useWorldStore((state) => state.setMessageDeliveryStatus)
   const setSnapshot = useWorldStore((state) => state.setSnapshot)
   const setJoinRequest = useWorldStore((state) => state.setJoinRequest)
@@ -144,6 +145,17 @@ export function ChatPanel() {
     setError(null)
     const pendingSend = api.sendMessage(snapshot.runId, activeConversationId, content)
       .then((result) => {
+        if (result.acceptedMessageId) {
+          const canonical = result.messages?.find(
+            (message) => message.messageId === result.acceptedMessageId,
+          )
+          confirmAcceptedMessage(
+            activeConversationId,
+            optimisticMessageId,
+            result.acceptedMessageId,
+            canonical,
+          )
+        }
         if (!leavingConversationIdsRef.current.has(activeConversationId)) setSnapshot(result.run)
         if (result.messages) setConversationMessages(activeConversationId, result.messages)
       })

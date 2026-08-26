@@ -9,6 +9,7 @@ import type {
 } from '../api/types'
 import {
   appendConversationMessage,
+  confirmAcceptedMessage,
   mergeConversationMessages,
   reduceRunEvent,
   type WorldData,
@@ -38,6 +39,12 @@ interface WorldStore extends WorldData {
   applyEvent: (event: RunEvent) => void
   setConversationMessages: (conversationId: string, messages: PublicMessage[]) => void
   appendConversationMessage: (conversationId: string, message: PublicMessage) => void
+  confirmAcceptedMessage: (
+    conversationId: string,
+    pendingMessageId: string,
+    acceptedMessageId: string,
+    canonical?: PublicMessage,
+  ) => void
   setMessageDeliveryStatus: (
     conversationId: string,
     messageId: string,
@@ -165,6 +172,18 @@ export const useWorldStore = create<WorldStore>((set) => ({
       const merged = appendConversationMessage(existing, message)
       if (merged === existing) return state
       return { messages: { ...state.messages, [conversationId]: merged } }
+    }),
+  confirmAcceptedMessage: (conversationId, pendingMessageId, acceptedMessageId, canonical) =>
+    set((state) => {
+      const previous = state.messages[conversationId] ?? []
+      const confirmed = confirmAcceptedMessage(
+        previous,
+        pendingMessageId,
+        acceptedMessageId,
+        canonical,
+      )
+      if (confirmed === previous) return state
+      return { messages: { ...state.messages, [conversationId]: confirmed } }
     }),
   setMessageDeliveryStatus: (conversationId, messageId, deliveryStatus) =>
     set((state) => {

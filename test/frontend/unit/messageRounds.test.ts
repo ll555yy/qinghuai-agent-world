@@ -1,5 +1,6 @@
 import {
   appendConversationMessage,
+  confirmAcceptedMessage,
   mergeConversationMessages,
   reduceRunEvent,
   type WorldData,
@@ -160,5 +161,62 @@ describe('message-driven chat message state', () => {
     const appended = appendConversationMessage([optimistic], canonical)
 
     expect(appended).toEqual([canonical])
+  })
+
+  it('uses the accepted message ID when the world clock changes during send', () => {
+    const optimistic = message({
+      messageId: 'pending_1',
+      authorActorId: 'player_001',
+      text: '我也不知道说什么',
+      createdAt: 'Day1 10:59',
+      deliveryStatus: 'sending',
+    })
+    const canonical = message({
+      messageId: 'msg_confirmed',
+      authorActorId: 'player_001',
+      text: '我也不知道说什么',
+      createdAt: 'Day1 11:00',
+    })
+
+    const raced = appendConversationMessage([optimistic], canonical)
+    expect(raced).toHaveLength(2)
+
+    const confirmed = confirmAcceptedMessage(
+      raced,
+      optimistic.messageId,
+      canonical.messageId,
+      canonical,
+    )
+    expect(confirmed).toEqual([canonical])
+    expect(confirmed[0]).not.toHaveProperty('deliveryStatus')
+  })
+
+  it('replaces the optimistic row in place when the command response wins the race', () => {
+    const earlier = message({ messageId: 'msg_earlier', text: '前一条。' })
+    const optimistic = message({
+      messageId: 'pending_1',
+      authorActorId: 'player_001',
+      text: '玩家消息。',
+      deliveryStatus: 'sending',
+    })
+    const later = message({ messageId: 'msg_later', text: '后一条。' })
+    const canonical = message({
+      messageId: 'msg_player',
+      authorActorId: 'player_001',
+      text: '玩家消息。',
+      createdAt: 'Day1 11:00',
+    })
+
+    const confirmed = confirmAcceptedMessage(
+      [earlier, optimistic, later],
+      optimistic.messageId,
+      canonical.messageId,
+      canonical,
+    )
+    expect(confirmed.map((item) => item.messageId)).toEqual([
+      'msg_earlier',
+      'msg_player',
+      'msg_later',
+    ])
   })
 })

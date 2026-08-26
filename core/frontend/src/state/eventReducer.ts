@@ -147,6 +147,51 @@ export function mergeConversationMessages(
   return changed ? result : existing
 }
 
+/**
+ * Confirm one optimistic send using the authoritative message ID returned by
+ * the command response. This remains exact even when the world clock advances
+ * between the local click and the server write, so reconciliation never has
+ * to guess from text or timestamps.
+ */
+export function confirmAcceptedMessage(
+  messages: PublicMessage[],
+  pendingMessageId: string,
+  acceptedMessageId: string,
+  canonical?: PublicMessage,
+): PublicMessage[] {
+  const pendingIndex = messages.findIndex((message) => message.messageId === pendingMessageId)
+  const acceptedIndex = messages.findIndex((message) => message.messageId === acceptedMessageId)
+
+  if (pendingIndex < 0) {
+    if (acceptedIndex < 0 || !canonical) return messages
+    const merged = mergeMessage(messages[acceptedIndex], canonical)
+    if (merged === messages[acceptedIndex]) return messages
+    const result = [...messages]
+    result[acceptedIndex] = merged
+    return result
+  }
+
+  const pending = messages[pendingIndex]
+  const result = messages.filter((message) => message.messageId !== pendingMessageId)
+  const retainedAcceptedIndex = result.findIndex(
+    (message) => message.messageId === acceptedMessageId,
+  )
+  if (retainedAcceptedIndex >= 0) {
+    if (canonical) {
+      result[retainedAcceptedIndex] = mergeMessage(result[retainedAcceptedIndex], canonical)
+    }
+    return result
+  }
+
+  const replacement: PublicMessage = canonical ?? {
+    ...pending,
+    messageId: acceptedMessageId,
+  }
+  if (replacement.deliveryStatus !== undefined) delete replacement.deliveryStatus
+  result.splice(Math.min(pendingIndex, result.length), 0, replacement)
+  return result
+}
+
 function replaceConversation(
   conversations: PublicConversation[],
   conversation: PublicConversation,

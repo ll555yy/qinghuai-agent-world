@@ -131,7 +131,12 @@ async function mockBackend(
         { messageId: 'msg_reply', conversationId: messageMatch[1], authorActorId: 'npc_001', text: '这件事可以再商量。', createdAt: 'Day1 09:07' },
       ]
       const conversation = current.conversations.find((item) => item.conversationId === messageMatch[1])
-      return fulfillJson(route, { run: current, conversation, messages: conversationMessages })
+      return fulfillJson(route, {
+        run: current,
+        conversation,
+        acceptedMessageId: 'msg_player',
+        messages: conversationMessages,
+      })
     }
     if (path.includes('/participants/player_001') && request.method() === 'DELETE') {
       if (options.leaveDelayMs) await new Promise((resolve) => setTimeout(resolve, options.leaveDelayMs))
@@ -245,6 +250,21 @@ test('requests to join an existing chat and receives its earlier history', async
   await page.getByRole('button', { name: '申请加入聊天' }).click()
   await expect(page.getByText('我们先把各自的底线说清楚。')).toBeVisible()
   await expect(page.getByPlaceholder('自由输入你想说的话……')).toBeVisible()
+})
+
+test('reconciles one optimistic player message when the server time differs', async ({ page }) => {
+  await enterWorld(page, { initialConversation: true })
+  await page.getByRole('button', { name: /林慧兰、沈星遥正在聊天/ }).click()
+  await page.getByRole('button', { name: '申请加入聊天' }).click()
+
+  const content = '我也不知道说什么'
+  const composer = page.getByPlaceholder('自由输入你想说的话……')
+  await composer.fill(content)
+  await composer.press('Enter')
+
+  await expect(page.getByText('这件事可以再商量。')).toBeVisible()
+  await expect(page.getByText(content, { exact: true })).toHaveCount(1)
+  await expect(page.getByText('发送中…')).not.toBeVisible()
 })
 
 test('shows a day-end transition from a WebSocket event', async ({ page }) => {

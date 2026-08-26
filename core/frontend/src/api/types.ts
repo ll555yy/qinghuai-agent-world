@@ -153,6 +153,7 @@ export interface HealthStatus {
 
 export interface CommandResponse {
   run: RunSnapshot
+  acceptedMessageId?: string
   conversation?: PublicConversation
   invitation?: PublicInvitation
   joinRequest?: PublicJoinRequest
