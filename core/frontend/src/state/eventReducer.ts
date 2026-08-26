@@ -241,21 +241,24 @@ export function reduceRunEvent(state: WorldData, event: RunEvent): WorldData {
         ...snapshot,
         conversations: replaceConversation(snapshot.conversations, conversation),
       }
-      if (
-        event.eventType === 'conversation_participant_joined' ||
-        event.eventType === 'conversation_participant_left'
-      ) {
-        const action = event.eventType === 'conversation_participant_joined' ? 'joined' : 'left'
-        const actorId = payload[action === 'joined' ? 'actorJoined' : 'actorLeft']
+      const participantAction =
+        event.eventType === 'conversation_participant_joined'
+          ? 'joined'
+          : event.eventType === 'conversation_participant_left' ||
+              (event.eventType === 'conversation_closed' && typeof payload.actorLeft === 'string')
+            ? 'left'
+            : null
+      if (participantAction) {
+        const actorId = payload[participantAction === 'joined' ? 'actorJoined' : 'actorLeft']
         if (typeof actorId === 'string') {
           const systemMessage: PublicMessage = {
             messageId: `event_${event.eventSeq}`,
             conversationId: conversation.conversationId,
             authorActorId: 'system',
-            text: action === 'joined' ? '加入了聊天' : '离开了聊天',
+            text: participantAction === 'joined' ? '加入了聊天' : '已经离开对话',
             system: true,
             systemActorId: actorId,
-            systemAction: action,
+            systemAction: participantAction,
           }
           messages = {
             ...messages,

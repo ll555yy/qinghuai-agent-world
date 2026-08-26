@@ -7,7 +7,7 @@ import { useUiStore } from '../../state/uiStore'
 import { useWorldStore } from '../../state/worldStore'
 
 const closeReasonLabels: Record<string, string> = {
-  fewer_than_two_participants: '参与者不足两人，聊天结束。',
+  fewer_than_two_participants: '聊天已经结束。',
   idle: '连续两轮无人继续发言，聊天自然结束。',
   day_end: '已经到 18:00，今天的聊天结束。',
   chapter_deadline: '七日方案截止，聊天结束。',
@@ -41,6 +41,9 @@ export function ChatPanel() {
     () => new Map(snapshot?.actors.map((actor) => [actor.actorId, actor]) ?? []),
     [snapshot?.actors],
   )
+  const lastDepartedActorId = [...messages]
+    .reverse()
+    .find((message) => message.systemAction === 'left')?.systemActorId
 
   useEffect(() => {
     if (!runId || !conversationId || !isParticipant) return
@@ -225,7 +228,11 @@ export function ChatPanel() {
       </div>
 
       {conversation.status === 'closed' ? (
-        <div className="conversation-ended">{closeReasonLabels[conversation.closeReason ?? ''] ?? '这场聊天已经结束。'}</div>
+        <div className="conversation-ended">
+          {lastDepartedActorId
+            ? `${lastDepartedActorId === PLAYER_ACTOR_ID ? '你' : actorMap.get(lastDepartedActorId)?.name ?? lastDepartedActorId}已经离开对话。`
+            : closeReasonLabels[conversation.closeReason ?? ''] ?? '这场聊天已经结束。'}
+        </div>
       ) : null}
       {error ? <div className="inline-error" role="alert">{error}</div> : null}
       {isParticipant && conversation.status === 'open' ? (

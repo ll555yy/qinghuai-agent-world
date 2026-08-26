@@ -98,6 +98,29 @@ describe('reduceRunEvent', () => {
     expect(updated.messages.conv_1[0]).toMatchObject({ system: true, systemAction: 'left' })
   })
 
+  it('keeps the departing actor when their departure closes the conversation', () => {
+    const original = state()
+    original.snapshot = snapshot({
+      conversations: [{ conversationId: 'conv_1', creationSeq: 1, participants: ['npc_001', 'npc_002'], status: 'open' }],
+    })
+    const updated = reduceRunEvent(original, {
+      runId: 'run_test',
+      eventSeq: 3,
+      stateVersion: 3,
+      eventType: 'conversation_closed',
+      payload: {
+        conversation: { conversationId: 'conv_1', creationSeq: 1, participants: ['npc_001'], status: 'closed', closeReason: 'fewer_than_two_participants' },
+        actorLeft: 'npc_002',
+      },
+    })
+    expect(updated.messages.conv_1[0]).toMatchObject({
+      system: true,
+      systemActorId: 'npc_002',
+      systemAction: 'left',
+      text: '已经离开对话',
+    })
+  })
+
   it('adds a public conversation experience from a live event', () => {
     const updated = reduceRunEvent(state(), {
       runId: 'run_test',
