@@ -2,8 +2,9 @@
 
 The repository keeps the durable aggregate split across the schema-owned
 ``chapter_runs``, actor/schedule, event, command, and world-event tables.  A
-small ``run_state_items`` table stores shape-changing per-run records (drafts,
-messages, memories and relationships) one item per row.  It is deliberately
+small ``run_state_items`` table stores shape-changing per-run records
+    (drafts, messages, memories, relationships and conversation round state)
+    one item per row.  It is deliberately
 not a single JSON document containing the whole Run.  ``run_storage_revisions``
 provides a numeric optimistic-lock token without changing the public domain
 model.
@@ -495,8 +496,20 @@ class SQLAlchemyRunRepository:
         if section in {"goals", "memories", "invitations", "joinRequests"}:
             state.setdefault(section, {})[item_key] = deepcopy(value)
             return
-        if section in {"messages", "segments", "conversationDrafts", "idleCounts"}:
-            state.setdefault(section, {})[item_key] = deepcopy(value)
+        if section in {
+            "messages",
+            "segments",
+            "conversationDrafts",
+            "conversationRoundStates",
+            "conversation_round_states",
+            "idleCounts",
+        }:
+            target_section = (
+                "conversationRoundStates"
+                if section == "conversation_round_states"
+                else section
+            )
+            state.setdefault(target_section, {})[item_key] = deepcopy(value)
             return
         if section in {"relationships", "consolidationStatus"}:
             pair = json.loads(item_key)
@@ -778,7 +791,13 @@ class SQLAlchemyRunRepository:
         for section in ("goals", "memories", "invitations", "joinRequests"):
             for item_key, value in dict(data.get(section, {})).items():
                 append(section, str(item_key), value)
-        for section in ("messages", "segments", "conversationDrafts", "idleCounts"):
+        for section in (
+            "messages",
+            "segments",
+            "conversationDrafts",
+            "conversationRoundStates",
+            "idleCounts",
+        ):
             for item_key, value in dict(data.get(section, {})).items():
                 append(section, str(item_key), value)
         for section in ("relationships", "consolidationStatus", "chapterAgendaStances"):

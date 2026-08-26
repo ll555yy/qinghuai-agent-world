@@ -1,0 +1,53 @@
+{
+  "cost": null,
+  "costNote": "Provider response exposes token usage but no billed amount.",
+  "errorCode": null,
+  "errors": {},
+  "events": {
+    "conversation_activity": 5,
+    "conversation_closed": 2,
+    "conversation_idle": 3,
+    "message_created": 3,
+    "npc_consolidated": 2,
+    "npc_thought_started": 1,
+    "npc_waited": 1,
+    "run_created": 1,
+    "world_event_occurred": 1
+  },
+  "finalCheckDecisionCalls": 5,
+  "gates": {
+    "allPhysicalRequestsSettled": true,
+    "cooldownConversationClosed": true,
+    "cooldownEntered": true,
+    "crossConversationDecisionOverlap": true,
+    "doubleNpcSameRound": true,
+    "finalCheckExecuted": true,
+    "globalConcurrencyObserved": true,
+    "noModelErrors": true,
+    "noUnhandledError": true,
+    "withinLogicalCallBudget": true
+  },
+  "latencyMs": 52069,
+  "live": true,
+  "modelCompletedRequests": 16,
+  "modelLogicalCalls": 16,
+  "modelPhysicalRequests": 17,
+  "observedConcurrencyPeak": 5,
+  "protocolCounts": {
+    "ChatDecision": 9,
+    "ExitConsolidation": 2,
+    "SegmentSummary": 1,
+    "SpeechGeneration": 4
+  },
+  "providerFailedRequests": 0,
+  "providerRetries": 1,
+  "rateLimited": false,
+  "requestSent": true,
+  "seed": 20260826,
+  "status": "passed",
+  "tokenUsage": {
+    "completionTokens": 12249,
+    "promptTokens": 54809,
+    "totalTokens": 67058
+  }
+}

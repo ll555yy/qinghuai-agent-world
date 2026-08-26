@@ -59,7 +59,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 
 async function mockBackend(
   page: Page,
-  options: { healthFailure?: boolean; initialConversation?: boolean; ended?: boolean; dayEndEvent?: boolean; nearDayEnd?: boolean; refuseInvite?: boolean } = {},
+  options: { healthFailure?: boolean; initialConversation?: boolean; ended?: boolean; dayEndEvent?: boolean; nearDayEnd?: boolean; refuseInvite?: boolean; messageReplyDelayMs?: number; leaveDelayMs?: number } = {},
 ) {
   const initialConversation = options.initialConversation
     ? [{ conversationId: 'conv_1', creationSeq: 1, participants: ['npc_001', 'npc_002'], status: 'open' as const }]
@@ -124,6 +124,7 @@ async function mockBackend(
     if (messageMatch && request.method() === 'GET') return fulfillJson(route, { conversationId: messageMatch[1], messages: conversationMessages })
     if (messageMatch && request.method() === 'POST') {
       const data = request.postDataJSON() as { text: string }
+      if (options.messageReplyDelayMs) await new Promise((resolve) => setTimeout(resolve, options.messageReplyDelayMs))
       conversationMessages = [
         ...conversationMessages,
         { messageId: 'msg_player', conversationId: messageMatch[1], authorActorId: 'player_001', text: data.text, createdAt: 'Day1 09:06' },
@@ -133,6 +134,7 @@ async function mockBackend(
       return fulfillJson(route, { run: current, conversation, messages: conversationMessages })
     }
     if (path.includes('/participants/player_001') && request.method() === 'DELETE') {
+      if (options.leaveDelayMs) await new Promise((resolve) => setTimeout(resolve, options.leaveDelayMs))
       const existing = current.conversations[0]
       const conversation = { ...existing, participants: existing.participants.filter((id) => id !== 'player_001'), status: 'closed' as const, closeReason: 'fewer_than_two_participants' }
       current = { ...current, conversations: [conversation] }
@@ -205,8 +207,8 @@ test('restores the authoritative Run after a page reload', async ({ page }) => {
   await expect(page.getByText('Day 1 / 7')).toBeVisible()
 })
 
-test('opens a public actor card and completes a player chat', async ({ page }) => {
-  await enterWorld(page)
+test('shows a player message and leaves immediately while model work continues', async ({ page }) => {
+  await enterWorld(page, { messageReplyDelayMs: 800, leaveDelayMs: 800 })
   await expect(page.getByLabel('慎之旧书店二维场景')).toHaveAttribute('data-ready', 'true')
   const canvas = page.locator('canvas')
   const box = await canvas.boundingBox()
@@ -223,12 +225,17 @@ test('opens a public actor card and completes a player chat', async ({ page }) =
   await canvas.click({ button: 'right', position: { x: (126 / 880) * secondBox.width, y: (286 / 534) * secondBox.height } })
   await page.getByRole('button', { name: '发出聊天邀请' }).click()
   await expect(page.getByText('既然来了，就坐下谈谈吧。')).toBeVisible()
-  await page.getByPlaceholder('自由输入你想说的话……').fill('我希望大家先确认书店的底线。')
-  await page.getByRole('button', { name: '发送' }).click()
+  const composer = page.getByPlaceholder('自由输入你想说的话……')
+  await composer.fill('需要换行')
+  await composer.press('Shift+Enter')
+  await expect(composer).toHaveValue('需要换行\n')
+  await composer.fill('我希望大家先确认书店的底线。')
+  await composer.press('Enter')
   await expect(page.getByText('我希望大家先确认书店的底线。')).toBeVisible()
-  await expect(page.getByText('这件事可以再商量。')).toBeVisible()
+  await expect(page.getByText('发送中…')).toBeVisible()
   await page.getByRole('button', { name: '离开聊天' }).click()
-  await expect(page.getByText('参与者不足两人，聊天结束。')).toBeVisible()
+  await expect(page.getByPlaceholder('自由输入你想说的话……')).not.toBeVisible()
+  await expect(page.getByText('你离开了聊天。')).toBeVisible()
 })
 
 test('requests to join an existing chat and receives its earlier history', async ({ page }) => {

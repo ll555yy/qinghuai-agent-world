@@ -223,6 +223,15 @@ async def _main() -> int:
             ),
             timeout=args.timeout_seconds,
         )
+        await service.wait_for_chat_idle(
+            run_id,
+            conversation_id,
+            timeout=args.timeout_seconds,
+        )
+        message_result = await service.get_messages(
+            run_id,
+            conversation_id,
+        )
         traces = tuple(service.agent_runtime.trace_sink.snapshot())
         tool_traces = tuple(trace for trace in traces if trace.tool_used)
         post_recall_tool_traces = tuple(

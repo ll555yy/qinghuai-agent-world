@@ -22,14 +22,14 @@
 | 回应 NPC 加入 | `POST /api/runs/{runId}/join-requests/{id}/respond` | `{accepted,commandId}` | 加入请求结果 |
 | 查询加入请求 | `GET /api/runs/{runId}/join-requests/{id}` | 无 | 请求最新状态 |
 | 获取历史 | `GET /api/runs/{runId}/conversations/{id}/messages` | 无 | 玩家曾参与会话的公开历史 |
-| 玩家发言 | `POST /api/runs/{runId}/conversations/{id}/messages` | `{text,commandId}` | 新会话状态和快照 |
-| 玩家离开 | `DELETE /api/runs/{runId}/conversations/{id}/participants/player_001` | `{commandId}` | 会话和快照 |
+| 玩家发言 | `POST /api/runs/{runId}/conversations/{id}/messages` | `{text,commandId}` | 立即返回 `acceptedMessageId`、消息列表和快照；NPC 轮次异步继续 |
+| 玩家离开 | `DELETE /api/runs/{runId}/conversations/{id}/participants/player_001` | `{commandId}` | 参与者变化立即返回；摘要/沉淀在可恢复后台维护中完成 |
 
 `commandId` 由前端为每次用户命令生成 UUID。同一命令重试必须复用原 UUID，新操作必须新建 UUID。
 
 ## 2. WebSocket
 
-连接：`/ws/runs/{runId}?afterSeq=N`。
+连接：`/ws/runs/{runId}?afterSeq=N`。同一 Run 的实时发布由 EventHub 按 `eventSeq` 缓冲并顺序投递，避免并行命令或逐条 NPC 发布造成高序号先到。
 
 若携带 `afterSeq`，服务器会先重放缺失事件，再发送公开快照；无 `afterSeq` 时直接发送快照。客户端通过是否具有 `eventType` 区分事件与快照，并按 `eventSeq` 去重。快照总是可以替换公开服务器状态，UI 临时状态不随快照清空。
 
@@ -56,7 +56,7 @@
 | `conversation_participant_joined` | conversation、actorJoined | 更新成员并插入系统消息 |
 | `conversation_participant_left` | conversation、actorLeft | 更新成员并插入系统消息 |
 | `conversation_closed` | conversation | 关闭输入，显示 closeReason |
-| `message_created` | conversationId、messageId、authorActorId、text | 追加公开消息；没有 text 时不得生成台词 |
+| `message_created` | conversationId、messageId、authorActorId、text、roundId?、roundSequence?、replyToMessageIds? | 按 messageId 幂等追加并保留服务端到达顺序；canonical 玩家消息替换同一条乐观消息 |
 | `conversation_activity` | conversationId、reason | 显示非文本活动状态 |
 | `conversation_idle` | conversationId、idleCount | 显示短暂静默状态；不由前端计轮次 |
 | `join_request_created` | joinRequest | 绘制加入请求；玩家是审批人时弹响应卡 |
@@ -72,7 +72,7 @@
 - `PublicActor`：actorId、kind、name、role、publicBackground、publicImpression。
 - `ActorState`：status、position。
 - `PublicConversation`：conversationId、creationSeq、participants、status、closeReason?。
-- `PublicMessage`：messageId、conversationId、authorActorId、text、createdAt、segmentId。
+- `PublicMessage`：messageId、conversationId、authorActorId、text、createdAt、segmentId，以及可选 roundId、roundSequence、replyToMessageIds。
 - `PublicWorldEvent`：eventId、worldDay、at、visibility、sourceLabel、summary。
 - `ChapterResolution`：chapterId、branch、agendaResults、playerTaskResult、actorStances、playerHighlights。
 - `RunSnapshot`：公开快照字段的组合，含仅与玩家相关的 `pendingInvitations` 和 `pendingJoinRequests`，用于正常重连恢复。

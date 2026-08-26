@@ -1276,6 +1276,11 @@ class SevenDaySimulationRunner:
                     f"simulation_player_message_{route}_{step.step_id}"
                 ),
             )
+            await service.wait_for_chat_idle(
+                run.run_id,
+                conversation_id,
+                timeout=60.0,
+            )
             metrics.scripted_actions["message_sent"] += 1
             metrics.scripted_actions["strategy_step_sent"] += 1
             metrics.scripted_actions[f"step_{step.step_id}_sent"] += 1

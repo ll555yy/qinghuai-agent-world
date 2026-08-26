@@ -108,11 +108,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             segment_boundary_carryover_messages=(
                 runtime_settings.segment_boundary_carryover_messages
             ),
+            model_max_concurrency=runtime_settings.model_max_concurrency,
+            chat_cooldown_seconds=runtime_settings.chat_cooldown_seconds,
+            chat_publish_delay_min_seconds=(
+                runtime_settings.chat_publish_delay_min_seconds
+            ),
+            chat_publish_delay_max_seconds=(
+                runtime_settings.chat_publish_delay_max_seconds
+            ),
+            chat_model_call_timeout_seconds=(
+                runtime_settings.chat_model_call_timeout_seconds
+            ),
         )
         application.state.scenario_loaded = True
         try:
             yield
         finally:
+            await application.state.run_service.close()
             await application.state.ai_client.close()
             if application.state.embedding_client is not None:
                 await application.state.embedding_client.close()

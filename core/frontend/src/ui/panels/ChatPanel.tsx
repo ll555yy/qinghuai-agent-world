@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 import { ApiError, api } from '../../api/client'
 import { PLAYER_ACTOR_ID } from '../../api/types'
@@ -20,12 +20,17 @@ export function ChatPanel() {
   const closePanel = useUiStore((state) => state.closePanel)
   const messagesByConversation = useWorldStore((state) => state.messages)
   const setConversationMessages = useWorldStore((state) => state.setConversationMessages)
+  const appendConversationMessage = useWorldStore((state) => state.appendConversationMessage)
+  const setMessageDeliveryStatus = useWorldStore((state) => state.setMessageDeliveryStatus)
   const setSnapshot = useWorldStore((state) => state.setSnapshot)
   const setJoinRequest = useWorldStore((state) => state.setJoinRequest)
   const addNotice = useWorldStore((state) => state.addNotice)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const messageListRef = useRef<HTMLDivElement>(null)
+  const pendingSendRef = useRef<Promise<void> | null>(null)
+  const leavingConversationIdsRef = useRef(new Set<string>())
 
   const conversation = snapshot?.conversations.find((item) => item.conversationId === conversationId)
   const runId = snapshot?.runId
@@ -42,6 +47,11 @@ export function ChatPanel() {
       .then((result) => setConversationMessages(conversationId, result.messages))
       .catch(() => undefined)
   }, [conversationId, isParticipant, runId, setConversationMessages])
+
+  useEffect(() => {
+    const list = messageListRef.current
+    if (list) list.scrollTop = list.scrollHeight
+  }, [messages.length])
 
   if (!snapshot || !conversation) {
     return <div className="panel-content"><header><span>聊天</span><button type="button" className="icon-button" onClick={closePanel}>×</button></header><p className="empty-state">这场聊天已经不可用。</p></div>
@@ -70,22 +80,95 @@ export function ChatPanel() {
     if (result.messages) setConversationMessages(conversation.conversationId, result.messages)
   })
 
-  const leave = () => runAction(async () => {
-    const result = await api.leaveConversation(snapshot.runId, conversation.conversationId)
-    setSnapshot(result.run)
+  const leave = () => {
+    const activeRunId = snapshot.runId
+    const activeConversationId = conversation.conversationId
+    const pendingSend = pendingSendRef.current
+    leavingConversationIdsRef.current.add(activeConversationId)
+    const remainingParticipants = conversation.participants.filter((id) => id !== PLAYER_ACTOR_ID)
+    const optimisticConversation = {
+      ...conversation,
+      participants: remainingParticipants,
+      ...(remainingParticipants.length < 2
+        ? { status: 'closed' as const, closeReason: 'fewer_than_two_participants' }
+        : {}),
+    }
+    setSnapshot({
+      ...snapshot,
+      conversations: snapshot.conversations.map((item) =>
+        item.conversationId === activeConversationId ? optimisticConversation : item,
+      ),
+      actorStates: {
+        ...snapshot.actorStates,
+        [PLAYER_ACTOR_ID]: {
+          ...snapshot.actorStates[PLAYER_ACTOR_ID],
+          status: 'present',
+        },
+      },
+    })
+    closePanel()
     addNotice('你离开了聊天。')
-  })
+    const request = () => api.leaveConversation(activeRunId, activeConversationId)
+    void (pendingSend ? pendingSend.then(request) : request())
+      .then((result) => setSnapshot(result.run))
+      .catch(async (reason) => {
+        addNotice(
+          reason instanceof ApiError ? `离开聊天未同步：${reason.message}` : '离开聊天未同步，正在恢复服务器状态。',
+          'error',
+        )
+        try {
+          setSnapshot(await api.getRun(activeRunId))
+        } catch {
+          // WebSocket reconnect and the next world step remain as recovery paths.
+        }
+      })
+      .finally(() => leavingConversationIdsRef.current.delete(activeConversationId))
+  }
 
   const send = (event: FormEvent) => {
     event.preventDefault()
     const content = text.trim()
-    if (!content) return
-    runAction(async () => {
-      const result = await api.sendMessage(snapshot.runId, conversation.conversationId, content)
-      setSnapshot(result.run)
-      if (result.messages) setConversationMessages(conversation.conversationId, result.messages)
-      setText('')
+    if (!content || busy) return
+    const activeConversationId = conversation.conversationId
+    const optimisticMessageId = `pending_${crypto.randomUUID()}`
+    appendConversationMessage(activeConversationId, {
+      messageId: optimisticMessageId,
+      conversationId: activeConversationId,
+      authorActorId: PLAYER_ACTOR_ID,
+      text: content,
+      createdAt: snapshot.worldTime.label,
+      deliveryStatus: 'sending',
     })
+    setText('')
+    setBusy(true)
+    setError(null)
+    const pendingSend = api.sendMessage(snapshot.runId, activeConversationId, content)
+      .then((result) => {
+        if (!leavingConversationIdsRef.current.has(activeConversationId)) setSnapshot(result.run)
+        if (result.messages) setConversationMessages(activeConversationId, result.messages)
+      })
+      .catch((reason) => {
+        setMessageDeliveryStatus(activeConversationId, optimisticMessageId, 'failed')
+        setText((current) => current || content)
+        setError(reason instanceof ApiError ? reason.message : reason instanceof Error ? reason.message : '消息没有发送成功。')
+      })
+      .finally(() => {
+        setBusy(false)
+        if (pendingSendRef.current === pendingSend) pendingSendRef.current = null
+      })
+    pendingSendRef.current = pendingSend
+  }
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key !== 'Enter'
+      || event.shiftKey
+      || event.nativeEvent.isComposing
+      || event.nativeEvent.keyCode === 229
+    ) return
+
+    event.preventDefault()
+    event.currentTarget.form?.requestSubmit()
   }
 
   return (
@@ -113,13 +196,18 @@ export function ChatPanel() {
         </section>
       ) : null}
 
-      <div className="message-list" aria-live="polite">
+      <div ref={messageListRef} className="message-list" aria-live="polite">
         {messages.length ? messages.map((message) => (
-          <article key={message.messageId} className={`${message.system ? 'system-message' : ''} ${message.authorActorId === PLAYER_ACTOR_ID ? 'own-message' : ''}`}>
+          <article key={message.messageId} className={`${message.system ? 'system-message' : ''} ${message.authorActorId === PLAYER_ACTOR_ID ? 'own-message' : ''} ${message.deliveryStatus ? `message-${message.deliveryStatus}` : ''}`}>
             {!message.system ? <i className="message-avatar" style={actorPortraitCss(message.authorActorId)} aria-hidden="true" /> : null}
             {!message.system ? <strong>{message.authorActorId === PLAYER_ACTOR_ID ? '你' : actorMap.get(message.authorActorId)?.name ?? message.authorActorId}</strong> : null}
             <p>{message.system && message.systemActorId ? `${message.systemActorId === PLAYER_ACTOR_ID ? '你' : actorMap.get(message.systemActorId)?.name ?? message.systemActorId}${message.text}` : message.text}</p>
             {message.createdAt ? <time>{message.createdAt}</time> : null}
+            {message.deliveryStatus ? (
+              <span className="message-delivery" role={message.deliveryStatus === 'failed' ? 'alert' : undefined}>
+                {message.deliveryStatus === 'sending' ? '发送中…' : '发送失败'}
+              </span>
+            ) : null}
           </article>
         )) : <p className="empty-state">{isParticipant ? '聊天刚刚开始。' : '加入后可以查看此前的聊天记录。'}</p>}
       </div>
@@ -136,11 +224,14 @@ export function ChatPanel() {
             rows={3}
             placeholder="自由输入你想说的话……"
             onChange={(event) => setText(event.target.value)}
+            onKeyDown={handleComposerKeyDown}
+            aria-keyshortcuts="Enter"
+            title="Enter 发送，Shift+Enter 换行"
           />
           <div>
-            <button type="button" className="text-button danger-text" disabled={busy} onClick={leave}>离开聊天</button>
+            <button type="button" className="text-button danger-text" onClick={leave}>离开聊天</button>
             <span>{text.length}/2000</span>
-            <button type="submit" disabled={busy || !text.trim()}>{busy ? '等待 NPC……' : '发送'}</button>
+            <button type="submit" disabled={busy || !text.trim()}>{busy ? 'NPC 正在回复…' : '发送'}</button>
           </div>
         </form>
       ) : null}

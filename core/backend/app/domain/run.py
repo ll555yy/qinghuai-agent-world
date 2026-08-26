@@ -10,6 +10,48 @@ from typing import Any
 from .clock import WorldClock
 from .conversation import Conversation
 
+ConversationRoundState = dict[str, Any]
+
+
+def new_conversation_round_state(
+    *,
+    round_id: int = 0,
+    segment_id: str | None = None,
+    participant_version: int = 0,
+) -> ConversationRoundState:
+    """Return the durable baseline for one conversation's message round.
+
+    Round state intentionally remains JSON-shaped.  The orchestrator can add
+    provider-specific recovery details to ``recovery`` or publication records
+    without changing the aggregate schema, while these baseline keys provide
+    a stable contract for old and new callers.  ``asyncio.Lock`` instances and
+    tasks live in the separate runtime registries on :class:`Run`.
+    """
+
+    return {
+        "roundId": round_id,
+        "status": "idle",
+        "roundVersion": 0,
+        "triggerMessageIds": [],
+        "queuedMessageIds": [],
+        "segmentId": segment_id,
+        "participantVersion": int(participant_version),
+        "cooldownDueAt": None,
+        "finalCheckUsed": False,
+        "pendingPublications": [],
+        "pendingLeaverIds": [],
+        "pendingPostSpeechLeaverIds": [],
+        "npcOnlyRounds": 0,
+        "openerActorId": None,
+        "openerKind": None,
+        "awaitingPlayerOpener": False,
+        "recovery": {
+            "resumeStatus": None,
+            "attempt": 0,
+            "publishedMessageIds": [],
+        },
+    }
+
 
 @dataclass(slots=True)
 class RunEvent:
@@ -98,11 +140,53 @@ class Run:
     in_flight_speech_calls: int = 0
     pending_day_end: tuple[int, str] | None = None
     pending_chapter_event_id: str | None = None
-    # Serialize top-level player-driven chat chains per Run.  This prevents a
-    # second chain from queuing behind AgentRuntime's global model lock and
-    # only reaching the provider after the day-end barrier.
-    chat_pipeline_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    # Durable per-conversation round state.  Values are deliberately plain
+    # JSON-shaped mappings so a round can be resumed after a process restart.
+    # Runtime locks/tasks are kept in the registries below and are never part
+    # of this mapping or of the storage codec.  These fields are at the end of
+    # the dataclass to keep legacy positional construction stable.
+    conversation_round_states: dict[str, ConversationRoundState] = field(default_factory=dict)
+    conversation_round_locks: dict[str, asyncio.Lock] = field(
+        default_factory=dict,
+        repr=False,
+    )
+    conversation_round_tasks: dict[str, asyncio.Task[Any]] = field(
+        default_factory=dict,
+        repr=False,
+    )
+
+    def ensure_conversation_round_state(self, conversation_id: str) -> ConversationRoundState:
+        """Return and lazily initialize durable state for ``conversation_id``.
+
+        Legacy runs do not have a round-state entry.  Initializing on demand
+        keeps those snapshots compatible while allowing the message-driven
+        orchestrator to use one consistent state shape.
+        """
+
+        state = self.conversation_round_states.get(conversation_id)
+        if state is None:
+            state = new_conversation_round_state()
+            self.conversation_round_states[conversation_id] = state
+        return state
+
+    def conversation_round_lock(self, conversation_id: str) -> asyncio.Lock:
+        """Return the process-local lock for one conversation.
+
+        Locks are recreated lazily after deserialization, and therefore never
+        need a persistence representation.  Keeping one lock per conversation
+        permits provider waits in different conversations to overlap while
+        still serializing transitions within a single conversation.
+        """
+
+        lock = self.conversation_round_locks.get(conversation_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.conversation_round_locks[conversation_id] = lock
+        return lock
+
+    # A descriptive alias for callers that prefer an explicit ``get`` name.
+    get_conversation_round_lock = conversation_round_lock
 
     def next_conversation_identity(self) -> tuple[str, int]:
         self.next_conversation_seq += 1

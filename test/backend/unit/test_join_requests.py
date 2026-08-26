@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 
 import pytest
+
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.clock import WorldTime
 from core.backend.app.domain.errors import (
@@ -96,6 +97,8 @@ async def test_two_npc_approvers_must_both_accept_before_join(registry) -> None:
     model = JoinDecisionModel()
     service = RunService(registry, text_model=model)
     created, run, conversation_id = await _two_npc_chat(service)
+    await service.wait_for_chat_idle(created["runId"], conversation_id)
+    model.chat_contexts.clear()
     conversation = run.conversations[conversation_id]
     async with run.lock:
         service._write_message_locked(run, conversation, "npc_001", "加入前的旧话")
@@ -112,6 +115,7 @@ async def test_two_npc_approvers_must_both_accept_before_join(registry) -> None:
         "npc_003",
         "join-once",
     )
+    await service.wait_for_chat_idle(created["runId"], conversation_id)
 
     assert result == repeated
     assert result["joinRequest"]["status"] == "accepted"
@@ -131,9 +135,10 @@ async def test_two_npc_approvers_must_both_accept_before_join(registry) -> None:
     assert len(run.segments[conversation_id]) == 2
     assert run.segments[conversation_id][0]["endedAt"] == "Day1 09:00"
     assert run.segments[conversation_id][1]["participants"] == conversation.participants
-    assert {
-        context["context"]["trigger"] for context in model.chat_contexts
-    } == {"actor_joined:npc_003"}
+    assert [context["actor"]["actorId"] for context in model.chat_contexts] == [
+        "npc_003"
+    ]
+    assert model.chat_contexts[0]["context"]["trigger"] == "join_opener"
     assert len(
         [event for event in run.events if event.event_type == "join_request_created"]
     ) == 1
@@ -166,7 +171,8 @@ async def test_one_npc_refusal_stops_join_without_relation_change(registry) -> N
     assert result["joinRequest"]["status"] == "refused"
     assert run.conversations[conversation_id].participants == ["npc_001", "npc_002"]
     assert [context["actor"]["actorId"] for context in model.join_contexts] == [
-        "npc_001"
+        "npc_001",
+        "npc_002",
     ]
     assert run.actor_states["npc_003"]["status"] == "waiting"
     assert {
@@ -192,6 +198,7 @@ async def test_player_approver_must_respond_and_response_is_idempotent(registry)
         ["npc_001", registry.player_actor_id],
     )
     conversation_id = opened["conversation"]["conversationId"]
+    await service.wait_for_chat_idle(created["runId"], conversation_id)
     run = await service.get_run_entity(created["runId"])
 
     pending = await service.add_participant(
@@ -471,6 +478,7 @@ async def test_day7_clears_stale_pending_join_before_chapter_resolution(registry
         ["npc_001", registry.player_actor_id],
     )
     conversation_id = opened["conversation"]["conversationId"]
+    await service.wait_for_chat_idle(created["runId"], conversation_id)
     run = await service.get_run_entity(created["runId"])
     async with run.lock:
         run.clock.current = WorldTime(day=7, hour=16, minute=59)

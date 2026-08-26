@@ -541,6 +541,15 @@ button:focus-visible {
   background: #dde5d7;
 }
 
+.message-list article.message-sending {
+  opacity: 0.82;
+}
+
+.message-list article.message-failed {
+  border: 1px solid rgb(166 75 60 / 38%);
+  background: #f4ddd7;
+}
+
 .message-list article.system-message {
   margin-right: auto;
   padding: 0.28rem 0.65rem;
@@ -569,6 +578,18 @@ button:focus-visible {
   color: #a09280;
   font-size: 0.65rem;
   text-align: right;
+}
+
+.message-delivery {
+  display: block;
+  margin-top: 0.25rem;
+  color: #817261;
+  font-size: 0.65rem;
+  text-align: right;
+}
+
+.message-failed .message-delivery {
+  color: #a64b3c;
 }
 
 .join-prompt,

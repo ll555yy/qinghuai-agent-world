@@ -28,6 +28,67 @@ def _copy(value: Any) -> Any:
     return deepcopy(value)
 
 
+_ROUND_RUNTIME_KEYS = frozenset(
+    {
+        "lock",
+        "task",
+        "runtimeLock",
+        "runtimeTask",
+        "conversationRoundLock",
+        "conversationRoundTask",
+    }
+)
+
+
+def _copy_round_state(value: Any) -> dict[str, Any]:
+    """Copy one round state while filtering accidental runtime handles.
+
+    Round state is intentionally an open JSON-shaped mapping: the scheduler
+    may add recovery metadata without requiring a schema migration.  The
+    explicit filter protects the durable boundary if a caller temporarily
+    attaches a task or lock to a state while debugging or publishing.
+    """
+
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): _copy(item)
+        for key, item in value.items()
+        if str(key) not in _ROUND_RUNTIME_KEYS
+    }
+
+
+def _encode_conversation_round_states(run: Run) -> dict[str, dict[str, Any]]:
+    return {
+        str(conversation_id): _copy_round_state(state)
+        for conversation_id, state in run.conversation_round_states.items()
+    }
+
+
+def _decode_conversation_round_states(value: Any) -> dict[str, dict[str, Any]]:
+    """Decode current and early map-shaped round state snapshots.
+
+    The map form is the canonical representation.  Accepting a list of
+    ``{conversationId, state}`` records costs little and makes recovery
+    tolerant of an early development snapshot format.
+    """
+
+    if isinstance(value, Mapping):
+        return {
+            str(conversation_id): _copy_round_state(state)
+            for conversation_id, state in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        decoded: dict[str, dict[str, Any]] = {}
+        for item in value:
+            if not isinstance(item, Mapping) or "conversationId" not in item:
+                continue
+            state = item.get("state", item.get("roundState", item))
+            decoded[str(item["conversationId"])] = _copy_round_state(state)
+        return decoded
+    return {}
+
+
 def _encode_pair_map(
     values: Mapping[tuple[str, str], Any],
     first_key: str,
@@ -177,6 +238,7 @@ def serialize_run(run: Run) -> dict[str, Any]:
         "messages": _copy(run.messages),
         "segments": _copy(run.segments),
         "conversationDrafts": _copy(run.conversation_drafts),
+        "conversationRoundStates": _encode_conversation_round_states(run),
         "idleCounts": _copy(run.idle_counts),
         "consolidationStatus": _encode_pair_map(
             run.consolidation_status,
@@ -295,6 +357,13 @@ def deserialize_run(
     run.messages = _copy(data.get("messages", {}))
     run.segments = _copy(data.get("segments", {}))
     run.conversation_drafts = _copy(data.get("conversationDrafts", {}))
+    round_states = data.get("conversationRoundStates")
+    if round_states is None:
+        # A few pre-release snapshots used Python field names.  Keep this
+        # fallback read-only compatibility path; new writes always use the
+        # camelCase storage key above.
+        round_states = data.get("conversation_round_states", {})
+    run.conversation_round_states = _decode_conversation_round_states(round_states)
     run.idle_counts = {
         str(conversation_id): int(count)
         for conversation_id, count in dict(data.get("idleCounts", {})).items()
@@ -327,6 +396,13 @@ def deserialize_run(
     for item in data.get("conversations", ()):
         conversation = _new_conversation(item)
         run.conversations[conversation.conversation_id] = conversation
+
+    # Runtime locks are deliberately reconstructed from durable conversation
+    # identities rather than decoded from storage.  A state row can briefly
+    # outlive its Conversation row during a recovery transition, so include
+    # both sets of IDs and let the lazy accessor handle any later additions.
+    for conversation_id in set(run.conversations) | set(run.conversation_round_states):
+        run.conversation_round_lock(conversation_id)
 
     for item in data.get("commandRecords", ()):
         run.command_records[str(item["commandId"])] = CommandRecord(

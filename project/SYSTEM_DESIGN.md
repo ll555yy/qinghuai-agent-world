@@ -3,7 +3,7 @@
 - 状态：基于已确认玩法的实施设计
 - 技术栈：已确认，见 `TECH_STACK.md`
 - 范围：单场景、五名 NPC、一名玩家、最多两场并行聊天、Day1～Day7 单章节
-- 当前实现修订：数据库阶段已落地，并已加入审批、NPC 离场和每日时隙。
+- 当前实现修订：数据库阶段、审批、NPC 离场、每日时隙和消息驱动并行聊天轮次均已落地，详见 `MESSAGE_DRIVEN_CHAT_ROUNDS_DESIGN.md`。
 
 ## 1. 核心不变量
 
@@ -95,20 +95,23 @@ creating → opening → active ↔ waiting_ai → idle_pending → closing → 
 - 每次参与者集合变化立即关闭当前 ConversationSegment，创建新 Segment；继续参与者读取旧 Segment 摘要和最近 4 条边界原文，新加入 NPC 只读取新 Segment，玩家 UI 可以读取 Conversation 全历史。
 - NPC `leave_chat` 时先关闭其共同可见区间，再执行该 NPC 的 `ExitConsolidation`；其他参与者可以继续。
 - 玩家离开只产生参与者事件和 Segment 边界，不强制剩余 NPC 立即沉淀。若剩余不足两人，Conversation 关闭，剩余 NPC 执行沉淀。
-- 所有 NPC 选择等待后进入 `idle_pending`。达到空闲阈值触发一次 `conversation_idle`；仍无人发言则关闭会话。
+- 聊天编排由新消息驱动：同轮 NPC 并行判断，全部合法发言者都可回复；同轮结果完整发布后再触发下一轮。同一 Conversation 不重叠轮次，不同 Conversation 可并行。
+- 一轮无人发言后进入默认 12 秒冷场等待；玩家发言立即取消并重置。到期只复询一次，仍无人发言则 NPC 走正常离场与沉淀。固定约 4 秒的 Conversation 自主续聊已取消。
+- 发起者先说开场白；NPC 加入者先说入场话。玩家发起或加入时只使用玩家第一条真实输入，系统不得替玩家编造台词。
+- 完整目标规则、自然逐条发布、并发与恢复边界见 `MESSAGE_DRIVEN_CHAT_ROUNDS_DESIGN.md`；落地步骤见 `MESSAGE_DRIVEN_CHAT_ROUNDS_IMPLEMENTATION_PLAN.md`。
 - Conversation 关闭或参与者变化时，已结束 Segment 执行 `SegmentSummary`；摘要只属于可见集合，不带单一 `ownerNpcId`。
 
 ## 7. 新消息处理流水线
 
-1. 把玩家/NPC 消息或参与者事件追加到 Conversation，生成单调递增的 `eventSeq`。
-2. 对当前每名 NPC 组装其实际可见上下文，通过该 NPC 的逻辑 `NPCAgent` 进入共享编译的 LangGraph `chat_message_received` 流程并调用 `ChatDecision`。
-3. 返回 `need_memory` 时，LangGraph 的显式 `retrieve_owned_memories` 工具节点使用运行时注入的 owner 执行一次检索，再针对同一 `eventSeq` 调用第二次决策；`RunService` 不保留另一条手写召回路径。
-4. 校验 `goalUpdates`、`relationshipUpdates` 和 `pendingGoal`，写入当前 NPC 的会话私有草稿。
-5. 先处理立即 `leave_chat` 的 NPC，再从剩余 `speak` 申请中按点名、`responseDesire`、连续发言惩罚和稳定随机种子选一人。
-6. 只有胜出者执行 `SpeechGeneration`；输出文本写入新消息并开始下一轮。
-7. 若无人发言，则本轮完成并进入等待或空闲收束。玩家触发的前台暂停令牌在此时释放，不要求必须生成台词。
+1. 玩家/NPC 消息立即追加到 Conversation 并生成单调递增的 `eventSeq`；活动轮次期间的新玩家消息进入下一轮队列，但仍立即持久化和展示。
+2. 冻结当前 `roundId`、Segment、参与者版本和触发消息；对所有符合条件的 NPC 组装各自实际可见上下文，并行进入共享编译的 LangGraph `chat_message_received` 流程。
+3. 返回 `need_memory` 时，仍由 LangGraph 的显式 `retrieve_owned_memories` 工具节点使用运行时注入的 owner 检索，再针对同一轮次执行第二次决策；`RunService` 不增加旁路召回。
+4. 等待本轮决定全部完成或超时，重新校验版本后统一校验并合并 `goalUpdates`、`relationshipUpdates`、`pendingGoal` 和 `chapterEffects` 到每名 NPC 的会话私有草稿。
+5. 先处理立即 `leave_chat`；全部合法 `speak` 申请者并行执行 `SpeechGeneration`，每个 NPC 每轮最多一条，不再只选择一名胜出者。
+6. 台词按“直接点名、responseDesire、加入顺序、actorId”稳定排序，以确定性的自然间隔逐条持久化并广播；Provider 返回速度不决定消息顺序。
+7. 本轮全部发布后，将本轮消息与排队玩家消息组成下一轮输入。若无人发言则进入一次冷场计时和一次最终复询，而不是固定世界时钟轮询。
 
-所有异步返回都必须匹配当前 `runId + conversationId + eventSeq + stateVersion`；不匹配的结果记录为 stale 后丢弃，不能修改状态。
+所有异步返回都必须匹配冻结的 `runId + conversationId + roundId + roundVersion + segmentId + participantVersion + triggerMessageIds`。活动轮次期间排队的玩家消息可以推进全局 `eventSeq/stateVersion`，但不会单独使当前轮失效；参与者/Segment 改变、轮次被替换或日终屏障等不兼容变化仍会使旧结果成为 stale，且不能修改消息或草稿。
 
 ## 8. 六类 AI 调用职责
 
@@ -193,7 +196,7 @@ creating → opening → active ↔ waiting_ai → idle_pending → closing → 
 - DailyActionDecision 失败：`wait`。
 - InvitationDecision 失败：`refuse`。
 - ChatDecision 失败：`wait`，不修改草稿。
-- SpeechGeneration 失败：本轮无人发言，进入等待；不伪造台词。
+- SpeechGeneration 失败：只取消该 NPC 本轮台词；其他成功台词照常发布。整轮均失败时进入冷场；不伪造台词。
 - SegmentSummary 失败：保留原文，延后重试，不阻塞聊天。
 - ExitConsolidation 失败：不丢弃草稿和消息，标记待重试；Day7 必须完成或以已有已验证草稿提交，不能由失败模型凭空补状态。
 - 所有写入使用幂等键，过期 AI 返回只能记日志，不能重新应用。
@@ -222,5 +225,5 @@ creating → opening → active ↔ waiting_ai → idle_pending → closing → 
 - Python 后端使用 FastAPI + Uvicorn，Pydantic v2 统一 HTTP、WebSocket、配置和模型输出契约。
 - PostgreSQL + pgvector 同时承载关系数据、Memory Graph 边和向量；SQLAlchemy 2 Async + psycopg 3 负责访问，Alembic 管理迁移。
 - Python 使用独立 Conda 环境和 `environment.yml`；前端使用 pnpm。
-- 第一版是单体权威后端，使用 `asyncio.Queue` 和 `asyncio.Semaphore` 编排，不引入 Neo4j、Redis 或独立消息队列。
+- 第一版是单体权威后端，使用每会话轮次状态、`asyncio.Queue`/任务和进程级 `asyncio.Semaphore` 编排；物理模型请求默认全局并发上限为 6，不引入 Neo4j、Redis 或独立消息队列。
 - 模型通过火山方舟 Agent Plan 的 OpenAI 兼容接口调用；初期模型为 `doubao-seed-2.0-lite`，具体提供方只存在于适配器层，路由保持配置化。

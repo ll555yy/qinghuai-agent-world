@@ -235,6 +235,14 @@ async def _main() -> int:
                     ),
                     timeout=min(args.step_timeout_seconds, remaining),
                 )
+                await asyncio.wait_for(
+                    service.wait_for_chat_idle(
+                        run_id,
+                        joined_conversation_id,
+                        timeout=min(args.step_timeout_seconds, remaining),
+                    ),
+                    timeout=min(args.step_timeout_seconds, remaining),
+                )
                 break
 
         stage = "collect_metrics"

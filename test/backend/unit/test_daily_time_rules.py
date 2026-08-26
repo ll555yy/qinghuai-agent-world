@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 
 import pytest
+
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.clock import WorldTime
 from core.backend.app.domain.errors import InvalidInvitationError
@@ -196,6 +197,7 @@ async def test_chat_and_exit_model_calls_receive_current_time_policy(registry) -
         run.clock.current = WorldTime(day=1, hour=17, minute=10)
 
     await service.player_message(run.run_id, conversation_id, "今天还能再确认一件事吗？")
+    await service.wait_for_chat_idle(run.run_id, conversation_id)
     assert [protocol for protocol, _ in model.calls] == ["ChatDecision"]
     chat_policy = model.calls[0][1]["timePolicy"]
     assert chat_policy["worldTime"] == "Day1 17:10"

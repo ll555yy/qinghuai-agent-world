@@ -181,17 +181,19 @@ START
 
 ### 7.4 聊天与发言
 
-`_run_one_chat_decision_locked` 仅构造调用并执行 `agent.chat_message_received`：
+消息轮次编排器先为本轮全部合格 NPC 构造冻结的 `AgentInvocation`，再并行执行各自的 `agent.chat_message_received`：
 
 - `visible_messages` 来自现有 `_visible_messages`；
 - `memory_cache` 是 `(conversationId, npcId)` 的副本；
 - 工具上下文使用 Memory 深拷贝并由 Runtime 注入 owner；
 - `prompt_builder` 在召回后只读地重建 `chat_decision_with_memory` 提示词；
-- Agent 返回后，`RunService` 合并 `recalled_memory_ids` 并调用现有 `_apply_chat_drafts`。
+- 全部 Agent 返回后，`RunService` 按稳定参与者顺序合并 `recalled_memory_ids` 并调用现有 `_apply_chat_drafts`；Provider 返回快慢不能改变草稿应用顺序。
 
 原 `_retrieve_memories` 和手写的“第一次决策 → 检索 → 第二次决策”代码删除，不保留双路径。
 
-发言竞争仍由 `_select_speaker` 决定。胜出后调用 `agents[winner_id].generate_speech(...)`；开场台词也调用发起 NPC 自己的同一方法。其他候选 Agent 不执行 `SpeechGeneration`。
+所有合法选择 `speak` 的 NPC 都并行调用自己的 `generate_speech(...)`，每个 NPC 每轮至多一句；不再存在 winner-only 路径。收集完毕后按“直接点名、responseDesire、加入顺序、actorId”稳定排序并逐条保存/广播。开场与 NPC 入场仍调用对应发起者/加入者自己的同一方法；玩家台词只来自真实玩家输入。
+
+每个 Conversation 使用独立 worker/运行时锁，同一会话不重叠轮次，不同会话可以并行等待。所有实际模型请求继续共享 `DecisionService` 的物理请求 Semaphore；单 NPC 超时或失败只把该 NPC 降级为等待/无台词。
 
 ## 8. 内部追踪
 

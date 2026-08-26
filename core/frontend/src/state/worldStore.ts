@@ -7,7 +7,12 @@ import type {
   RunEvent,
   RunSnapshot,
 } from '../api/types'
-import { reduceRunEvent, type WorldData } from './eventReducer'
+import {
+  appendConversationMessage,
+  mergeConversationMessages,
+  reduceRunEvent,
+  type WorldData,
+} from './eventReducer'
 import type { BubbleTone } from '../game/bubblePolicy'
 
 export interface Notice {
@@ -32,6 +37,12 @@ interface WorldStore extends WorldData {
   setSnapshot: (snapshot: RunSnapshot) => void
   applyEvent: (event: RunEvent) => void
   setConversationMessages: (conversationId: string, messages: PublicMessage[]) => void
+  appendConversationMessage: (conversationId: string, message: PublicMessage) => void
+  setMessageDeliveryStatus: (
+    conversationId: string,
+    messageId: string,
+    status: PublicMessage['deliveryStatus'],
+  ) => void
   setInvitation: (invitation: PublicInvitation) => void
   setJoinRequest: (request: PublicJoinRequest) => void
   setSocketStatus: (status: WorldStore['socketStatus']) => void
@@ -123,8 +134,16 @@ export const useWorldStore = create<WorldStore>((set) => ({
   applyEvent: (event) =>
     set((state) => {
       const reduced = reduceRunEvent(state, event)
+      if (reduced === state) return state
       const notice = noticeFor(event)
-      const sceneCue = cueFor(event, reduced.invitations) ?? state.sceneCue
+      const duplicateMessage =
+        event.eventType === 'message_created' &&
+        typeof event.payload.conversationId === 'string' &&
+        typeof event.payload.messageId === 'string' &&
+        (state.messages[event.payload.conversationId] ?? []).some(
+          (message) => message.messageId === event.payload.messageId,
+        )
+      const sceneCue = duplicateMessage ? state.sceneCue : cueFor(event, reduced.invitations) ?? state.sceneCue
       return {
         ...reduced,
         sceneCue,
@@ -134,7 +153,36 @@ export const useWorldStore = create<WorldStore>((set) => ({
       }
     }),
   setConversationMessages: (conversationId, conversationMessages) =>
-    set((state) => ({ messages: { ...state.messages, [conversationId]: conversationMessages } })),
+    set((state) => {
+      const previous = state.messages[conversationId] ?? []
+      const merged = mergeConversationMessages(previous, conversationMessages)
+      if (merged === previous) return state
+      return { messages: { ...state.messages, [conversationId]: merged } }
+    }),
+  appendConversationMessage: (conversationId, message) =>
+    set((state) => {
+      const existing = state.messages[conversationId] ?? []
+      const merged = appendConversationMessage(existing, message)
+      if (merged === existing) return state
+      return { messages: { ...state.messages, [conversationId]: merged } }
+    }),
+  setMessageDeliveryStatus: (conversationId, messageId, deliveryStatus) =>
+    set((state) => {
+      const previous = state.messages[conversationId]
+      if (!previous) return state
+      let changed = false
+      const next = previous.map((message) => {
+        if (message.messageId !== messageId || message.deliveryStatus === deliveryStatus) return message
+        changed = true
+        if (deliveryStatus === undefined) {
+          const withoutStatus = { ...message }
+          delete withoutStatus.deliveryStatus
+          return withoutStatus
+        }
+        return { ...message, deliveryStatus }
+      })
+      return changed ? { messages: { ...state.messages, [conversationId]: next } } : state
+    }),
   setInvitation: (invitation) =>
     set((state) => ({ invitations: { ...state.invitations, [invitation.invitationId]: invitation } })),
   setJoinRequest: (request) =>

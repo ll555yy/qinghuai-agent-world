@@ -42,6 +42,19 @@ def _positive_int(name: str, default: int) -> int:
     return value
 
 
+def _nonnegative_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+    if value < 0:
+        raise ValueError(f"{name} must not be negative")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     scenario_dir: Path
@@ -56,6 +69,11 @@ class Settings:
     segment_summary_token_threshold: int = 2400
     segment_recent_messages: int = 8
     segment_boundary_carryover_messages: int = 4
+    model_max_concurrency: int = 6
+    chat_cooldown_seconds: float = 12.0
+    chat_publish_delay_min_seconds: float = 1.2
+    chat_publish_delay_max_seconds: float = 3.0
+    chat_model_call_timeout_seconds: float = 45.0
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -98,6 +116,24 @@ class Settings:
             )
         embedding_model = os.environ.get("ARK_EMBEDDING_MODEL", "").strip() or None
         embedding_base_url = os.environ.get("ARK_EMBEDDING_BASE_URL", "").strip() or None
+        model_max_concurrency = _positive_int("ARK_MODEL_MAX_CONCURRENCY", 6)
+        chat_cooldown_seconds = _nonnegative_float("CHAT_COOLDOWN_SECONDS", 12.0)
+        chat_publish_delay_min_seconds = _nonnegative_float(
+            "CHAT_PUBLISH_DELAY_MIN_SECONDS", 1.2
+        )
+        chat_publish_delay_max_seconds = _nonnegative_float(
+            "CHAT_PUBLISH_DELAY_MAX_SECONDS", 3.0
+        )
+        chat_model_call_timeout_seconds = _nonnegative_float(
+            "CHAT_MODEL_CALL_TIMEOUT_SECONDS", 45.0
+        )
+        if chat_model_call_timeout_seconds == 0:
+            raise ValueError("CHAT_MODEL_CALL_TIMEOUT_SECONDS must be greater than zero")
+        if chat_publish_delay_max_seconds < chat_publish_delay_min_seconds:
+            raise ValueError(
+                "CHAT_PUBLISH_DELAY_MAX_SECONDS must not be less than "
+                "CHAT_PUBLISH_DELAY_MIN_SECONDS"
+            )
         return cls(
             scenario_dir=Path(configured) if configured else default_dir,
             persistence_backend=backend,
@@ -110,4 +146,9 @@ class Settings:
             segment_summary_token_threshold=summary_token_threshold,
             segment_recent_messages=recent_messages,
             segment_boundary_carryover_messages=boundary_carryover_messages,
+            model_max_concurrency=model_max_concurrency,
+            chat_cooldown_seconds=chat_cooldown_seconds,
+            chat_publish_delay_min_seconds=chat_publish_delay_min_seconds,
+            chat_publish_delay_max_seconds=chat_publish_delay_max_seconds,
+            chat_model_call_timeout_seconds=chat_model_call_timeout_seconds,
         )

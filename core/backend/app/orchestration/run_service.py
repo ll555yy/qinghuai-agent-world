@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import difflib
 import hashlib
 import json
 import math
 import random
+import time
 import uuid
 from copy import deepcopy
 from typing import Any, cast
@@ -59,14 +62,11 @@ SEGMENT_SUMMARY_TRIGGER_TOKENS = 2400
 SEGMENT_SUMMARY_RECENT_MESSAGES = 8
 SEGMENT_BOUNDARY_CARRYOVER_MESSAGES = 4
 
-# A single external trigger should create a short exchange, not an entire
-# self-playing scene. The first real Day1 acceptance produced 17 messages and
-# 90 logical model calls across two conversations with the former depth of 8.
-# Two follow-up speakers keep the conversation legible and leave further turns
-# to the next player/NPC trigger.
-CHAT_RESPONSE_CHAIN_LIMIT = 2
-PARTICIPANT_EVENT_RESPONSE_CHAIN_LIMIT = 1
 INITIAL_MEMORY_CACHE_LIMIT = 1
+CHAT_COOLDOWN_SECONDS = 12.0
+CHAT_PUBLISH_DELAY_MIN_SECONDS = 1.2
+CHAT_PUBLISH_DELAY_MAX_SECONDS = 3.0
+CHAT_NPC_ONLY_SAFETY_ROUNDS = 8
 
 
 class RunService:
@@ -84,6 +84,12 @@ class RunService:
         segment_summary_trigger_tokens: int = SEGMENT_SUMMARY_TRIGGER_TOKENS,
         segment_summary_recent_messages: int = SEGMENT_SUMMARY_RECENT_MESSAGES,
         segment_boundary_carryover_messages: int = SEGMENT_BOUNDARY_CARRYOVER_MESSAGES,
+        model_max_concurrency: int = 6,
+        chat_cooldown_seconds: float = CHAT_COOLDOWN_SECONDS,
+        chat_publish_delay_min_seconds: float = 0.0,
+        chat_publish_delay_max_seconds: float = 0.0,
+        chat_model_call_timeout_seconds: float = 45.0,
+        chat_npc_only_safety_rounds: int = CHAT_NPC_ONLY_SAFETY_ROUNDS,
     ) -> None:
         if segment_summary_recent_messages >= segment_summary_trigger_messages:
             raise ValueError(
@@ -102,11 +108,25 @@ class RunService:
                 "segment_boundary_carryover_messages must not exceed "
                 "segment_summary_recent_messages"
             )
+        if chat_cooldown_seconds < 0:
+            raise ValueError("chat_cooldown_seconds must not be negative")
+        if (
+            chat_publish_delay_min_seconds < 0
+            or chat_publish_delay_max_seconds < chat_publish_delay_min_seconds
+        ):
+            raise ValueError("chat publish delays must be ordered non-negative values")
+        if chat_npc_only_safety_rounds <= 0:
+            raise ValueError("chat_npc_only_safety_rounds must be greater than zero")
+        if chat_model_call_timeout_seconds <= 0:
+            raise ValueError("chat_model_call_timeout_seconds must be greater than zero")
         self.registry = registry
         self.repository = repository or InMemoryRunRepository()
         self.event_hub = event_hub or EventHub()
         self.text_model = text_model
-        self.decisions = DecisionService(text_model)
+        self.decisions = DecisionService(
+            text_model,
+            max_concurrency=model_max_concurrency,
+        )
         # Five logical NPC Agents share this DecisionService and one compiled
         # LangGraph.  They receive only invocation snapshots; RunService
         # remains the authority that applies their semantic decisions.
@@ -130,6 +150,15 @@ class RunService:
         self.segment_boundary_carryover_messages = (
             segment_boundary_carryover_messages
         )
+        self.chat_cooldown_seconds = float(chat_cooldown_seconds)
+        self.chat_publish_delay_min_seconds = float(chat_publish_delay_min_seconds)
+        self.chat_publish_delay_max_seconds = float(chat_publish_delay_max_seconds)
+        self.chat_npc_only_safety_rounds = chat_npc_only_safety_rounds
+        self.chat_model_call_timeout_seconds = float(chat_model_call_timeout_seconds)
+        self._chat_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._chat_wake_events: dict[tuple[str, str], asyncio.Event] = {}
+        self._maintenance_tasks: set[asyncio.Task[None]] = set()
+        self._maintenance_keys: set[tuple[str, str]] = set()
 
     async def create_run(self, agenda_id: str | None = None, seed: int | None = None) -> dict[str, Any]:
         if agenda_id is not None and self.registry.agenda(agenda_id) is None:
@@ -241,7 +270,299 @@ class RunService:
         run = await self.repository.get(run_id)
         if run is None:
             raise RunNotFoundError(details={"runId": run_id})
+        await self.event_hub.prime(run_id, run.event_seq)
+        self._resume_chat_tasks(run)
+        self._resume_maintenance_tasks(run)
         return run
+
+    @staticmethod
+    def _default_round_state(segment_id: str | None) -> dict[str, Any]:
+        return {
+            "roundId": 0,
+            "roundVersion": 0,
+            "status": "idle",
+            "triggerMessageIds": [],
+            "queuedMessageIds": [],
+            "segmentId": segment_id,
+            "participantVersion": 1,
+            "cooldownDueAt": None,
+            "finalCheckUsed": False,
+            "pendingPublications": [],
+            "pendingLeaverIds": [],
+            "pendingPostSpeechLeaverIds": [],
+            "npcOnlyRounds": 0,
+            "openerActorId": None,
+            "openerKind": None,
+            "awaitingPlayerOpener": False,
+        }
+
+    def _round_state_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+    ) -> dict[str, Any]:
+        segments = run.segments.get(conversation.conversation_id, [])
+        segment_id = segments[-1].get("segmentId") if segments else None
+        state = run.ensure_conversation_round_state(conversation.conversation_id)
+        defaults = self._default_round_state(segment_id)
+        for key, value in defaults.items():
+            state.setdefault(key, deepcopy(value))
+        if not isinstance(state.get("roundId"), int):
+            state["roundId"] = 0
+        if state.get("segmentId") is None:
+            state["segmentId"] = segment_id
+        return state
+
+    def _reset_round_for_participant_change_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        *,
+        status: str = "idle",
+        opener_actor_id: str | None = None,
+        opener_kind: str | None = None,
+        awaiting_player_opener: bool = False,
+    ) -> dict[str, Any]:
+        state = self._round_state_locked(run, conversation)
+        segments = run.segments.get(conversation.conversation_id, [])
+        state["roundVersion"] = int(state.get("roundVersion", 0)) + 1
+        state["participantVersion"] = int(state.get("participantVersion", 0)) + 1
+        state["status"] = status
+        state["triggerMessageIds"] = []
+        state["queuedMessageIds"] = []
+        state["segmentId"] = segments[-1].get("segmentId") if segments else None
+        state["cooldownDueAt"] = None
+        state["finalCheckUsed"] = False
+        state["pendingPublications"] = []
+        state["pendingLeaverIds"] = []
+        state["pendingPostSpeechLeaverIds"] = []
+        state["recovery"] = {
+            "resumeStatus": None,
+            "attempt": 0,
+            "publishedMessageIds": [],
+        }
+        state["npcOnlyRounds"] = 0
+        state["openerActorId"] = opener_actor_id
+        state["openerKind"] = opener_kind
+        state["awaitingPlayerOpener"] = awaiting_player_opener
+        self._wake_chat_worker(run.run_id, conversation.conversation_id)
+        return state
+
+    def _queue_message_round_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        message_ids: list[str],
+    ) -> None:
+        state = self._round_state_locked(run, conversation)
+        unique_ids = list(dict.fromkeys(str(item) for item in message_ids if item))
+        if not unique_ids:
+            return
+        status = str(state.get("status", "idle"))
+        if status in {"deciding", "generating", "publishing"}:
+            queued = list(state.get("queuedMessageIds", []))
+            state["queuedMessageIds"] = list(dict.fromkeys([*queued, *unique_ids]))
+        else:
+            state["roundVersion"] = int(state.get("roundVersion", 0)) + 1
+            state["status"] = "queued"
+            state["triggerMessageIds"] = unique_ids
+            state["queuedMessageIds"] = []
+            state["cooldownDueAt"] = None
+            state["finalCheckUsed"] = False
+            state["awaitingPlayerOpener"] = False
+        if any(
+            message.get("messageId") in unique_ids
+            and message.get("authorActorId") == self.registry.player_actor_id
+            for message in run.messages.get(conversation.conversation_id, [])
+        ):
+            state["npcOnlyRounds"] = 0
+        self._wake_chat_worker(run.run_id, conversation.conversation_id)
+
+    def _resume_chat_tasks(self, run: Run) -> None:
+        for conversation_id, state in run.conversation_round_states.items():
+            if state.get("status") in {
+                "queued",
+                "deciding",
+                "generating",
+                "publishing",
+                "cooldown",
+                "final_check",
+                "opener",
+            }:
+                self._ensure_chat_task(run, conversation_id)
+
+    def _resume_maintenance_tasks(self, run: Run) -> None:
+        conversation_ids = {
+            conversation_id
+            for conversation_id, state in run.conversation_round_states.items()
+            if state.get("pendingSummarySegmentIds")
+        }
+        conversation_ids.update(
+            conversation_id
+            for (conversation_id, _npc_id), status in run.consolidation_status.items()
+            if status.get("status") == "pending"
+        )
+        for conversation_id in conversation_ids:
+            state = run.conversation_round_states.get(conversation_id, {})
+            segment_ids = list(state.get("pendingSummarySegmentIds", []))
+            npc_ids = [
+                npc_id
+                for (candidate_id, npc_id), status in run.consolidation_status.items()
+                if candidate_id == conversation_id and status.get("status") == "pending"
+            ]
+            self._schedule_player_leave_maintenance(
+                run,
+                conversation_id,
+                segment_ids[0] if segment_ids else None,
+                npc_ids,
+            )
+
+    def _ensure_chat_task(self, run: Run, conversation_id: str) -> None:
+        key = (run.run_id, conversation_id)
+        existing = self._chat_tasks.get(key)
+        if existing is not None and not existing.done():
+            self._wake_chat_worker(*key)
+            return
+        task = asyncio.create_task(
+            self._chat_worker(run.run_id, conversation_id),
+            name=f"chat-round:{run.run_id}:{conversation_id}",
+        )
+        self._chat_tasks[key] = task
+        run.conversation_round_tasks[conversation_id] = task
+
+        def finished(done: asyncio.Task[None]) -> None:
+            if self._chat_tasks.get(key) is done:
+                self._chat_tasks.pop(key, None)
+            if run.conversation_round_tasks.get(conversation_id) is done:
+                run.conversation_round_tasks.pop(conversation_id, None)
+            # Retrieving the exception prevents an unobserved-task warning;
+            # the worker itself converts failures into durable activity state.
+            if not done.cancelled():
+                error = done.exception()
+                if error is not None:
+                    asyncio.create_task(
+                        self._record_chat_worker_failure(
+                            run,
+                            conversation_id,
+                            type(error).__name__,
+                        )
+                    )
+
+        task.add_done_callback(finished)
+
+    async def _record_chat_worker_failure(
+        self,
+        run: Run,
+        conversation_id: str,
+        error_type: str,
+    ) -> None:
+        restart = False
+        async with run.lock:
+            conversation = run.conversations.get(conversation_id)
+            if conversation is None or not conversation.is_open:
+                return
+            before_seq = run.event_seq
+            state = self._round_state_locked(run, conversation)
+            previous_status = str(state.get("status", "idle"))
+            recovery = state.setdefault("recovery", {})
+            attempt = int(recovery.get("attempt", 0)) + 1
+            recovery["attempt"] = attempt
+            recovery["resumeStatus"] = previous_status
+            if attempt <= 1:
+                if previous_status == "publishing":
+                    state["status"] = "publishing"
+                elif state.get("triggerMessageIds") or state.get("queuedMessageIds"):
+                    state["triggerMessageIds"] = self._ordered_message_ids_locked(
+                        run,
+                        conversation_id,
+                        [
+                            *state.get("triggerMessageIds", []),
+                            *state.get("queuedMessageIds", []),
+                        ],
+                    )
+                    state["queuedMessageIds"] = []
+                    state["status"] = "queued"
+                elif state.get("openerActorId"):
+                    state["status"] = "opener"
+                else:
+                    state["status"] = "idle"
+                restart = state["status"] in {"publishing", "queued", "opener"}
+            else:
+                state["pendingPublications"] = []
+                state["pendingLeaverIds"] = []
+                state["pendingPostSpeechLeaverIds"] = []
+                self._enter_cooldown_locked(run, conversation, state)
+            run.append_event(
+                "conversation_activity",
+                {
+                    "conversationId": conversation_id,
+                    "reason": (
+                        "round_worker_retry_scheduled"
+                        if restart
+                        else "round_worker_failed"
+                    ),
+                    "errorType": error_type,
+                },
+            )
+            events = [event.to_dict() for event in run.events_after(before_seq)]
+            await self.repository.save(run)
+        for event in events:
+            await self.event_hub.publish(run.run_id, event)
+        if restart:
+            self._ensure_chat_task(run, conversation_id)
+
+    async def close(self) -> None:
+        """Cancel process-local round workers during application shutdown."""
+
+        tasks = [task for task in self._chat_tasks.values() if not task.done()]
+        tasks.extend(task for task in self._maintenance_tasks if not task.done())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._chat_tasks.clear()
+        self._chat_wake_events.clear()
+        self._maintenance_tasks.clear()
+        self._maintenance_keys.clear()
+
+    def _wake_chat_worker(self, run_id: str, conversation_id: str) -> None:
+        key = (run_id, conversation_id)
+        self._chat_wake_events.setdefault(key, asyncio.Event()).set()
+
+    async def wait_for_chat_idle(
+        self,
+        run_id: str,
+        conversation_id: str,
+        *,
+        timeout: float = 30.0,
+        include_cooldown: bool = False,
+    ) -> None:
+        """Testing/simulation hook; production commands never wait here."""
+
+        deadline = time.monotonic() + timeout
+        while True:
+            run = await self.get_run_entity(run_id)
+            async with run.lock:
+                conversation = run.conversations.get(conversation_id)
+                if conversation is None or not conversation.is_open:
+                    return
+                state = self._round_state_locked(run, conversation)
+                status = str(state.get("status", "idle"))
+                if status in {"idle", "awaiting_player_opener"}:
+                    return
+                if status == "cooldown" and not include_cooldown:
+                    return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"chat round did not settle: {conversation_id}")
+            task = self._chat_tasks.get((run_id, conversation_id))
+            if task is None:
+                self._ensure_chat_task(run, conversation_id)
+            # A worker deliberately remains alive while it waits through the
+            # cooldown. Poll the durable state instead of awaiting task
+            # completion so callers can choose whether cooldown counts as
+            # settled.
+            await asyncio.sleep(min(0.01, remaining))
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
         run = await self.get_run_entity(run_id)
@@ -264,6 +585,7 @@ class RunService:
         run = await self.get_run_entity(run_id)
         fingerprint = self._fingerprint("create_conversation", {"participantIds": participant_ids})
         event_dict: dict[str, Any] | None = None
+        conversation_to_start: str | None = None
         async with run.lock:
             previous = self._existing_command(run, command_id, fingerprint)
             if previous is not None:
@@ -331,6 +653,25 @@ class RunService:
                     if actor is not None and actor.kind == "npc"
                     else set()
                 )
+            initiator_id = participant_ids[0]
+            initiator = self.registry.actor(initiator_id)
+            round_state = self._round_state_locked(run, conversation)
+            if initiator is not None and initiator.kind == "npc":
+                round_state.update(
+                    {
+                        "status": "opener",
+                        "openerActorId": initiator_id,
+                        "openerKind": "conversation_opener",
+                    }
+                )
+                conversation_to_start = conversation_id
+            else:
+                round_state.update(
+                    {
+                        "status": "awaiting_player_opener",
+                        "awaitingPlayerOpener": True,
+                    }
+                )
             event = run.append_event("conversation_created", {"conversation": conversation.to_public_dict()})
             event_dict = event.to_dict()
             result: dict[str, Any] = {
@@ -341,6 +682,8 @@ class RunService:
             await self.repository.save(run)
         assert event_dict is not None
         await self.event_hub.publish(run_id, event_dict)
+        if conversation_to_start is not None:
+            self._ensure_chat_task(run, conversation_to_start)
         return result
 
     async def add_participant(
@@ -770,34 +1113,43 @@ class RunService:
             raise InvalidMessageError("text must contain 1 to 2000 characters.")
         run = await self.get_run_entity(run_id)
         fingerprint = self._fingerprint("player_message", {"conversationId": conversation_id, "text": text})
-        before_seq = 0
-        async with run.chat_pipeline_lock:
-            async with run.lock:
-                previous = self._existing_command(run, command_id, fingerprint)
-                if previous is not None:
-                    return deepcopy(previous)
-                self._require_active_run(run)
-                self._expire_pending_requests_locked(run)
-                conversation = self._conversation(run, conversation_id)
-                if (
-                    not conversation.is_open
-                    or not conversation.has_participant(self.registry.player_actor_id)
-                ):
-                    raise PlayerAccessDeniedError(details={"conversationId": conversation_id})
-                self._require_chat_open_locked(run, operation="message")
-                before_seq = run.event_seq
-                self._write_message_locked(run, conversation, self.registry.player_actor_id, text)
-                await self._run_chat_pipeline_locked(run, conversation, trigger_message_id=run.messages[conversation_id][-1]["messageId"])
-                result = {
-                    "conversation": conversation.to_public_dict(),
-                    "messages": self._public_messages(run.messages.get(conversation_id, [])),
-                    "run": run.to_public_snapshot(self.registry),
-                }
-                self._record_command(run, command_id, fingerprint, result)
-                events = [item.to_dict() for item in run.events_after(before_seq)]
-                await self.repository.save(run)
+        async with run.lock:
+            previous = self._existing_command(run, command_id, fingerprint)
+            if previous is not None:
+                return deepcopy(previous)
+            self._require_active_run(run)
+            self._expire_pending_requests_locked(run)
+            conversation = self._conversation(run, conversation_id)
+            if (
+                not conversation.is_open
+                or not conversation.has_participant(self.registry.player_actor_id)
+            ):
+                raise PlayerAccessDeniedError(details={"conversationId": conversation_id})
+            self._require_chat_open_locked(run, operation="message")
+            before_seq = run.event_seq
+            message = self._write_message_locked(
+                run,
+                conversation,
+                self.registry.player_actor_id,
+                text,
+            )
+            self._queue_message_round_locked(
+                run,
+                conversation,
+                [message["messageId"]],
+            )
+            result = {
+                "acceptedMessageId": message["messageId"],
+                "conversation": conversation.to_public_dict(),
+                "messages": self._public_messages(run.messages.get(conversation_id, [])),
+                "run": run.to_public_snapshot(self.registry),
+            }
+            self._record_command(run, command_id, fingerprint, result)
+            events = [item.to_dict() for item in run.events_after(before_seq)]
+            await self.repository.save(run)
         for event in events:
             await self.event_hub.publish(run_id, event)
+        self._ensure_chat_task(run, conversation_id)
         return result
 
     async def conversation_idle(self, run_id: str, conversation_id: str) -> dict[str, Any]:
@@ -810,10 +1162,17 @@ class RunService:
             if not conversation.is_open:
                 return {"conversation": conversation.to_public_dict(), "run": run.to_public_snapshot(self.registry)}
             self._require_chat_open_locked(run, operation="idle")
-            run.idle_counts[conversation_id] = run.idle_counts.get(conversation_id, 0) + 1
-            run.append_event("conversation_idle", {"conversationId": conversation_id, "idleCount": run.idle_counts[conversation_id]})
-            if run.idle_counts[conversation_id] >= 2:
-                await self._close_conversation_locked(run, conversation, "idle")
+            state = self._round_state_locked(run, conversation)
+            if state.get("status") not in {
+                "deciding",
+                "generating",
+                "publishing",
+                "queued",
+                "final_check",
+                "cooldown",
+            }:
+                self._enter_cooldown_locked(run, conversation, state)
+                self._ensure_chat_task(run, conversation_id)
             result = {"conversation": conversation.to_public_dict(), "run": run.to_public_snapshot(self.registry)}
             events = [item.to_dict() for item in run.events_after(before_seq)]
             await self.repository.save(run)
@@ -1395,21 +1754,32 @@ class RunService:
                 "memoryCache": self._initial_memory_ids(run, npc_id, candidates),
             },
         )
+        decision_day = run.clock.current.day
         try:
-            agent_result = await self._npc_agent(npc_id).daily_tick(
-                AgentInvocation(
-                    run_id=run.run_id,
-                    npc_id=npc_id,
-                    event_type="daily_tick",
-                    prompt=prompt,
-                    candidate_actor_ids=tuple(candidates),
-                    memory_cache=tuple(self._initial_memory_ids(run, npc_id, candidates)),
-                    memory_context=self._memory_tool_context(run, npc_id),
+            agent_result = await self._await_model_without_run_lock(
+                run,
+                self._npc_agent(npc_id).daily_tick(
+                    AgentInvocation(
+                        run_id=run.run_id,
+                        npc_id=npc_id,
+                        event_type="daily_tick",
+                        prompt=prompt,
+                        candidate_actor_ids=tuple(candidates),
+                        memory_cache=tuple(self._initial_memory_ids(run, npc_id, candidates)),
+                        memory_context=self._memory_tool_context(run, npc_id),
+                    )
                 )
             )
             decision = cast(DailyActionDecision, agent_result.decision)
         except StructuredCallFailed:
             decision = DailyActionDecision(action="wait")
+        if (
+            run.run_finished
+            or run.clock.current.day != decision_day
+            or not run.clock.new_chat_allowed
+        ):
+            run.actor_states[npc_id]["status"] = "waiting"
+            return
         if decision.action == "wait":
             run.actor_states[npc_id]["status"] = "waiting"
             run.append_event("npc_waited", {"actorId": npc_id, "worldTime": run.clock.as_dict()})
@@ -1495,22 +1865,42 @@ class RunService:
             },
         )
         try:
-            agent_result = await self._npc_agent(target_id).invitation_received(
-                AgentInvocation(
-                    run_id=run.run_id,
-                    npc_id=target_id,
-                    event_type="invitation_received",
-                    prompt=target_prompt,
-                    candidate_actor_ids=(initiator_id,),
-                    memory_cache=tuple(
-                        self._initial_memory_ids(run, target_id, [initiator_id])
-                    ),
-                    memory_context=self._memory_tool_context(run, target_id),
+            agent_result = await self._await_model_without_run_lock(
+                run,
+                self._npc_agent(target_id).invitation_received(
+                    AgentInvocation(
+                        run_id=run.run_id,
+                        npc_id=target_id,
+                        event_type="invitation_received",
+                        prompt=target_prompt,
+                        candidate_actor_ids=(initiator_id,),
+                        memory_cache=tuple(
+                            self._initial_memory_ids(run, target_id, [initiator_id])
+                        ),
+                        memory_context=self._memory_tool_context(run, target_id),
+                    )
                 )
             )
             decision = cast(InvitationDecision, agent_result.decision)
         except StructuredCallFailed:
             decision = InvitationDecision(decision="refuse")
+        if invitation.get("status") != "pending":
+            return invitation
+        if (
+            not run.clock.new_chat_allowed
+            or run.actor_open_conversation(initiator_id) is not None
+            or run.actor_open_conversation(target_id) is not None
+        ):
+            invitation["status"] = "expired"
+            invitation["respondedAt"] = run.clock.as_dict()["label"]
+            run.append_event(
+                "invitation_request_cleared",
+                {"invitationId": invitation_id},
+            )
+            run.actor_states[initiator_id]["status"] = (
+                "present" if initiator_id == self.registry.player_actor_id else "waiting"
+            )
+            return invitation
         if decision.decision == "accept":
             invitation["status"] = "accepted"
             invitation["respondedAt"] = run.clock.as_dict()["label"]
@@ -1601,6 +1991,7 @@ class RunService:
             },
         )
 
+        npc_approvals: list[tuple[str, AgentInvocation]] = []
         for approver_id in approvers:
             approver = self.registry.actor(approver_id)
             if approver is None:
@@ -1631,10 +2022,9 @@ class RunService:
                     "memoryCache": memory_ids,
                 },
             )
-            try:
-                agent_result = await self._npc_agent(
-                    approver_id
-                ).invitation_received(
+            npc_approvals.append(
+                (
+                    approver_id,
                     AgentInvocation(
                         run_id=run.run_id,
                         npc_id=approver_id,
@@ -1648,11 +2038,38 @@ class RunService:
                             approver_id,
                             conversation.conversation_id,
                         ),
-                    )
+                    ),
                 )
-                decision = cast(InvitationDecision, agent_result.decision)
-            except StructuredCallFailed:
+            )
+
+        if npc_approvals:
+            raw_approvals = await self._await_model_without_run_lock(
+                run,
+                asyncio.gather(
+                    *(
+                        self._npc_agent(approver_id).invitation_received(invocation)
+                        for approver_id, invocation in npc_approvals
+                    ),
+                    return_exceptions=True,
+                ),
+            )
+        else:
+            raw_approvals = []
+        if (
+            join_request.get("status") != "pending"
+            or not conversation.is_open
+            or list(conversation.participants) != approvers
+        ):
+            return join_request
+        for (approver_id, _), agent_result in zip(
+            npc_approvals,
+            raw_approvals,
+            strict=True,
+        ):
+            if isinstance(agent_result, BaseException):
                 decision = InvitationDecision(decision="refuse")
+            else:
+                decision = cast(InvitationDecision, agent_result.decision)
             join_request["approverDecisions"][approver_id] = decision.decision
             if decision.decision == "refuse":
                 self._refuse_join_request_locked(run, join_request)
@@ -1873,11 +2290,26 @@ class RunService:
                 if actor is not None and actor.kind == "npc"
                 else set()
             )
+        initiator_id = participant_ids[0]
+        state = self._round_state_locked(run, conversation)
+        initiator = self.registry.actor(initiator_id)
+        if opening_speech and initiator is not None and initiator.kind == "npc":
+            state.update(
+                {
+                    "status": "opener",
+                    "openerActorId": initiator_id,
+                    "openerKind": "conversation_opener",
+                }
+            )
+            self._ensure_chat_task(run, conversation_id)
+        else:
+            state.update(
+                {
+                    "status": "awaiting_player_opener",
+                    "awaitingPlayerOpener": True,
+                }
+            )
         run.append_event("conversation_created", {"conversation": conversation.to_public_dict()})
-        if opening_speech:
-            # The first NPC line is optional if the provider is unavailable;
-            # keeping the conversation open lets the player observe or join.
-            return conversation
         return conversation
 
     async def _generate_opening_speech_locked(
@@ -1891,32 +2323,19 @@ class RunService:
     ) -> None:
         if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
             return
-        try:
-            speech = await self._npc_agent(npc_id).generate_speech(
-                self._npc_prompt(
-                    run,
-                    npc_id,
-                    "opening_speech",
-                    {
-                        "conversationId": conversation.conversation_id,
-                        "participants": conversation.participants,
-                        "invitingGoalId": goal_id,
-                        "intent": intent,
-                        "messages": [],
-                    },
-                )
-            )
-        except StructuredCallFailed:
-            run.append_event("conversation_activity", {"conversationId": conversation.conversation_id, "reason": "speech_unavailable"})
-            return
-        if speech.text.strip():
-            message = self._write_message_locked(run, conversation, npc_id, speech.text)
-            await self._run_chat_pipeline_locked(
-                run,
-                conversation,
-                message["messageId"],
-                CHAT_RESPONSE_CHAIN_LIMIT,
-            )
+        state = self._round_state_locked(run, conversation)
+        state.update(
+            {
+                "roundVersion": int(state.get("roundVersion", 0)) + 1,
+                "status": "opener",
+                "openerActorId": npc_id,
+                "openerKind": "conversation_opener",
+                "openerGoalId": goal_id,
+                "openerIntent": intent,
+                "awaitingPlayerOpener": False,
+            }
+        )
+        self._ensure_chat_task(run, conversation.conversation_id)
 
     async def _join_conversation_locked(self, run: Run, conversation: Conversation, actor_id: str) -> None:
         if not conversation.is_open or len(conversation.participants) >= 3:
@@ -1940,7 +2359,6 @@ class RunService:
             raise InvalidInvitationError(
                 "The actor must answer or finish the pending invitation first."
             )
-        old_participants = list(conversation.participants)
         await self._close_current_segment_locked(run, conversation)
         conversation.add_participant(actor_id)
         run.segments[conversation.conversation_id].append({"segmentId": run.next_segment_identity(), "participants": list(conversation.participants), "startedAt": run.clock.as_dict()["label"], "summary": None, "summaryThroughMessageId": None})
@@ -1959,163 +2377,23 @@ class RunService:
         )
         run.actor_states[actor_id]["status"] = "chatting"
         run.append_event("conversation_participant_joined", {"conversation": conversation.to_public_dict(), "actorJoined": actor_id})
-        # A participant-set change starts a fresh idle cadence.  In
-        # particular, a joiner must not inherit an idle round that was earned
-        # by the previous participant set.
         run.idle_counts[conversation.conversation_id] = 0
-        await self._run_participant_event_locked(
-            run,
-            conversation,
-            old_participants,
-            f"actor_joined:{actor_id}",
-        )
-
-    async def _run_participant_event_locked(
-        self,
-        run: Run,
-        conversation: Conversation,
-        participant_ids: list[str],
-        trigger: str,
-        *,
-        _allow_idle_reentry: bool = True,
-    ) -> None:
-        if not conversation.is_open or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
-            return
-        decisions: dict[str, ChatDecision] = {}
-        participants_changed = False
-        npc_ids = {npc.actor_id for npc in self.registry.npcs}
-        for npc_id in participant_ids:
-            if npc_id in npc_ids and npc_id in conversation.participants:
-                decisions[npc_id] = await self._run_one_chat_decision_locked(
-                    run,
-                    conversation,
-                    npc_id,
-                    trigger,
-                )
-        for npc_id, decision in list(decisions.items()):
-            if decision.action == "leave_chat" and npc_id in conversation.participants:
-                participants_changed = True
-                await self._leave_and_consolidate_locked(
-                    run,
-                    conversation,
-                    npc_id,
-                    "model_leave",
-                )
-        if not conversation.is_open:
-            return
-        candidates = [
-            (npc_id, decision)
-            for npc_id, decision in decisions.items()
-            if npc_id in conversation.participants and decision.action == "speak"
-        ]
-        if not candidates:
-            # Participant-change notifications are a fresh context for the
-            # remaining actors, but are not themselves an idle turn.  D-065
-            # starts from a message-driven round (or its bounded internal
-            # ``conversation_idle`` retry), so a join/leave cannot close a
-            # newly changed conversation before anyone has a chance to speak.
-            if trigger == "conversation_idle" and not participants_changed:
-                await self._handle_automatic_idle_locked(
-                    run,
-                    conversation,
-                    _allow_reentry=_allow_idle_reentry,
-                )
-            return
-        winner_id, winner = self._select_speaker(run, conversation, candidates)
-        try:
-            speech = await self._npc_agent(winner_id).generate_speech(
-                self._npc_prompt(
-                    run,
-                    winner_id,
-                    "speech",
-                    {
-                        "intent": winner.intent,
-                        "conversationId": conversation.conversation_id,
-                        **self._chat_context(run, conversation, winner_id),
-                    },
-                )
-            )
-        except StructuredCallFailed:
-            return
-        message = self._write_message_locked(run, conversation, winner_id, speech.text)
-        self._apply_spoken_chapter_effects(
-            run,
-            conversation,
-            winner_id,
-            winner,
-            message["messageId"],
-        )
-        if winner.leave_chat_after_speaking and winner_id in conversation.participants:
-            await self._leave_and_consolidate_locked(
+        if joined_actor is not None and joined_actor.kind == "npc":
+            self._reset_round_for_participant_change_locked(
                 run,
                 conversation,
-                winner_id,
-                "said_and_left",
+                status="opener",
+                opener_actor_id=actor_id,
+                opener_kind="join_opener",
             )
-        if conversation.is_open:
-            await self._run_chat_pipeline_locked(
+            self._ensure_chat_task(run, conversation.conversation_id)
+        else:
+            self._reset_round_for_participant_change_locked(
                 run,
                 conversation,
-                message["messageId"],
-                PARTICIPANT_EVENT_RESPONSE_CHAIN_LIMIT,
-                _allow_idle_reentry=False,
+                status="awaiting_player_opener",
+                awaiting_player_opener=True,
             )
-
-    async def _handle_automatic_idle_locked(
-        self,
-        run: Run,
-        conversation: Conversation,
-        *,
-        _allow_reentry: bool,
-    ) -> None:
-        """Advance D-065 for one complete NPC-only no-speech dispatch.
-
-        The first idle round is deliberately bounded to one internal
-        participant dispatch.  That gives the other NPCs one fresh chance to
-        speak, while the ``_allow_reentry`` guard prevents a provider/fallback
-        that keeps returning ``wait`` from recursively spinning forever.
-        Conversations containing the player remain on the explicit player
-        ``conversation_idle`` API path.
-        """
-
-        if (
-            not conversation.is_open
-            or run.clock.current.clock_minutes >= run.clock.active_end_minutes
-            or not conversation.participants
-            or any(
-                (actor := self.registry.actor(actor_id)) is None
-                or actor.kind != "npc"
-                for actor_id in conversation.participants
-            )
-        ):
-            return
-        conversation_id = conversation.conversation_id
-        run.idle_counts[conversation_id] = run.idle_counts.get(conversation_id, 0) + 1
-        run.append_event(
-            "conversation_idle",
-            {
-                "conversationId": conversation_id,
-                "idleCount": run.idle_counts[conversation_id],
-            },
-        )
-        if run.idle_counts[conversation_id] >= 2:
-            await self._close_conversation_locked(
-                run,
-                conversation,
-                "conversation_idle",
-            )
-            return
-        if not _allow_reentry:
-            return
-        # The participant list is copied after the guard so a nested
-        # leave/consolidation cannot mutate the dispatcher's iteration view.
-        await self._run_participant_event_locked(
-            run,
-            conversation,
-            list(conversation.participants),
-            "conversation_idle",
-            _allow_idle_reentry=False,
-        )
 
     async def _close_current_segment_locked(self, run: Run, conversation: Conversation) -> None:
         segments = run.segments.get(conversation.conversation_id, [])
@@ -2319,8 +2597,13 @@ class RunService:
             ensure_ascii=False,
         )
         try:
-            result = await self.decisions.segment_summary(prompt)
+            result = await self._await_model_without_run_lock(
+                run,
+                self.decisions.segment_summary(prompt),
+            )
             if self.decisions.last_failed_protocol == "SegmentSummary":
+                return previous_summary or self._empty_segment_summary(participants)
+            if segment not in run.segments.get(conversation.conversation_id, []):
                 return previous_summary or self._empty_segment_summary(participants)
             summary = result.model_dump(by_alias=True)
             summary["actorIds"] = [
@@ -2334,7 +2617,17 @@ class RunService:
         except StructuredCallFailed:
             return previous_summary or self._empty_segment_summary(participants)
 
-    def _write_message_locked(self, run: Run, conversation: Conversation, author_id: str, text: str) -> dict[str, Any]:
+    def _write_message_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        author_id: str,
+        text: str,
+        *,
+        round_id: str | None = None,
+        round_sequence: int | None = None,
+        reply_to_message_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         if not conversation.is_open or author_id not in conversation.participants:
             raise ActorNotInConversationError(details={"actorId": author_id})
         visible_npcs = [actor_id for actor_id in conversation.participants if self.registry.actor(actor_id) is not None and self.registry.actor(actor_id).kind == "npc"]  # type: ignore[union-attr]
@@ -2347,10 +2640,22 @@ class RunService:
             "segmentId": run.segments[conversation.conversation_id][-1]["segmentId"],
             "visibleToNpcIds": visible_npcs,
         }
+        if round_id is not None:
+            message["roundId"] = round_id
+        if round_sequence is not None:
+            message["roundSequence"] = round_sequence
+        if reply_to_message_ids:
+            message["replyToMessageIds"] = list(dict.fromkeys(reply_to_message_ids))
         run.messages[conversation.conversation_id].append(message)
         public = {"conversationId": conversation.conversation_id, "messageId": message["messageId"], "authorActorId": author_id}
         if self.registry.player_actor_id in conversation.participants:
             public["text"] = text
+        if round_id is not None:
+            public["roundId"] = round_id
+        if round_sequence is not None:
+            public["roundSequence"] = round_sequence
+        if reply_to_message_ids:
+            public["replyToMessageIds"] = list(dict.fromkeys(reply_to_message_ids))
         run.append_event("message_created" if "text" in public else "conversation_activity", public)
         run.idle_counts[conversation.conversation_id] = 0
         return message
@@ -2360,215 +2665,186 @@ class RunService:
         run: Run,
         conversation: Conversation,
         trigger_message_id: str | None,
-        chain_left: int = CHAT_RESPONSE_CHAIN_LIMIT,
+        chain_left: int | None = None,
         *,
         _registered: bool = False,
         _allow_idle_reentry: bool = True,
     ) -> None:
-        """Run one chat round while allowing the clock to cross day-end.
-
-        The method name is retained because a few tests and internal callers
-        deliberately invoke it while holding ``run.lock``.  Only the small
-        provider awaits release that lock; all state application and the
-        recursive-boundary checks remain serialized by it.
-        """
-
-        # Registration is per invocation, not a Run-global depth counter:
-        # two conversations may legitimately be in separate provider awaits
-        # at the same time.  Only the recursive continuation belongs to its
-        # already-registered root pipeline.
-        root_pipeline = not _registered
-        if root_pipeline:
-            run.active_chat_pipelines += 1
-        try:
-            if not conversation.is_open or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
-                return
-            await self._maybe_roll_segment_summary_locked(run, conversation)
-            if not conversation.is_open or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
-                return
-            decisions: dict[str, ChatDecision] = {}
-            participants_changed = False
-            for actor_id in list(conversation.participants):
-                actor = self.registry.actor(actor_id)
-                if actor is None or actor.kind != "npc":
-                    continue
-                if actor_id == (run.messages[conversation.conversation_id][-1]["authorActorId"] if run.messages.get(conversation.conversation_id) else None):
-                    continue
-                decisions[actor_id] = await self._run_one_chat_decision_locked(run, conversation, actor_id, "new_message", trigger_message_id)
-            for actor_id, decision in list(decisions.items()):
-                if actor_id not in conversation.participants:
-                    continue
-                if decision.action == "leave_chat":
-                    participants_changed = True
-                    await self._leave_and_consolidate_locked(run, conversation, actor_id, "model_leave")
-            # A ChatDecision that was already in flight may finish after the
-            # boundary, but it cannot open the next Speech/Chat round.
-            if (
-                not conversation.is_open
-                or chain_left <= 0
-                or run.clock.current.clock_minutes >= run.clock.active_end_minutes
-            ):
-                return
-            candidates = [(actor_id, decision) for actor_id, decision in decisions.items() if actor_id in conversation.participants and decision.action == "speak"]
-            if not candidates:
-                if participants_changed:
-                    return
-                await self._handle_automatic_idle_locked(
-                    run,
-                    conversation,
-                    _allow_reentry=_allow_idle_reentry,
-                )
-                return
-            winner_id, winner = self._select_speaker(run, conversation, candidates)
-            # Grant the Speech call while still below 18:00.  The grant and
-            # the clock check are one lock-held section, so world_step cannot
-            # move the boundary in between and accidentally create a new
-            # post-boundary model call.  The result remains valid even if the
-            # clock crosses 18:00 while the provider is waiting.
-            if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
-                return
-            speech_prompt = self._npc_prompt(
-                run,
-                winner_id,
-                "speech",
-                {
-                    "conversationId": conversation.conversation_id,
-                    "intent": winner.intent,
-                    **self._chat_context(run, conversation, winner_id),
-                },
-            )
-            speech_segment_id = (
-                run.segments.get(conversation.conversation_id, [])[-1].get("segmentId")
-                if run.segments.get(conversation.conversation_id)
-                else None
-            )
-            run.in_flight_speech_calls += 1
-            try:
-                try:
-                    speech = await self._await_model_without_run_lock(
-                        run,
-                        self._npc_agent(winner_id).generate_speech(speech_prompt),
-                    )
-                except StructuredCallFailed:
-                    run.append_event("conversation_activity", {"conversationId": conversation.conversation_id, "reason": "speech_unavailable"})
-                    return
-            finally:
-                run.in_flight_speech_calls -= 1
-            current_segments = run.segments.get(conversation.conversation_id, [])
-            current_segment_id = current_segments[-1].get("segmentId") if current_segments else None
-            if (
-                not speech.text.strip()
-                or not conversation.is_open
-                or winner_id not in conversation.participants
-                or current_segment_id != speech_segment_id
-            ):
-                return
-            # This is the one permitted post-boundary mutation: a Speech call
-            # whose grant happened before 18:00 may still land on its original
-            # open conversation.  No recursive round is started afterwards.
-            message = self._write_message_locked(run, conversation, winner_id, speech.text)
-            self._apply_spoken_chapter_effects(
+        del chain_left, _registered, _allow_idle_reentry
+        if trigger_message_id:
+            self._queue_message_round_locked(
                 run,
                 conversation,
-                winner_id,
-                winner,
-                message["messageId"],
+                [trigger_message_id],
             )
-            if winner.leave_chat_after_speaking and winner_id in conversation.participants:
-                await self._leave_and_consolidate_locked(run, conversation, winner_id, "said_and_left")
-            if (
-                conversation.is_open
-                and run.clock.current.clock_minutes < run.clock.active_end_minutes
-            ):
-                await self._run_chat_pipeline_locked(
-                    run,
-                    conversation,
-                    message["messageId"],
-                    chain_left - 1,
-                    _registered=True,
-                    _allow_idle_reentry=False,
-                )
-        finally:
-            if root_pipeline:
-                run.active_chat_pipelines -= 1
-                chapter_event_id = (
-                    run.pending_chapter_event_id
-                    if run.active_chat_pipelines == 0
-                    else None
-                )
-                pending = run.pending_day_end if run.active_chat_pipelines == 0 else None
-                if chapter_event_id is not None:
-                    run.pending_chapter_event_id = None
-                    run.pending_day_end = None
-                    chapter_event = next(
-                        event
-                        for event in self.registry.events
-                        if event.event_id == chapter_event_id
-                    )
-                    await self._finish_chapter_locked(run, chapter_event)
-                elif pending is not None:
-                    run.pending_day_end = None
-                    await self._close_day_locked(run, pending[0], pending[1])
+            self._ensure_chat_task(run, conversation.conversation_id)
 
-    async def _run_one_chat_decision_locked(
+    async def _chat_worker(self, run_id: str, conversation_id: str) -> None:
+        run = await self.repository.get(run_id)
+        if run is None:
+            return
+        round_lock = run.conversation_round_locks.setdefault(
+            conversation_id,
+            asyncio.Lock(),
+        )
+        async with round_lock:
+            while True:
+                cooldown_wait: float | None = None
+                mode: str | None = None
+                wake = self._chat_wake_events.setdefault(
+                    (run_id, conversation_id),
+                    asyncio.Event(),
+                )
+                async with run.lock:
+                    # Clear while holding the same lock used by message
+                    # enqueueing. A player message arriving after this point
+                    # sets the event and cannot be lost before cooldown wait.
+                    wake.clear()
+                    conversation = run.conversations.get(conversation_id)
+                    if conversation is None or not conversation.is_open or run.run_finished:
+                        run.conversation_round_states.pop(conversation_id, None)
+                        return
+                    state = self._round_state_locked(run, conversation)
+                    status = str(state.get("status", "idle"))
+                    if status in {"deciding", "generating"}:
+                        # A task cannot survive a process restart. Re-run the
+                        # frozen trigger batch; no message was published yet.
+                        state["status"] = "queued"
+                        status = "queued"
+                    if status == "publishing" and not state.get("pendingPublications"):
+                        recovery = state.get("recovery", {})
+                        has_publication_tail = bool(
+                            recovery.get("publishedMessageIds")
+                            or state.get("pendingLeaverIds")
+                            or state.get("pendingPostSpeechLeaverIds")
+                            or state.get("queuedMessageIds")
+                        )
+                        if not has_publication_tail:
+                            state["status"] = "idle"
+                            status = "idle"
+                    if status == "cooldown":
+                        due = float(state.get("cooldownDueAt") or time.time())
+                        cooldown_wait = max(0.0, due - time.time())
+                        mode = "cooldown"
+                    elif status == "publishing":
+                        mode = "publishing"
+                    elif status == "opener":
+                        mode = "opener"
+                    elif status in {"queued", "final_check"}:
+                        mode = "round"
+                    elif status in {"idle", "awaiting_player_opener"}:
+                        return
+                    else:
+                        state["status"] = "idle"
+                        await self.repository.save(run)
+                        return
+
+                if mode == "cooldown":
+                    try:
+                        await asyncio.wait_for(wake.wait(), timeout=cooldown_wait)
+                    except TimeoutError:
+                        async with run.lock:
+                            conversation = run.conversations.get(conversation_id)
+                            if conversation is None or not conversation.is_open:
+                                return
+                            state = self._round_state_locked(run, conversation)
+                            if state.get("status") != "cooldown":
+                                continue
+                            state["roundVersion"] = int(state.get("roundVersion", 0)) + 1
+                            state["status"] = "final_check"
+                            state["finalCheckUsed"] = True
+                            state["cooldownDueAt"] = None
+                            state["syntheticTrigger"] = "final_check"
+                            await self.repository.save(run)
+                    continue
+                if mode == "publishing":
+                    await self._publish_pending_round(run, conversation_id)
+                    continue
+                if mode == "opener":
+                    await self._execute_opener_round(run, conversation_id)
+                    continue
+                if mode == "round":
+                    await self._execute_message_round(run, conversation_id)
+                    continue
+
+    def _frozen_prompt_builder(
+        self,
+        prompt: str,
+        memory_snapshot: dict[str, dict[str, Any]],
+    ) -> Any:
+        base = json.loads(prompt)
+
+        def build(memory_ids: list[str]) -> str:
+            payload = deepcopy(base)
+            payload["protocol"] = "chat_decision_with_memory"
+            payload["context"]["memoryCache"] = list(memory_ids)
+            payload["memories"] = [
+                deepcopy(memory_snapshot[memory_id])
+                for memory_id in memory_ids
+                if memory_id in memory_snapshot
+            ]
+            return json.dumps(payload, ensure_ascii=False, default=str)
+
+        return build
+
+    def _prepare_round_invocations_locked(
         self,
         run: Run,
         conversation: Conversation,
-        npc_id: str,
+        state: dict[str, Any],
+        *,
         trigger: str,
-        trigger_message_id: str | None = None,
-    ) -> ChatDecision:
-        if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
-            return ChatDecision(result="decided", action="wait")
-        segment_id = (
-            run.segments.get(conversation.conversation_id, [])[-1].get("segmentId")
-            if run.segments.get(conversation.conversation_id)
-            else None
-        )
-        cache_key = (conversation.conversation_id, npc_id)
-        cached_memory_ids = [
-            memory_id
-            for memory_id in run.memory_cache.get(cache_key, set())
-            if run.memories.get(memory_id, {}).get("ownerNpcId") == npc_id
+        only_actor_id: str | None = None,
+    ) -> list[tuple[str, AgentInvocation]]:
+        trigger_ids = [str(item) for item in state.get("triggerMessageIds", [])]
+        trigger_messages = [
+            message
+            for message in run.messages.get(conversation.conversation_id, [])
+            if message.get("messageId") in set(trigger_ids)
         ]
-        prompt = self._npc_prompt(
-            run,
-            npc_id,
-            "chat_decision",
-            {
+        trigger_authors = {
+            str(message.get("authorActorId")) for message in trigger_messages
+        }
+        result: list[tuple[str, AgentInvocation]] = []
+        for npc_id in list(conversation.participants):
+            actor = self.registry.actor(npc_id)
+            if actor is None or actor.kind != "npc":
+                continue
+            if only_actor_id is not None and npc_id != only_actor_id:
+                continue
+            if trigger_messages and trigger_authors == {npc_id}:
+                continue
+            cache_key = (conversation.conversation_id, npc_id)
+            cached_memory_ids = [
+                memory_id
+                for memory_id in run.memory_cache.get(cache_key, set())
+                if run.memories.get(memory_id, {}).get("ownerNpcId") == npc_id
+            ]
+            extra = {
                 "conversationId": conversation.conversation_id,
                 "trigger": trigger,
-                "triggerMessageId": trigger_message_id,
+                "triggerMessageId": trigger_ids[-1] if trigger_ids else None,
+                "triggerMessageIds": trigger_ids,
+                "roundId": state.get("roundId"),
                 **self._chat_context(run, conversation, npc_id),
                 "memoryCache": cached_memory_ids,
-            },
-        )
-
-        def prompt_builder(memory_ids: list[str]) -> str:
-            return self._npc_prompt(
-                run,
-                npc_id,
-                "chat_decision_with_memory",
-                {
-                    "conversationId": conversation.conversation_id,
-                    "trigger": trigger,
-                    "triggerMessageId": trigger_message_id,
-                    **self._chat_context(run, conversation, npc_id),
-                    "memoryCache": list(memory_ids),
-                },
-            )
-
-        try:
-            agent_result = await self._await_model_without_run_lock(
-                run,
-                self._npc_agent(npc_id).chat_message_received(
+            }
+            prompt = self._npc_prompt(run, npc_id, "chat_decision", extra)
+            memory_snapshot = {
+                memory_id: deepcopy(memory)
+                for memory_id, memory in run.memories.items()
+                if memory.get("ownerNpcId") == npc_id
+            }
+            result.append(
+                (
+                    npc_id,
                     AgentInvocation(
                         run_id=run.run_id,
                         npc_id=npc_id,
                         event_type="chat_message_received",
                         prompt=prompt,
                         conversation_id=conversation.conversation_id,
-                        trigger_message_id=trigger_message_id,
+                        trigger_message_id=trigger_ids[-1] if trigger_ids else None,
                         visible_messages=tuple(
                             self._visible_messages(run, conversation, npc_id)
                         ),
@@ -2578,30 +2854,711 @@ class RunService:
                             npc_id,
                             conversation.conversation_id,
                         ),
-                        prompt_builder=prompt_builder,
+                        prompt_builder=self._frozen_prompt_builder(
+                            prompt,
+                            memory_snapshot,
+                        ),
+                    ),
+                )
+            )
+        return result
+
+    async def _invoke_chat_decision(
+        self,
+        npc_id: str,
+        invocation: AgentInvocation,
+    ) -> tuple[str, Any | None]:
+        try:
+            result = await asyncio.wait_for(
+                self._npc_agent(npc_id).chat_message_received(invocation),
+                timeout=self.chat_model_call_timeout_seconds,
+            )
+            return npc_id, result
+        except Exception:
+            return npc_id, None
+
+    def _round_still_current_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        *,
+        round_id: int,
+        round_version: int,
+        segment_id: str | None,
+        participant_version: int,
+    ) -> bool:
+        state = self._round_state_locked(run, conversation)
+        segments = run.segments.get(conversation.conversation_id, [])
+        current_segment = segments[-1].get("segmentId") if segments else None
+        return (
+            conversation.is_open
+            and int(state.get("roundId", -1)) == round_id
+            and int(state.get("roundVersion", -1)) == round_version
+            and int(state.get("participantVersion", -1)) == participant_version
+            and state.get("segmentId") == segment_id
+            and current_segment == segment_id
+        )
+
+    async def _execute_message_round(self, run: Run, conversation_id: str) -> None:
+        async with run.lock:
+            conversation = run.conversations.get(conversation_id)
+            if conversation is None or not conversation.is_open:
+                return
+            state = self._round_state_locked(run, conversation)
+            final_check = state.get("status") == "final_check"
+            if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+                state["status"] = "idle"
+                return
+            state["roundId"] = int(state.get("roundId", 0)) + 1
+            state["recovery"] = {
+                "resumeStatus": None,
+                "attempt": 0,
+                "publishedMessageIds": [],
+            }
+            round_id = int(state["roundId"])
+            round_version = int(state.get("roundVersion", 0))
+            segment_id = state.get("segmentId")
+            participant_version = int(state.get("participantVersion", 0))
+            state["status"] = "deciding"
+            trigger = "final_check" if final_check else "normal_round"
+            invocations = self._prepare_round_invocations_locked(
+                run,
+                conversation,
+                state,
+                trigger=trigger,
+            )
+            trigger_message_ids = list(state.get("triggerMessageIds", []))
+            run.active_chat_pipelines += 1
+            await self.repository.save(run)
+
+        try:
+            raw_results = await asyncio.gather(
+                *(
+                    self._invoke_chat_decision(npc_id, invocation)
+                    for npc_id, invocation in invocations
+                )
+            )
+            decisions: dict[str, ChatDecision] = {}
+            recalled: dict[str, tuple[str, ...]] = {}
+            for npc_id, agent_result in raw_results:
+                if agent_result is None:
+                    decisions[npc_id] = ChatDecision(result="decided", action="wait")
+                    continue
+                decisions[npc_id] = cast(ChatDecision, agent_result.decision)
+                recalled[npc_id] = tuple(agent_result.recalled_memory_ids)
+
+            async with run.lock:
+                conversation = run.conversations.get(conversation_id)
+                if conversation is None or not self._round_still_current_locked(
+                    run,
+                    conversation,
+                    round_id=round_id,
+                    round_version=round_version,
+                    segment_id=segment_id,
+                    participant_version=participant_version,
+                ):
+                    return
+                state = self._round_state_locked(run, conversation)
+                for npc_id in conversation.participants:
+                    decision = decisions.get(npc_id)
+                    if decision is None:
+                        continue
+                    for memory_id in recalled.get(npc_id, ()):
+                        memory = run.memories.get(memory_id)
+                        if memory is not None and memory.get("ownerNpcId") == npc_id:
+                            run.memory_cache.setdefault(
+                                (conversation_id, npc_id),
+                                set(),
+                            ).add(memory_id)
+                    self._apply_chat_drafts(run, conversation, npc_id, decision)
+
+                leaving_ids = [
+                    npc_id
+                    for npc_id, decision in decisions.items()
+                    if decision.action == "leave_chat"
+                    and npc_id in conversation.participants
+                ]
+                candidates = [
+                    (npc_id, decision)
+                    for npc_id, decision in decisions.items()
+                    if decision.action == "speak"
+                    and npc_id in conversation.participants
+                ]
+                if not candidates or run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+                    before_seq = run.event_seq
+                    await self._finish_no_speech_round_locked(
+                        run,
+                        conversation,
+                        state,
+                        final_check=final_check,
+                        leaving_ids=leaving_ids,
                     )
+                    events = [event.to_dict() for event in run.events_after(before_seq)]
+                    await self.repository.save(run)
+                    for event in events:
+                        await self.event_hub.publish(run.run_id, event)
+                    return
+
+                ordered = self._order_speakers(
+                    run,
+                    conversation,
+                    candidates,
+                    trigger_message_ids,
+                )
+                prompts = [
+                    (
+                        npc_id,
+                        decision,
+                        self._npc_prompt(
+                            run,
+                            npc_id,
+                            "speech",
+                            {
+                                "conversationId": conversation_id,
+                                "roundId": round_id,
+                                "replyToMessageIds": trigger_message_ids,
+                                "intent": decision.intent,
+                                **self._chat_context(run, conversation, npc_id),
+                            },
+                        ),
+                    )
+                    for npc_id, decision in ordered
+                ]
+                state["status"] = "generating"
+                state["pendingLeaverIds"] = leaving_ids
+                state["pendingPostSpeechLeaverIds"] = [
+                    npc_id
+                    for npc_id, decision in ordered
+                    if decision.leave_chat_after_speaking
+                ]
+                run.in_flight_speech_calls += len(prompts)
+                await self.repository.save(run)
+
+            speech_results = await asyncio.gather(
+                *(self._generate_one_speech(npc_id, decision, prompt) for npc_id, decision, prompt in prompts)
+            )
+
+            async with run.lock:
+                run.in_flight_speech_calls = max(
+                    0,
+                    run.in_flight_speech_calls - len(prompts),
+                )
+                conversation = run.conversations.get(conversation_id)
+                if conversation is None or not self._round_still_current_locked(
+                    run,
+                    conversation,
+                    round_id=round_id,
+                    round_version=round_version,
+                    segment_id=segment_id,
+                    participant_version=participant_version,
+                ):
+                    return
+                state = self._round_state_locked(run, conversation)
+                publications: list[dict[str, Any]] = []
+                for sequence, (npc_id, decision, text) in enumerate(speech_results, start=1):
+                    cleaned = text.strip() if isinstance(text, str) else ""
+                    if (
+                        not cleaned
+                        or npc_id not in conversation.participants
+                        or self._is_near_duplicate_locked(run, conversation, npc_id, cleaned)
+                    ):
+                        continue
+                    publications.append(
+                        {
+                            "actorId": npc_id,
+                            "text": cleaned,
+                            "decision": decision.model_dump(by_alias=True),
+                            "roundSequence": sequence,
+                            "replyToMessageIds": trigger_message_ids,
+                        }
+                    )
+                state["pendingPublications"] = publications
+                state["status"] = "publishing"
+                if not publications:
+                    before_seq = run.event_seq
+                    await self._finish_no_speech_round_locked(
+                        run,
+                        conversation,
+                        state,
+                        final_check=final_check,
+                        leaving_ids=list(state.get("pendingLeaverIds", [])),
+                    )
+                    events = [event.to_dict() for event in run.events_after(before_seq)]
+                else:
+                    events = []
+                await self.repository.save(run)
+                for event in events:
+                    await self.event_hub.publish(run.run_id, event)
+
+            if publications:
+                await self._publish_pending_round(run, conversation_id)
+        finally:
+            async with run.lock:
+                run.active_chat_pipelines = max(0, run.active_chat_pipelines - 1)
+                await self._finish_pending_boundary_locked(run)
+                await self.repository.save(run)
+
+    async def _generate_one_speech(
+        self,
+        npc_id: str,
+        decision: ChatDecision,
+        prompt: str,
+    ) -> tuple[str, ChatDecision, str]:
+        try:
+            speech = await asyncio.wait_for(
+                self._npc_agent(npc_id).generate_speech(prompt),
+                timeout=self.chat_model_call_timeout_seconds,
+            )
+            return npc_id, decision, speech.text
+        except Exception:
+            return npc_id, decision, ""
+
+    def _order_speakers(
+        self,
+        run: Run,
+        conversation: Conversation,
+        candidates: list[tuple[str, ChatDecision]],
+        trigger_message_ids: list[str],
+    ) -> list[tuple[str, ChatDecision]]:
+        trigger_text = "\n".join(
+            str(message.get("text", ""))
+            for message in run.messages.get(conversation.conversation_id, [])
+            if message.get("messageId") in set(trigger_message_ids)
+        )
+        join_index = {
+            actor_id: index for index, actor_id in enumerate(conversation.participants)
+        }
+
+        def key(item: tuple[str, ChatDecision]) -> tuple[int, int, int, str]:
+            actor_id, decision = item
+            actor = self.registry.actor(actor_id)
+            directly_addressed = int(
+                actor_id in trigger_text
+                or (actor is not None and bool(actor.name) and actor.name in trigger_text)
+            )
+            return (
+                -directly_addressed,
+                -int(decision.response_desire),
+                join_index.get(actor_id, 999),
+                actor_id,
+            )
+
+        return sorted(candidates, key=key)
+
+    def _is_near_duplicate_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        npc_id: str,
+        text: str,
+    ) -> bool:
+        normalized = "".join(text.split()).lower()
+        if not normalized:
+            return True
+        recent = [
+            "".join(str(message.get("text", "")).split()).lower()
+            for message in run.messages.get(conversation.conversation_id, [])
+            if message.get("authorActorId") == npc_id
+        ][-3:]
+        return any(
+            previous == normalized
+            or difflib.SequenceMatcher(None, previous, normalized).ratio() >= 0.94
+            for previous in recent
+            if previous
+        )
+
+    def _publish_delay_seconds(self, run: Run, round_id: int, sequence: int, text: str) -> float:
+        low = self.chat_publish_delay_min_seconds
+        high = self.chat_publish_delay_max_seconds
+        if high <= low:
+            return low
+        digest = hashlib.sha256(
+            f"{run.seed}:{round_id}:{sequence}:{len(text)}".encode()
+        ).digest()
+        fraction = int.from_bytes(digest[:4], "big") / (2**32 - 1)
+        length_bias = min(len(text), 120) / 120
+        mixed = min(1.0, fraction * 0.55 + length_bias * 0.45)
+        return low + (high - low) * mixed
+
+    async def _publish_pending_round(self, run: Run, conversation_id: str) -> None:
+        async with run.lock:
+            conversation = run.conversations.get(conversation_id)
+            if conversation is None or not conversation.is_open:
+                return
+            state = self._round_state_locked(run, conversation)
+            round_id_number = int(state.get("roundId", 0))
+            round_version = int(state.get("roundVersion", 0))
+            participant_version = int(state.get("participantVersion", 0))
+            segment_id = state.get("segmentId")
+            published_ids = list(
+                state.setdefault("recovery", {}).get("publishedMessageIds", [])
+            )
+        while True:
+            async with run.lock:
+                conversation = run.conversations.get(conversation_id)
+                if conversation is None or not self._round_still_current_locked(
+                    run,
+                    conversation,
+                    round_id=round_id_number,
+                    round_version=round_version,
+                    segment_id=segment_id,
+                    participant_version=participant_version,
+                ):
+                    return
+                state = self._round_state_locked(run, conversation)
+                pending = list(state.get("pendingPublications", []))
+                if not pending:
+                    break
+                item = deepcopy(pending[0])
+                round_id = f"{conversation_id}:round:{round_id_number}"
+                sequence = int(item.get("roundSequence", 1))
+                delay = 0.0 if not published_ids else self._publish_delay_seconds(
+                    run,
+                    round_id_number,
+                    sequence,
+                    str(item.get("text", "")),
+                )
+            if delay > 0:
+                await asyncio.sleep(delay)
+            async with run.lock:
+                conversation = run.conversations.get(conversation_id)
+                if conversation is None or not self._round_still_current_locked(
+                    run,
+                    conversation,
+                    round_id=round_id_number,
+                    round_version=round_version,
+                    segment_id=segment_id,
+                    participant_version=participant_version,
+                ):
+                    return
+                state = self._round_state_locked(run, conversation)
+                pending = list(state.get("pendingPublications", []))
+                if not pending or pending[0] != item:
+                    continue
+                actor_id = str(item["actorId"])
+                if actor_id not in conversation.participants:
+                    state["pendingPublications"] = pending[1:]
+                    await self.repository.save(run)
+                    continue
+                before_seq = run.event_seq
+                message = self._write_message_locked(
+                    run,
+                    conversation,
+                    actor_id,
+                    str(item["text"]),
+                    round_id=round_id,
+                    round_sequence=int(item.get("roundSequence", 1)),
+                    reply_to_message_ids=list(item.get("replyToMessageIds", [])),
+                )
+                decision = ChatDecision.model_validate(item["decision"])
+                self._apply_spoken_chapter_effects(
+                    run,
+                    conversation,
+                    actor_id,
+                    decision,
+                    message["messageId"],
+                )
+                published_ids.append(message["messageId"])
+                recovery = state.setdefault("recovery", {})
+                recovery["publishedMessageIds"] = list(published_ids)
+                state["pendingPublications"] = pending[1:]
+                events = [event.to_dict() for event in run.events_after(before_seq)]
+                await self.repository.save(run)
+            for event in events:
+                await self.event_hub.publish(run.run_id, event)
+
+        async with run.lock:
+            conversation = run.conversations.get(conversation_id)
+            if conversation is None or not self._round_still_current_locked(
+                run,
+                conversation,
+                round_id=round_id_number,
+                round_version=round_version,
+                segment_id=segment_id,
+                participant_version=participant_version,
+            ):
+                return
+            before_seq = run.event_seq
+            state = self._round_state_locked(run, conversation)
+            direct_leavers = list(state.pop("pendingLeaverIds", []))
+            published_authors = {
+                str(item.get("authorActorId"))
+                for item in run.messages.get(conversation_id, [])
+                if item.get("messageId") in published_ids
+            }
+            post_speech_leavers = [
+                str(npc_id)
+                for npc_id in state.pop("pendingPostSpeechLeaverIds", [])
+                if str(npc_id) in published_authors
+            ]
+            queued = list(state.get("queuedMessageIds", []))
+            trigger = self._ordered_message_ids_locked(
+                run,
+                conversation_id,
+                [*published_ids, *queued],
+            )
+            state["queuedMessageIds"] = []
+            state["pendingPublications"] = []
+            state["finalCheckUsed"] = False
+            state["recovery"] = {
+                "resumeStatus": None,
+                "attempt": 0,
+                "publishedMessageIds": [],
+            }
+            trigger_authors = {
+                message.get("authorActorId")
+                for message in run.messages.get(conversation_id, [])
+                if message.get("messageId") in set(trigger)
+            }
+            if self.registry.player_actor_id in trigger_authors:
+                state["npcOnlyRounds"] = 0
+            else:
+                state["npcOnlyRounds"] = int(state.get("npcOnlyRounds", 0)) + 1
+            for npc_id in list(dict.fromkeys(direct_leavers)):
+                if npc_id in conversation.participants:
+                    await self._leave_and_consolidate_locked(
+                        run,
+                        conversation,
+                        npc_id,
+                        "model_leave",
+                    )
+            for npc_id in list(dict.fromkeys(post_speech_leavers)):
+                if npc_id in conversation.participants:
+                    await self._leave_and_consolidate_locked(
+                        run,
+                        conversation,
+                        npc_id,
+                        "said_and_left",
+                    )
+            if not conversation.is_open:
+                events = [event.to_dict() for event in run.events_after(before_seq)]
+                await self.repository.save(run)
+                for event in events:
+                    await self.event_hub.publish(run.run_id, event)
+                return
+            if (
+                state.get("npcOnlyRounds", 0) >= self.chat_npc_only_safety_rounds
+                and self.registry.player_actor_id not in trigger_authors
+            ):
+                self._enter_cooldown_locked(run, conversation, state)
+            elif trigger and run.clock.current.clock_minutes < run.clock.active_end_minutes:
+                state["roundVersion"] = int(state.get("roundVersion", 0)) + 1
+                state["triggerMessageIds"] = trigger
+                state["status"] = "queued"
+            else:
+                state["status"] = "idle"
+            events = [event.to_dict() for event in run.events_after(before_seq)]
+            await self.repository.save(run)
+        for event in events:
+            await self.event_hub.publish(run.run_id, event)
+
+    @staticmethod
+    def _ordered_message_ids_locked(
+        run: Run,
+        conversation_id: str,
+        message_ids: list[str],
+    ) -> list[str]:
+        wanted = set(message_ids)
+        return [
+            str(message["messageId"])
+            for message in run.messages.get(conversation_id, [])
+            if message.get("messageId") in wanted
+        ]
+
+    def _enter_cooldown_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        state: dict[str, Any],
+    ) -> None:
+        state["status"] = "cooldown"
+        state["triggerMessageIds"] = []
+        state["cooldownDueAt"] = time.time() + self.chat_cooldown_seconds
+        state["finalCheckUsed"] = False
+        run.idle_counts[conversation.conversation_id] = 1
+        run.append_event(
+            "conversation_idle",
+            {"conversationId": conversation.conversation_id, "idleCount": 1},
+        )
+
+    async def _finish_no_speech_round_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        state: dict[str, Any],
+        *,
+        final_check: bool,
+        leaving_ids: list[str],
+    ) -> None:
+        for npc_id in list(dict.fromkeys(leaving_ids)):
+            if npc_id in conversation.participants:
+                await self._leave_and_consolidate_locked(
+                    run,
+                    conversation,
+                    npc_id,
+                    "model_leave",
+                )
+        if not conversation.is_open:
+            return
+        if final_check:
+            for npc_id in list(conversation.participants):
+                actor = self.registry.actor(npc_id)
+                if actor is not None and actor.kind == "npc":
+                    await self._leave_and_consolidate_locked(
+                        run,
+                        conversation,
+                        npc_id,
+                        "conversation_idle",
+                    )
+            if conversation.is_open:
+                state["status"] = "idle"
+            return
+        self._enter_cooldown_locked(run, conversation, state)
+
+    async def _execute_opener_round(self, run: Run, conversation_id: str) -> None:
+        async with run.lock:
+            conversation = run.conversations.get(conversation_id)
+            if conversation is None or not conversation.is_open:
+                return
+            state = self._round_state_locked(run, conversation)
+            npc_id = str(state.get("openerActorId") or "")
+            if npc_id not in conversation.participants:
+                state["status"] = "idle"
+                return
+            state["roundId"] = int(state.get("roundId", 0)) + 1
+            state["recovery"] = {
+                "resumeStatus": None,
+                "attempt": 0,
+                "publishedMessageIds": [],
+            }
+            round_id = int(state["roundId"])
+            round_version = int(state.get("roundVersion", 0))
+            segment_id = state.get("segmentId")
+            participant_version = int(state.get("participantVersion", 0))
+            opener_kind = str(state.get("openerKind") or "conversation_opener")
+            state["status"] = "deciding"
+            invocations = self._prepare_round_invocations_locked(
+                run,
+                conversation,
+                state,
+                trigger=opener_kind,
+                only_actor_id=npc_id,
+            )
+            run.active_chat_pipelines += 1
+            await self.repository.save(run)
+        try:
+            decision = ChatDecision(
+                result="decided",
+                action="speak",
+                responseDesire=3,
+                intent=(
+                    "自然地说出开场白并说明想聊的话题"
+                    if opener_kind == "conversation_opener"
+                    else "自然地向当前参与者打招呼并简短加入眼前话题"
                 ),
             )
-            current_segments = run.segments.get(conversation.conversation_id, [])
-            current_segment_id = current_segments[-1].get("segmentId") if current_segments else None
-            if (
-                not conversation.is_open
-                or npc_id not in conversation.participants
-                or current_segment_id != segment_id
-            ):
-                # The provider result belongs to a stale conversation view;
-                # do not let late drafts or recalled IDs leak into a new
-                # segment after a concurrent join/leave/close.
-                return ChatDecision(result="decided", action="wait")
-            for memory_id in agent_result.recalled_memory_ids:
-                memory = run.memories.get(memory_id)
-                if memory is not None and memory.get("ownerNpcId") == npc_id:
-                    run.memory_cache.setdefault(cache_key, set()).add(memory_id)
-            decision = cast(ChatDecision, agent_result.decision)
-        except StructuredCallFailed:
-            decision = ChatDecision(result="decided", action="wait")
-        self._apply_chat_drafts(run, conversation, npc_id, decision)
-        return decision
+            recalled_ids: tuple[str, ...] = ()
+            if invocations:
+                _, result = await self._invoke_chat_decision(*invocations[0])
+                if result is not None:
+                    candidate = cast(ChatDecision, result.decision)
+                    recalled_ids = tuple(result.recalled_memory_ids)
+                    if candidate.result == "decided" and candidate.action == "speak":
+                        decision = candidate
+            async with run.lock:
+                conversation = run.conversations.get(conversation_id)
+                if conversation is None or not self._round_still_current_locked(
+                    run,
+                    conversation,
+                    round_id=round_id,
+                    round_version=round_version,
+                    segment_id=segment_id,
+                    participant_version=participant_version,
+                ):
+                    return
+                if run.clock.current.clock_minutes >= run.clock.active_end_minutes:
+                    state = self._round_state_locked(run, conversation)
+                    state["status"] = "idle"
+                    return
+                for memory_id in recalled_ids:
+                    if run.memories.get(memory_id, {}).get("ownerNpcId") == npc_id:
+                        run.memory_cache.setdefault((conversation_id, npc_id), set()).add(memory_id)
+                self._apply_chat_drafts(run, conversation, npc_id, decision)
+                prompt = self._npc_prompt(
+                    run,
+                    npc_id,
+                    "opening_speech" if opener_kind == "conversation_opener" else "join_speech",
+                    {
+                        "conversationId": conversation_id,
+                        "participants": list(conversation.participants),
+                        "intent": decision.intent or state.get("openerIntent"),
+                        "invitingGoalId": state.get("openerGoalId"),
+                        **self._chat_context(run, conversation, npc_id),
+                    },
+                )
+                state["status"] = "generating"
+                run.in_flight_speech_calls += 1
+                await self.repository.save(run)
+            _, decision, text = await self._generate_one_speech(npc_id, decision, prompt)
+            async with run.lock:
+                run.in_flight_speech_calls = max(0, run.in_flight_speech_calls - 1)
+                conversation = run.conversations.get(conversation_id)
+                if conversation is None or not self._round_still_current_locked(
+                    run,
+                    conversation,
+                    round_id=round_id,
+                    round_version=round_version,
+                    segment_id=segment_id,
+                    participant_version=participant_version,
+                ):
+                    return
+                state = self._round_state_locked(run, conversation)
+                if not text.strip():
+                    before_seq = run.event_seq
+                    run.append_event(
+                        "conversation_activity",
+                        {"conversationId": conversation_id, "reason": "speech_unavailable"},
+                    )
+                    self._enter_cooldown_locked(run, conversation, state)
+                    events = [event.to_dict() for event in run.events_after(before_seq)]
+                else:
+                    events = []
+                    state["pendingPublications"] = [
+                        {
+                            "actorId": npc_id,
+                            "text": text.strip(),
+                            "decision": decision.model_dump(by_alias=True),
+                            "roundSequence": 1,
+                            "replyToMessageIds": [],
+                        }
+                    ]
+                    state["status"] = "publishing"
+                await self.repository.save(run)
+                for event in events:
+                    await self.event_hub.publish(run.run_id, event)
+            if text.strip():
+                await self._publish_pending_round(run, conversation_id)
+        finally:
+            async with run.lock:
+                run.active_chat_pipelines = max(0, run.active_chat_pipelines - 1)
+                await self._finish_pending_boundary_locked(run)
+                await self.repository.save(run)
+
+    async def _finish_pending_boundary_locked(self, run: Run) -> None:
+        if run.active_chat_pipelines:
+            return
+        chapter_event_id = run.pending_chapter_event_id
+        pending = run.pending_day_end
+        if chapter_event_id is not None:
+            run.pending_chapter_event_id = None
+            run.pending_day_end = None
+            chapter_event = next(
+                event for event in self.registry.events if event.event_id == chapter_event_id
+            )
+            await self._finish_chapter_locked(run, chapter_event)
+        elif pending is not None:
+            run.pending_day_end = None
+            await self._close_day_locked(run, pending[0], pending[1])
 
     def _visible_messages(self, run: Run, conversation: Conversation, npc_id: str) -> list[dict[str, Any]]:
         return [deepcopy(message) for message in run.messages.get(conversation.conversation_id, []) if npc_id in message.get("visibleToNpcIds", [])]
@@ -2895,11 +3852,10 @@ class RunService:
             run.idle_counts[conversation.conversation_id] = 0
         await self._consolidate_locked(run, conversation, npc_id, reason)
         if conversation.is_open and len(conversation.participants) >= 2:
-            await self._run_participant_event_locked(
+            self._reset_round_for_participant_change_locked(
                 run,
                 conversation,
-                list(conversation.participants),
-                f"actor_left:{npc_id}",
+                status="idle",
             )
             return
         if not conversation.is_open:
@@ -2919,7 +3875,11 @@ class RunService:
     ) -> None:
         if player_id not in conversation.participants:
             raise ActorNotInConversationError(details={"actorId": player_id})
-        await self._close_current_segment_locked(run, conversation)
+        segments = run.segments.get(conversation.conversation_id, [])
+        segment = segments[-1] if segments else None
+        if segment is not None and segment.get("endedAt") is None:
+            segment["endedAt"] = run.clock.as_dict()["label"]
+        closed_segment_id = str(segment.get("segmentId")) if segment else None
         conversation.remove_participant(player_id)
         self._expire_join_requests_for_conversation_locked(
             run,
@@ -2943,22 +3903,144 @@ class RunService:
                 }
             )
             run.idle_counts[conversation.conversation_id] = 0
-            await self._run_participant_event_locked(
+            state = self._reset_round_for_participant_change_locked(
                 run,
                 conversation,
-                list(conversation.participants),
-                f"actor_left:{player_id}",
+                status="idle",
+            )
+            if closed_segment_id is not None:
+                state["pendingSummarySegmentIds"] = [closed_segment_id]
+            self._schedule_player_leave_maintenance(
+                run,
+                conversation.conversation_id,
+                closed_segment_id,
+                [],
             )
             return
-        for remaining in list(conversation.participants):
-            actor = self.registry.actor(remaining)
-            if actor is not None and actor.kind == "npc":
+        remaining_npcs = [
+            remaining
+            for remaining in conversation.participants
+            if (actor := self.registry.actor(remaining)) is not None
+            and actor.kind == "npc"
+        ]
+        for npc_id in remaining_npcs:
+            run.actor_states[npc_id]["status"] = "waiting"
+            existing = run.consolidation_status.get(
+                (conversation.conversation_id, npc_id),
+                {},
+            )
+            run.consolidation_status[(conversation.conversation_id, npc_id)] = {
+                **existing,
+                "status": "pending",
+                "reason": "conversation_closed",
+                "createdAt": run.clock.as_dict()["label"],
+                "attempts": int(existing.get("attempts", 0)),
+                "draftsCommitted": bool(existing.get("draftsCommitted")),
+                "interactionRecorded": bool(existing.get("interactionRecorded")),
+            }
+        state = run.ensure_conversation_round_state(conversation.conversation_id)
+        state["status"] = "closed_maintenance"
+        state["pendingSummarySegmentIds"] = (
+            [closed_segment_id] if closed_segment_id is not None else []
+        )
+        self._wake_chat_worker(run.run_id, conversation.conversation_id)
+        self._schedule_player_leave_maintenance(
+            run,
+            conversation.conversation_id,
+            closed_segment_id,
+            remaining_npcs,
+        )
+
+    def _schedule_player_leave_maintenance(
+        self,
+        run: Run,
+        conversation_id: str,
+        closed_segment_id: str | None,
+        npc_ids: list[str],
+    ) -> None:
+        key = (run.run_id, conversation_id)
+        if key in self._maintenance_keys:
+            return
+        self._maintenance_keys.add(key)
+        task = asyncio.create_task(
+            self._complete_player_leave_maintenance(
+                run,
+                conversation_id,
+                closed_segment_id,
+                npc_ids,
+            ),
+            name=f"chat-leave-maintenance:{run.run_id}:{conversation_id}",
+        )
+        self._maintenance_tasks.add(task)
+
+        def finished(done: asyncio.Task[None]) -> None:
+            self._maintenance_tasks.discard(done)
+            self._maintenance_keys.discard(key)
+            if not done.cancelled():
+                error = done.exception()
+                if error is None:
+                    self._resume_maintenance_tasks(run)
+
+        task.add_done_callback(finished)
+
+    async def _complete_player_leave_maintenance(
+        self,
+        run: Run,
+        conversation_id: str,
+        closed_segment_id: str | None,
+        npc_ids: list[str],
+    ) -> None:
+        async with run.lock:
+            conversation = run.conversations.get(conversation_id)
+            if conversation is None:
+                return
+            before_seq = run.event_seq
+            segment = next(
+                (
+                    item
+                    for item in run.segments.get(conversation_id, [])
+                    if item.get("segmentId") == closed_segment_id
+                ),
+                None,
+            )
+            if segment is not None and segment.get("summary") is None:
+                segment["summary"] = await self._summarize_segment_locked(
+                    run,
+                    conversation,
+                    segment,
+                )
+            state = run.conversation_round_states.get(conversation_id)
+            if state is not None and closed_segment_id is not None:
+                state["pendingSummarySegmentIds"] = [
+                    segment_id
+                    for segment_id in state.get("pendingSummarySegmentIds", [])
+                    if segment_id != closed_segment_id
+                ]
+            for npc_id in npc_ids:
                 await self._consolidate_locked(
                     run,
                     conversation,
-                    remaining,
+                    npc_id,
                     "conversation_closed",
                 )
+            if (
+                not conversation.is_open
+                and not any(
+                    status.get("status") == "pending"
+                    for (candidate_id, _), status in run.consolidation_status.items()
+                    if candidate_id == conversation_id
+                )
+                and not (
+                    run.conversation_round_states.get(conversation_id, {}).get(
+                        "pendingSummarySegmentIds"
+                    )
+                )
+            ):
+                run.conversation_round_states.pop(conversation_id, None)
+            events = [event.to_dict() for event in run.events_after(before_seq)]
+            await self.repository.save(run)
+        for event in events:
+            await self.event_hub.publish(run.run_id, event)
 
     async def _close_conversation_locked(self, run: Run, conversation: Conversation, reason: str) -> None:
         was_open = conversation.is_open
@@ -2980,6 +4062,9 @@ class RunService:
         if was_open:
             conversation.close(reason)
             run.append_event("conversation_closed", {"conversation": conversation.to_public_dict()})
+        run.conversation_round_states.pop(conversation.conversation_id, None)
+        run.conversation_round_locks.pop(conversation.conversation_id, None)
+        self._wake_chat_worker(run.run_id, conversation.conversation_id)
         # Segment/conversation state is no longer needed by the live
         # scheduler.  Keep messages and consolidation status for history and
         # retry, but drop per-conversation caches and drafts that were
@@ -3031,9 +4116,15 @@ class RunService:
             },
         )
         try:
-            consolidation = await self.decisions.exit_consolidation(prompt)
+            consolidation = await self._await_model_without_run_lock(
+                run,
+                self.decisions.exit_consolidation(prompt),
+            )
         except StructuredCallFailed:
             consolidation = ExitConsolidation()
+        current_status = run.consolidation_status.get(key)
+        if current_status and current_status.get("status") == "succeeded":
+            return
         failed = self.decisions.last_failed_protocol == "ExitConsolidation"
         drafts_committed = bool(existing and existing.get("draftsCommitted"))
         interactions_recorded = bool(existing and existing.get("interactionRecorded"))
@@ -3388,28 +4479,6 @@ class RunService:
             "position": deepcopy(run.positions.get(actor_id, {"x": 0, "y": 0})),
             "conversationId": conversation.conversation_id if conversation is not None else None,
         }
-
-    def _select_speaker(
-        self,
-        run: Run,
-        conversation: Conversation,
-        candidates: list[tuple[str, ChatDecision]],
-    ) -> tuple[str, ChatDecision]:
-        messages = run.messages.get(conversation.conversation_id, [])
-        latest_text = str(messages[-1].get("text", "")) if messages else ""
-        last_author = messages[-1].get("authorActorId") if messages else None
-
-        def score(item: tuple[str, ChatDecision]) -> tuple[int, int, int]:
-            actor_id, decision = item
-            actor = self.registry.actor(actor_id)
-            mentioned = int(
-                actor_id in latest_text
-                or (actor is not None and bool(actor.name) and actor.name in latest_text)
-            )
-            desire = decision.response_desire - int(actor_id == last_author)
-            return mentioned, desire, -self._stable_actor_rank(run, actor_id)
-
-        return max(candidates, key=score)
 
     def _npc_prompt(self, run: Run, npc_id: str, protocol: str, extra: dict[str, Any]) -> str:
         persona = self.registry.npc_personas.get(npc_id)

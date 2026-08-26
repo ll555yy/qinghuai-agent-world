@@ -8,6 +8,7 @@ import { ActorPanel } from './panels/ActorPanel'
 import { ChatPanel } from './panels/ChatPanel'
 import { EventsPanel } from './panels/EventsPanel'
 import { useWorldRuntime } from './useWorldRuntime'
+import { NoticeToast } from './NoticeToast'
 
 const WorldCanvas = lazy(() => import('../game/WorldCanvas').then((module) => ({ default: module.WorldCanvas })))
 const RelationshipGraphPanel = lazy(() => import('./panels/RelationshipGraphPanel'))
@@ -248,9 +249,7 @@ export default function WorldScreen() {
       {error ? <div className="error-toast" role="alert">{error}<button type="button" onClick={() => setError(null)}>×</button></div> : null}
       <section className="notice-stack" aria-live="polite">
         {notices.map((notice) => (
-          <button key={notice.id} type="button" className={`notice ${notice.tone}`} onClick={() => dismissNotice(notice.id)}>
-            {notice.text}
-          </button>
+          <NoticeToast key={notice.id} notice={notice} onDismiss={dismissNotice} />
         ))}
       </section>
     </main>

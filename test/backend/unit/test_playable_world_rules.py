@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from core.backend.app.ai.decision_service import DecisionService, StructuredCallFailed
 from core.backend.app.ai.errors import AIError, AIErrorCode
 from core.backend.app.ai.models import TextGenerationResult
@@ -292,15 +293,13 @@ async def test_new_npc_cannot_see_old_segment_but_player_join_receives_full_hist
         conversation = run.conversations[conversation_id]
         service._write_message_locked(run, conversation, "npc_001", "加入前的旧话")
     await service.add_participant(first["runId"], conversation_id, "npc_003")
+    await service.wait_for_chat_idle(first["runId"], conversation_id)
     assert service._visible_messages(run, conversation, "npc_003") == []
     assert service._visible_messages(run, conversation, "npc_001")[0]["text"] == "加入前的旧话"
-    assert {item["actor"]["actorId"] for item in join_model.chat_contexts} == {
-        "npc_001",
-        "npc_002",
-    }
+    assert join_model.chat_contexts[-1]["actor"]["actorId"] == "npc_003"
     assert {
         item["context"]["trigger"] for item in join_model.chat_contexts
-    } == {"actor_joined:npc_003"}
+    } >= {"join_opener"}
     background_event = next(
         event for event in reversed(run.events) if event.event_type == "conversation_activity"
     )
@@ -340,6 +339,9 @@ async def test_memory_recall_happens_at_most_once_and_is_owner_scoped(registry) 
         }
     await service.player_message(
         created["runId"], conversation["conversation"]["conversationId"], "你还记得我吗？"
+    )
+    await service.wait_for_chat_idle(
+        created["runId"], conversation["conversation"]["conversationId"]
     )
     assert len(model.chat_prompts) == 2
     assert all(

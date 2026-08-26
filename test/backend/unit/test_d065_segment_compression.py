@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
+
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.clock import WorldTime
 from core.backend.app.orchestration.run_service import (
@@ -58,6 +60,35 @@ class WaitAndSummaryModel:
         )
 
 
+class AlwaysSpeakModel(WaitAndSummaryModel):
+    """Keep choosing meaningful speech so cadence tests can cross bursts."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.speech_calls = 0
+
+    async def generate(self, request):
+        protocol = request.system_prompt.split("协议=", 1)[1].splitlines()[0]
+        if protocol == "ChatDecision":
+            self.chat_calls += 1
+            value = {
+                "result": "decided",
+                "action": "speak",
+                "responseDesire": 1,
+                "intent": "继续推进尚未说完的话题",
+            }
+        elif protocol == "SpeechGeneration":
+            self.speech_calls += 1
+            value = {"text": f"继续交谈第{self.speech_calls}句。"}
+        else:
+            return await super().generate(request)
+        return TextGenerationResult(
+            text=json.dumps(value, ensure_ascii=False),
+            provider="test",
+            model="offline",
+        )
+
+
 async def _open(service: RunService, participants: list[str]):
     created = await service.create_run()
     opened = await service.create_conversation(created["runId"], participants)
@@ -77,58 +108,106 @@ async def _write_messages(service: RunService, run, conversation, count: int) ->
 
 
 @pytest.mark.anyio
-async def test_pure_npc_waits_once_then_auto_closes_conversation(registry) -> None:
+async def test_pure_npc_silence_gets_one_final_check_then_closes(registry) -> None:
     model = WaitAndSummaryModel()
-    service = RunService(registry, text_model=model)
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=0.01)
     run, conversation = await _open(service, ["npc_001", "npc_002"])
+    await service.wait_for_chat_idle(
+        run.run_id,
+        conversation.conversation_id,
+        include_cooldown=True,
+    )
 
-    async with run.lock:
-        message = service._write_message_locked(run, conversation, "npc_001", "先把问题摆在这里。")
-        await service._run_chat_pipeline_locked(run, conversation, message["messageId"])
-
-    assert conversation.close_reason == "conversation_idle"
+    assert not conversation.is_open
     idle_events = [event for event in run.events if event.event_type == "conversation_idle"]
-    assert [event.payload["idleCount"] for event in idle_events] == [1, 2]
+    assert [event.payload["idleCount"] for event in idle_events] == [1]
     assert run.active_chat_pipelines == 0
+    await service.close()
 
 
 @pytest.mark.anyio
-async def test_first_idle_dispatch_is_bounded_and_a_speech_resets_idle(registry) -> None:
-    # Outer round waits; the one bounded internal round lets npc_002 speak.
-    model = WaitAndSummaryModel(speak_on_chat_call=3)
-    service = RunService(registry, text_model=model)
-    run, conversation = await _open(service, ["npc_001", "npc_002"])
-
-    async with run.lock:
-        message = service._write_message_locked(run, conversation, "npc_001", "还有一轮机会。")
-        await service._run_chat_pipeline_locked(run, conversation, message["messageId"])
-
+async def test_final_check_speech_starts_a_new_message_round(registry) -> None:
+    model = WaitAndSummaryModel(speak_on_chat_call=2)
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=0.03)
+    run, conversation = await _open(service, [registry.player_actor_id, "npc_001"])
+    await service.player_message(run.run_id, conversation.conversation_id, "还有一轮机会。")
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
+    await asyncio.sleep(0.05)
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
     assert conversation.is_open
     assert run.idle_counts[conversation.conversation_id] == 1
     assert any(
-        item["authorActorId"] == "npc_002"
+        item["authorActorId"] == "npc_001"
         and item["text"] == "第二轮仍有人愿意回应。"
         for item in run.messages[conversation.conversation_id]
     )
+    await service.close()
 
 
 @pytest.mark.anyio
-async def test_player_chat_never_enters_automatic_idle(registry) -> None:
+async def test_player_chat_uses_server_cooldown_and_only_one_final_check(registry) -> None:
     model = WaitAndSummaryModel()
-    service = RunService(registry, text_model=model)
-    run, conversation = await _open(service, ["npc_001", registry.player_actor_id])
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=0.01)
+    run, conversation = await _open(service, [registry.player_actor_id, "npc_001"])
+    await service.player_message(run.run_id, conversation.conversation_id, "玩家还在聊天。")
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
+    assert conversation.is_open
+    assert len([event for event in run.events if event.event_type == "conversation_idle"]) == 1
 
-    async with run.lock:
-        message = service._write_message_locked(run, conversation, registry.player_actor_id, "玩家还在聊天。")
-        await service._run_chat_pipeline_locked(run, conversation, message["messageId"])
+    await service.conversation_idle(run.run_id, conversation.conversation_id)
+    await service.conversation_idle(run.run_id, conversation.conversation_id)
+    await service.wait_for_chat_idle(
+        run.run_id,
+        conversation.conversation_id,
+        include_cooldown=True,
+    )
+    assert not conversation.is_open
+    assert len([event for event in run.events if event.event_type == "conversation_idle"]) == 1
+    await service.close()
+
+
+@pytest.mark.anyio
+async def test_world_clock_does_not_replay_a_quiet_chat(registry) -> None:
+    model = WaitAndSummaryModel(speak_on_chat_call=2)
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=10)
+    run, conversation = await _open(service, [registry.player_actor_id, "npc_001"])
+    run.clock.current = WorldTime(day=1, hour=16, minute=0)
+    for days in run.thought_days.values():
+        days.add(1)
+
+    await service.player_message(
+        run.run_id,
+        conversation.conversation_id,
+        "我先听听你怎么想。",
+    )
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
+    assert len(run.messages[conversation.conversation_id]) == 1
+    calls_before_step = model.chat_calls
+    await service.world_step(run.run_id, 4)
 
     assert conversation.is_open
-    assert not any(event.event_type == "conversation_idle" for event in run.events)
-    assert run.idle_counts[conversation.conversation_id] == 0
+    assert len(run.messages[conversation.conversation_id]) == 1
+    assert model.chat_calls == calls_before_step
+    await service.close()
 
-    await service.conversation_idle(run.run_id, conversation.conversation_id)
-    await service.conversation_idle(run.run_id, conversation.conversation_id)
-    assert conversation.close_reason == "idle"
+
+@pytest.mark.anyio
+async def test_message_rounds_continue_without_world_clock_polling(registry) -> None:
+    model = AlwaysSpeakModel()
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=10)
+    run, conversation = await _open(service, ["npc_001", "npc_002"])
+    run.clock.current = WorldTime(day=1, hour=16, minute=0)
+    for days in run.thought_days.values():
+        days.add(1)
+
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
+    assert len(run.messages[conversation.conversation_id]) > 3
+    count_before_step = len(run.messages[conversation.conversation_id])
+    await service.world_step(run.run_id, 4)
+
+    assert conversation.is_open
+    assert len(run.messages[conversation.conversation_id]) == count_before_step
+    await service.close()
 
 
 @pytest.mark.anyio

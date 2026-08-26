@@ -22,18 +22,137 @@ function payloadObject<T>(payload: Record<string, unknown>, key: string): T | un
   return typeof value === 'object' && value !== null ? (value as T) : undefined
 }
 
+function isPendingMessage(message: PublicMessage): boolean {
+  return message.deliveryStatus === 'sending' || message.deliveryStatus === 'failed'
+}
+
+function canReconcilePendingMessage(
+  pending: PublicMessage,
+  incoming: PublicMessage,
+): boolean {
+  if (
+    !isPendingMessage(pending) ||
+    incoming.deliveryStatus !== undefined ||
+    pending.authorActorId !== incoming.authorActorId ||
+    pending.text !== incoming.text
+  ) {
+    return false
+  }
+
+  // A history response can race an in-flight send.  When both sides have a
+  // timestamp, avoid replacing a newer optimistic message with an older
+  // message that happens to have the same text.
+  return !pending.createdAt || !incoming.createdAt || pending.createdAt === incoming.createdAt
+}
+
+function sameMessage(left: PublicMessage, right: PublicMessage): boolean {
+  const leftReplyIds = left.replyToMessageIds
+  const rightReplyIds = right.replyToMessageIds
+  return (
+    left.messageId === right.messageId &&
+    left.conversationId === right.conversationId &&
+    left.authorActorId === right.authorActorId &&
+    left.text === right.text &&
+    left.createdAt === right.createdAt &&
+    left.segmentId === right.segmentId &&
+    left.roundId === right.roundId &&
+    left.roundSequence === right.roundSequence &&
+    left.system === right.system &&
+    left.systemActorId === right.systemActorId &&
+    left.systemAction === right.systemAction &&
+    left.deliveryStatus === right.deliveryStatus &&
+    leftReplyIds?.length === rightReplyIds?.length &&
+    leftReplyIds?.every((messageId, index) => messageId === rightReplyIds?.[index]) !== false
+  )
+}
+
+function mergeMessage(existing: PublicMessage, incoming: PublicMessage): PublicMessage {
+  const merged: PublicMessage = { ...existing, ...incoming }
+  // A server message is authoritative.  Do not leave a local delivery state
+  // attached after the canonical message has arrived.
+  if (incoming.deliveryStatus === undefined) delete merged.deliveryStatus
+  if (sameMessage(existing, merged)) return existing
+  return merged
+}
+
+/**
+ * Append one message in arrival order while keeping message IDs idempotent.
+ * A canonical server message can replace its matching local optimistic
+ * message, but it never gets keyed by round metadata: several messages may
+ * legitimately belong to one round.
+ */
+export function appendConversationMessage(
+  messages: PublicMessage[],
+  incoming: PublicMessage,
+): PublicMessage[] {
+  const existingIndex = messages.findIndex((message) => message.messageId === incoming.messageId)
+  if (existingIndex >= 0) return messages
+
+  const pendingIndex = messages.findIndex((message) => canReconcilePendingMessage(message, incoming))
+  if (pendingIndex >= 0) {
+    const result = [...messages]
+    result[pendingIndex] = incoming
+    return result
+  }
+  return [...messages, incoming]
+}
+
+/**
+ * Merge a REST history/command response without losing live events that won
+ * the race with the response.  Existing messages keep their event-arrival
+ * order; new messages in the response are appended in the response's order.
+ * This also works when a caller supplies only a response delta rather than a
+ * complete history list.
+ */
+export function mergeConversationMessages(
+  existing: PublicMessage[],
+  incoming: PublicMessage[],
+): PublicMessage[] {
+  if (!incoming.length) return existing
+
+  const consumedPendingIds = new Set<string>()
+  let result = existing
+  let changed = false
+
+  for (const message of incoming) {
+    const existingIndex = result.findIndex((candidate) => candidate.messageId === message.messageId)
+    if (existingIndex >= 0) {
+      const previous = result[existingIndex]
+      const merged = mergeMessage(previous, message)
+      if (merged !== previous) {
+        if (result === existing) result = [...existing]
+        result[existingIndex] = merged
+        changed = true
+      }
+      continue
+    }
+
+    const pendingIndex = result.findIndex(
+      (candidate) =>
+        !consumedPendingIds.has(candidate.messageId) &&
+        canReconcilePendingMessage(candidate, message),
+    )
+    if (pendingIndex >= 0) {
+      consumedPendingIds.add(result[pendingIndex].messageId)
+      if (result === existing) result = [...existing]
+      result[pendingIndex] = message
+      changed = true
+    } else {
+      if (result === existing) result = [...existing]
+      result.push(message)
+      changed = true
+    }
+  }
+
+  return changed ? result : existing
+}
+
 function replaceConversation(
   conversations: PublicConversation[],
   conversation: PublicConversation,
 ): PublicConversation[] {
   const rest = conversations.filter((item) => item.conversationId !== conversation.conversationId)
   return [...rest, conversation].sort((a, b) => a.creationSeq - b.creationSeq)
-}
-
-function appendUniqueMessage(messages: PublicMessage[], message: PublicMessage): PublicMessage[] {
-  return messages.some((item) => item.messageId === message.messageId)
-    ? messages
-    : [...messages, message]
 }
 
 export function reduceRunEvent(state: WorldData, event: RunEvent): WorldData {
@@ -95,7 +214,7 @@ export function reduceRunEvent(state: WorldData, event: RunEvent): WorldData {
           }
           messages = {
             ...messages,
-            [conversation.conversationId]: appendUniqueMessage(
+            [conversation.conversationId]: appendConversationMessage(
               messages[conversation.conversationId] ?? [],
               systemMessage,
             ),
@@ -113,11 +232,25 @@ export function reduceRunEvent(state: WorldData, event: RunEvent): WorldData {
       typeof authorActorId === 'string' &&
       typeof text === 'string'
     ) {
-      const message: PublicMessage = { conversationId, messageId, authorActorId, text }
-      messages = {
-        ...messages,
-        [conversationId]: appendUniqueMessage(messages[conversationId] ?? [], message),
+      const message: PublicMessage = {
+        conversationId,
+        messageId,
+        authorActorId,
+        text,
+        ...(typeof payload.createdAt === 'string' ? { createdAt: payload.createdAt } : {}),
+        ...(typeof payload.segmentId === 'string' ? { segmentId: payload.segmentId } : {}),
+        ...(typeof payload.roundId === 'string' ? { roundId: payload.roundId } : {}),
+        ...(typeof payload.roundSequence === 'number' && Number.isFinite(payload.roundSequence)
+          ? { roundSequence: payload.roundSequence }
+          : {}),
+        ...(Array.isArray(payload.replyToMessageIds) &&
+        payload.replyToMessageIds.every((item): item is string => typeof item === 'string')
+          ? { replyToMessageIds: [...payload.replyToMessageIds] }
+          : {}),
       }
+      const previous = messages[conversationId] ?? []
+      const next = appendConversationMessage(previous, message)
+      if (next !== previous) messages = { ...messages, [conversationId]: next }
     }
   }
 

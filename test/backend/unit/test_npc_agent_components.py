@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from copy import deepcopy
 
 import pytest
+from pydantic import ValidationError
+
 from core.backend.app.agents.memory_tool import RetrieveOwnedMemoriesTool
 from core.backend.app.agents.models import (
     AgentInvocation,
@@ -25,7 +27,6 @@ from core.backend.app.agents.trace import AgentTrace, InMemoryAgentTraceSink
 from core.backend.app.ai.decision_service import DecisionService
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.ai.protocols import ChatDecision, MemoryQuery, SpeechGeneration
-from pydantic import ValidationError
 
 
 def _context(owner: str = "npc_001") -> MemoryToolContext:
@@ -551,19 +552,31 @@ async def test_agent_binding_rejects_other_npc_invocation() -> None:
 
 
 @pytest.mark.anyio
-async def test_conversation_scheduler_calls_speech_only_on_winning_agent(
+async def test_conversation_scheduler_allows_all_eligible_agents_to_speak(
     registry, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from core.backend.app.agents.models import AgentResult
     from core.backend.app.orchestration.run_service import RunService
 
-    service = RunService(registry, text_model=None)
+    service = RunService(registry, text_model=None, chat_cooldown_seconds=0.01)
     created = await service.create_run()
     opened = await service.create_conversation(
-        created["runId"], ["npc_001", "npc_002"]
+        created["runId"], [registry.player_actor_id, "npc_001"]
     )
     conversation_id = opened["conversation"]["conversationId"]
     run = await service.get_run_entity(created["runId"])
     conversation = run.conversations[conversation_id]
+    async with run.lock:
+        conversation.add_participant("npc_002")
+        run.segments[conversation_id][-1]["participants"].append("npc_002")
+        run.actor_states["npc_002"]["status"] = "chatting"
+        run.memory_cache[(conversation_id, "npc_002")] = set()
+        run.conversation_drafts[conversation_id]["npc_002"] = {
+            "goalUpdates": {},
+            "relationshipUpdates": [],
+            "pendingGoals": [],
+            "chapterEffects": [],
+        }
     decisions = {
         "npc_001": ChatDecision.model_validate(
             {
@@ -584,8 +597,17 @@ async def test_conversation_scheduler_calls_speech_only_on_winning_agent(
     }
     speech_calls: list[str] = []
 
-    async def fake_decision(_run, _conversation, npc_id, _trigger, _message_id=None):
-        return decisions[npc_id]
+    decision_calls = 0
+
+    async def fake_decision(npc_id, _invocation):
+        nonlocal decision_calls
+        decision_calls += 1
+        decision = (
+            decisions[npc_id]
+            if decision_calls <= 2
+            else ChatDecision(result="decided", action="wait")
+        )
+        return npc_id, AgentResult(decision=decision, trace_id=f"trace-{decision_calls}")
 
     async def speech_one(_prompt: str) -> SpeechGeneration:
         speech_calls.append("npc_001")
@@ -595,18 +617,20 @@ async def test_conversation_scheduler_calls_speech_only_on_winning_agent(
         speech_calls.append("npc_002")
         return SpeechGeneration(text="沈星遥开口了。")
 
-    monkeypatch.setattr(service, "_run_one_chat_decision_locked", fake_decision)
+    monkeypatch.setattr(service, "_invoke_chat_decision", fake_decision)
     monkeypatch.setattr(service.agents["npc_001"], "generate_speech", speech_one)
     monkeypatch.setattr(service.agents["npc_002"], "generate_speech", speech_two)
-    # Prevent the speech generated in this test from starting a second round;
-    # the outer call still runs the real scheduler and winner selection.
-    real_pipeline = service._run_chat_pipeline_locked
+    await service.player_message(created["runId"], conversation_id, "你们都说说看。")
+    await service.wait_for_chat_idle(created["runId"], conversation_id)
 
-    async def no_recursive_pipeline(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(service, "_run_chat_pipeline_locked", no_recursive_pipeline)
-    async with run.lock:
-        await real_pipeline(run, conversation, None, chain_left=1)
-
-    assert speech_calls == ["npc_001"]
+    assert set(speech_calls) == {"npc_001", "npc_002"}
+    round_messages = [
+        message
+        for message in run.messages[conversation_id]
+        if message.get("roundId")
+    ]
+    assert [message["authorActorId"] for message in round_messages] == [
+        "npc_001",
+        "npc_002",
+    ]
+    await service.close()

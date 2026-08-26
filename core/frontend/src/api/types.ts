@@ -52,9 +52,13 @@ export interface PublicMessage {
   text: string
   createdAt?: string
   segmentId?: string
+  roundId?: string
+  roundSequence?: number
+  replyToMessageIds?: string[]
   system?: boolean
   systemActorId?: string
   systemAction?: 'joined' | 'left'
+  deliveryStatus?: 'sending' | 'failed'
 }
 
 export interface PublicWorldEvent {

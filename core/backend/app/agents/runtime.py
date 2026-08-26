@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -48,7 +47,6 @@ class NPCAgentRuntime:
         self.decisions = decisions
         self.trace_sink = trace_sink or InMemoryAgentTraceSink()
         self._memory_tool_factory = memory_tool_factory
-        self._model_lock = asyncio.Lock()
         self.graph = self._build_graph().compile()
         # ``compiled_graph`` is an explicit alias used by diagnostics and
         # integration code; it points to the same compiled object.
@@ -132,8 +130,7 @@ class NPCAgentRuntime:
 
         if not prompt.strip():
             raise ValueError("speech prompt cannot be empty")
-        async with self._model_lock:
-            return await self.decisions.speech(prompt)
+        return await self.decisions.speech(prompt)
 
     @staticmethod
     def _final_action(decision: AgentDecision) -> str:
@@ -246,20 +243,17 @@ class NPCAgentRuntime:
         return "safe_wait"
 
     async def _daily_decision(self, state: AgentGraphState) -> dict[str, Any]:
-        async with self._model_lock:
-            decision = await self.decisions.daily_action(state["prompt"])
+        decision = await self.decisions.daily_action(state["prompt"])
         return self._decision_update(state, decision, "daily_decision", "DailyActionDecision")
 
     async def _invitation_decision(self, state: AgentGraphState) -> dict[str, Any]:
-        async with self._model_lock:
-            decision = await self.decisions.invitation(state["prompt"])
+        decision = await self.decisions.invitation(state["prompt"])
         return self._decision_update(
             state, decision, "invitation_decision", "InvitationDecision"
         )
 
     async def _chat_decision(self, state: AgentGraphState) -> dict[str, Any]:
-        async with self._model_lock:
-            decision = await self.decisions.chat(state["prompt"])
+        decision = await self.decisions.chat(state["prompt"])
         return self._decision_update(state, decision, "chat_decision", "ChatDecision")
 
     async def _chat_after_recall(self, state: AgentGraphState) -> dict[str, Any]:
@@ -270,8 +264,7 @@ class NPCAgentRuntime:
             prompt = builder(recalled)
         else:
             prompt = f"{prompt}\n已召回私有记忆标识：{', '.join(recalled)}"
-        async with self._model_lock:
-            decision = await self.decisions.chat(prompt)
+        decision = await self.decisions.chat(prompt)
         return self._decision_update(
             state,
             decision,

@@ -9,9 +9,9 @@
 
 本阶段完成后，本地 FastAPI 使用 Docker 中的 PostgreSQL 作为权威持久化来源。创建 Run、推进世界、邀请、加入、聊天、离场沉淀和 Day7 结算产生的状态，在应用进程重建后仍可恢复并继续运行。内存仓储只保留为显式测试实现，数据库配置失败时不得静默退回内存。
 
-同时完成两个已确认但尚未落地的聊天生命周期能力：
+同时完成两个聊天生命周期能力：
 
-1. 不含玩家的 Conversation 连续两次完整调度无人申请发言时，以 `conversation_idle` 关闭并执行正常沉淀。
+1. Conversation 一轮无人发言后进入一次 12 秒冷场；到期只执行一次最终复询，仍沉默时 NPC 正常离场并沉淀。
 2. 当前 Segment 过长时生成共享滚动摘要，提示词使用摘要加最近原文，数据库仍永久保留全部 Message。
 
 ## 2. 不变量与较新规则
@@ -20,7 +20,7 @@
 - `domain/` 不导入 FastAPI、SQLAlchemy、psycopg、pgvector 或具体模型 SDK。
 - D-057 覆盖旧的“NPC 不能离开世界”：NPC 离场沉淀后没有 `active | blocked` Goal 时进入 `departed`。
 - D-058 覆盖旧的“第三人直接加入”：第三人必须经过冻结的原参与者一致同意；玩家参与者必须手动表态。
-- D-065 只自动收束纯 NPC Conversation；含玩家的 Conversation 继续使用玩家侧空闲入口。
+- D-065 已迁移为消息驱动并行轮次、一轮冷场等待和一次最终复询，详见 `MESSAGE_DRIVEN_CHAT_ROUNDS_DESIGN.md`。玩家发言会立即取消冷场，最终仍无人发言时 NPC 正常离场，玩家不被强制代言或等待。
 - Memory 查询首先由后端固定 `ownerNpcId`，模型输入无权提供或覆盖 owner。
 - Day7 只读取章节权威表，不从 Graph、Goal 或模型临时推测。
 - 不在数据库事务或行锁中等待方舟模型调用。
@@ -78,7 +78,7 @@ postgresql+psycopg://<user>:<password>@127.0.0.1:<port>/<database>
 - `invitations`、`join_requests`：请求状态和正常业务字段；私有邀请意图只作为私有 JSONB 载荷保存，不进入公开事件。
 - `conversation_drafts`：按 `conversation_id + npc_id` 保存 Goal/关系/pending Goal/章节 Effect 草稿。
 - `conversation_memory_cache`：按 `conversation_id + npc_id + memory_id` 保存当前私有召回缓存。
-- `conversation_idle_states`：纯 NPC 自动空闲计数；关闭后删除或标记结束。
+- `conversation_idle_states`：兼容保存公开冷场计数；权威调度状态由 `conversationRoundStates` 状态项保存。
 - `consolidations`：按 `conversation_id + npc_id` 唯一，保存状态、原因、尝试次数、草稿是否提交及互动是否记录。
 
 ### 5.3 Goal、关系与章节状态
@@ -168,11 +168,15 @@ EmbeddingPort 可替换，自动测试使用固定向量，不能访问网络。
 - 参与者变化后，继续参与者额外获得上一 Segment 最近 4 条原文作为 `boundaryMessages`；新加入者不能读取该边界尾部。
 - 摘要失败不推进 `summary_through_message_id`，保留全部原文并在后续合法触发点重试；聊天继续。
 
-## 10. D-065 自动空闲收束
+## 10. D-065 向消息驱动轮次迁移
 
-纯 NPC Conversation 的一次完整 ChatDecision 调度若无人 `speak`，空闲计数加一并触发内部 `conversation_idle` 参与者事件；第二次完整调度仍无人发言时，以关闭原因 `conversation_idle` 走统一的 Segment 摘要、NPC 沉淀和清理路径。
+当前实现已经移除内部回复突发、winner-only 和世界时钟自主续聊。持久化的每 Conversation 轮次状态保存 `roundId`、状态、触发/排队消息、参与者版本、冷场期限、最终复询标记、待发布台词和已发布恢复游标；进程恢复时重新排队未完成决定并避免重复发布已完成消息。
 
-以下行为重置计数：新 Message、有效 NPC 发言、参与者加入或离开。含玩家 Conversation 不自动运行该规则，继续由玩家侧 idle API 显式推进；18:00 对两种会话都强制收束。
+同轮 NPC 的决定和台词可并行等待，但草稿合并、消息写入和数据库保存仍在短暂的 `Run.lock` 临界区串行完成。不同 Conversation 可以并行等待 Provider；物理模型请求统一经过可配置的进程级 Semaphore。数据库事务和行锁不能跨 Provider 等待或自然展示间隔。
+
+一轮无人 `speak` 时进入默认 12 秒冷场。玩家消息立即持久化并原子取消冷场；到期只执行一次最终复询，仍沉默时所有 NPC 走既有离场、Segment 摘要、`ExitConsolidation` 和清理路径。18:00 对所有会话继续保持硬收束。
+
+`conversation_drafts` 仍按 `conversation_id + npc_id` 持久化未生效草稿；整轮并行结果统一校验后才合并草稿，正式 Goal、关系和章节状态只在离场 consolidation 时幂等提交。
 
 ## 11. 启动、健康与事件恢复
 

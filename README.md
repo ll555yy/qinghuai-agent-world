@@ -262,6 +262,10 @@ GitHub Actions 包含四个独立 Job：后端离线门禁、PostgreSQL 语义�
 | `QINGHUAI_PERSISTENCE_BACKEND` | `memory` 或 `postgres` | 默认可选，模板使用 `postgres` |
 | `ARK_API_KEY` | Candidate 文本模型凭证 | 真实 NPC 生成时必需 |
 | `ARK_MODEL` / `ARK_BASE_URL` | Candidate 模型与端点 | 有模板默认值 |
+| `ARK_MODEL_MAX_CONCURRENCY` | 所有物理文本模型请求的进程级并发上限 | 默认 `6` |
+| `CHAT_COOLDOWN_SECONDS` | 无人发言后唯一一次最终复询前的等待时间 | 默认 `12` 秒 |
+| `CHAT_PUBLISH_DELAY_MIN_SECONDS` / `CHAT_PUBLISH_DELAY_MAX_SECONDS` | 同轮 NPC 台词逐条发布的确定性自然间隔 | 默认 `1.2`～`3.0` 秒 |
+| `CHAT_MODEL_CALL_TIMEOUT_SECONDS` | 单个 NPC 决策或台词调用超时，不影响同轮其他 NPC | 默认 `45` 秒 |
 | `ARK_EMBEDDING_MODEL` | 2048 维 Memory Embedding | 向量检索时必需 |
 | `ARK_JUDGE_API_KEY` | 独立评测模型凭证 | 只在显式 live eval 时可选 |
 | `SEGMENT_*` | 对话压缩阈值与保留窗口 | 有安全默认值 |
@@ -293,6 +297,9 @@ python -m pytest -c core/backend/pyproject.toml -q
 ## 📚 延伸文档
 
 - [系统设计](project/SYSTEM_DESIGN.md)
+- [消息驱动并行聊天轮次设计](project/MESSAGE_DRIVEN_CHAT_ROUNDS_DESIGN.md)
+- [消息驱动并行聊天轮次实施计划](project/MESSAGE_DRIVEN_CHAT_ROUNDS_IMPLEMENTATION_PLAN.md)
+- [下一 Goal：实现消息驱动并行聊天轮次](project/NEXT_GOAL_MESSAGE_DRIVEN_CHAT_ROUNDS.md)
 - [LangGraph NPC Agent 设计](project/NPC_AGENT_LANGGRAPH_DESIGN.md)
 - [PostgreSQL + pgvector 设计](project/DATABASE_BACKEND_DESIGN.md)
 - [前端场景与交互设计](project/FRONTEND_DESIGN.md)

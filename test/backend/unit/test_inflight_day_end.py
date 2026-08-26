@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import pytest
+
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.clock import WorldTime
 from core.backend.app.orchestration.run_service import RunService
@@ -92,6 +93,7 @@ async def test_pre_boundary_speech_may_land_once_then_day_end_closes(registry) -
 
     model.release.set()
     await asyncio.wait_for(message_task, timeout=2)
+    await service.wait_for_chat_idle(run.run_id, conversation_id, timeout=2)
 
     conversation = run.conversations[conversation_id]
     assert conversation.status == "closed"
@@ -133,6 +135,7 @@ async def test_day7_waits_for_inflight_decision_before_consolidation_and_resolut
 
     model.release.set()
     await asyncio.wait_for(message_task, timeout=2)
+    await service.wait_for_chat_idle(run.run_id, conversation_id, timeout=2)
 
     conversation = run.conversations[conversation_id]
     assert conversation.close_reason == "chapter_deadline"

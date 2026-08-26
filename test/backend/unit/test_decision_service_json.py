@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from typing import Any
 
 import pytest
-from core.backend.app.ai.decision_service import PROTOCOL_RULES, extract_json_object
+
+from core.backend.app.ai.decision_service import (
+    PROTOCOL_RULES,
+    DecisionService,
+    extract_json_object,
+)
+from core.backend.app.ai.models import TextGenerationResult
 
 
 def test_chat_rule_distinguishes_cache_use_from_required_recall() -> None:
@@ -47,3 +55,37 @@ def test_extract_json_object_accepts_exact_plain_object() -> None:
 def test_extract_json_object_rejects_wrappers_trailing_text_and_arrays(raw: str) -> None:
     with pytest.raises((json.JSONDecodeError, ValueError)):
         extract_json_object(raw)
+
+
+@pytest.mark.anyio
+async def test_physical_model_requests_share_global_concurrency_limit() -> None:
+    class BarrierModel:
+        def __init__(self) -> None:
+            self.active = 0
+            self.maximum = 0
+            self.two_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def generate(self, _request: Any) -> TextGenerationResult:
+            self.active += 1
+            self.maximum = max(self.maximum, self.active)
+            if self.active == 2:
+                self.two_started.set()
+            try:
+                await self.release.wait()
+                return TextGenerationResult(
+                    text='{"text":"并发回复"}',
+                    provider="test",
+                    model="barrier",
+                )
+            finally:
+                self.active -= 1
+
+    model = BarrierModel()
+    decisions = DecisionService(model, max_concurrency=2)
+    tasks = [asyncio.create_task(decisions.speech("prompt")) for _ in range(6)]
+    await asyncio.wait_for(model.two_started.wait(), timeout=1)
+    assert model.maximum == 2
+    model.release.set()
+    await asyncio.gather(*tasks)
+    assert model.maximum == 2
