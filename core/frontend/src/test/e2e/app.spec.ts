@@ -41,6 +41,7 @@ function makeSnapshot(overrides: Partial<RunSnapshot> = {}): RunSnapshot {
       npc_005: { status: 'waiting', position: { x: 8, y: 0 } },
     },
     conversations: [],
+    conversationExperiences: [],
     pendingInvitations: [],
     pendingJoinRequests: [],
     worldEvents: [{

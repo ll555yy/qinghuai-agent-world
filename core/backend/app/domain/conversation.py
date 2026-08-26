@@ -68,6 +68,7 @@ class Conversation:
             "conversationId": self.conversation_id,
             "creationSeq": self.creation_seq,
             "participants": list(self.participants),
+            "participantHistory": sorted(self.participant_history()),
             "status": self.status,
         }
         if self.close_reason is not None:

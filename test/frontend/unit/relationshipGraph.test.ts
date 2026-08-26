@@ -120,6 +120,48 @@ describe('buildRelationshipGraph', () => {
     ])
   })
 
+  it('keeps a closed relationship from participant history after actors leave', () => {
+    const graph = buildRelationshipGraph(snapshot({
+      conversations: [{
+        conversationId: 'closed-after-leave',
+        creationSeq: 1,
+        participants: ['player_001'],
+        participantHistory: ['player_001', 'npc_002'],
+        status: 'closed',
+      }],
+    }))
+
+    expect(graph.links).toEqual([{
+      source: 'player_001',
+      target: 'npc_002',
+      conversationCount: 1,
+      active: false,
+      label: '1 次共同聊天',
+    }])
+  })
+
+  it('does not mark a historical participant as active after they leave an open chat', () => {
+    const graph = buildRelationshipGraph(snapshot({
+      conversations: [{
+        conversationId: 'still-open',
+        creationSeq: 1,
+        participants: ['npc_001', 'npc_002'],
+        participantHistory: ['player_001', 'npc_001', 'npc_002'],
+        status: 'open',
+      }],
+    }))
+
+    const playerLink = graph.links.find((link) => (
+      link.source === 'player_001' || link.target === 'player_001'
+    ))
+    const npcLink = graph.links.find((link) => (
+      new Set([link.source, link.target]).has('npc_001') &&
+      new Set([link.source, link.target]).has('npc_002')
+    ))
+    expect(playerLink?.active).toBe(false)
+    expect(npcLink?.active).toBe(true)
+  })
+
   it('does not mutate the input snapshot while deduplicating and aggregating', () => {
     const input = snapshot({
       conversations: [{

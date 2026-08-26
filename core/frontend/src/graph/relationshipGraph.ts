@@ -120,8 +120,9 @@ export function buildRelationshipGraph(snapshot: RunSnapshot): RelationshipGraph
   const publicActorIds = new Set(snapshot.actors.map((actor) => actor.actorId))
 
   for (const conversation of snapshot.conversations) {
-    const participants = [...new Set(conversation.participants)]
+    const participants = [...new Set(conversation.participantHistory ?? conversation.participants)]
       .filter((actorId) => publicActorIds.has(actorId))
+    const currentParticipants = new Set(conversation.participants)
     for (let firstIndex = 0; firstIndex < participants.length; firstIndex += 1) {
       for (let secondIndex = firstIndex + 1; secondIndex < participants.length; secondIndex += 1) {
         const first = participants[firstIndex]
@@ -135,7 +136,13 @@ export function buildRelationshipGraph(snapshot: RunSnapshot): RelationshipGraph
           source: previous?.source ?? first,
           target: previous?.target ?? second,
           conversationCount: (previous?.conversationCount ?? 0) + 1,
-          active: Boolean(previous?.active || conversation.status === 'open'),
+          active: Boolean(
+            previous?.active || (
+              conversation.status === 'open' &&
+              currentParticipants.has(first) &&
+              currentParticipants.has(second)
+            ),
+          ),
         })
       }
     }

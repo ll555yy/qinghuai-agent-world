@@ -359,9 +359,60 @@ class RunService:
         if not unique_ids:
             return
         status = str(state.get("status", "idle"))
-        if status in {"deciding", "generating", "publishing"}:
+        player_message_ids = {
+            str(message.get("messageId"))
+            for message in run.messages.get(conversation.conversation_id, [])
+            if message.get("authorActorId") == self.registry.player_actor_id
+        }
+        contains_player_message = any(
+            message_id in player_message_ids for message_id in unique_ids
+        )
+        preempts_final_check = (
+            contains_player_message
+            and bool(state.get("finalCheckUsed"))
+            and status in {"deciding", "generating", "publishing"}
+        )
+        if preempts_final_check:
+            # A final-check result belongs to the silence that preceded this
+            # player message. Invalidate the frozen model pipeline even when
+            # it has already decided or generated speech, then process only
+            # the player messages that arrived during that stale check.
+            replacement_ids = self._ordered_message_ids_locked(
+                run,
+                conversation.conversation_id,
+                [*state.get("queuedMessageIds", []), *unique_ids],
+            )
+            state["roundVersion"] = int(state.get("roundVersion", 0)) + 1
+            state["status"] = "queued"
+            state["triggerMessageIds"] = [
+                message_id
+                for message_id in replacement_ids
+                if message_id in player_message_ids
+            ]
+            state["queuedMessageIds"] = []
+            state["cooldownDueAt"] = None
+            state["finalCheckUsed"] = False
+            state.pop("syntheticTrigger", None)
+            state["pendingPublications"] = []
+            state["pendingLeaverIds"] = []
+            state["pendingPostSpeechLeaverIds"] = []
+            state["recovery"] = {
+                "resumeStatus": None,
+                "attempt": 0,
+                "publishedMessageIds": [],
+            }
+            state["awaitingPlayerOpener"] = False
+        elif status in {"deciding", "generating", "publishing"}:
             queued = list(state.get("queuedMessageIds", []))
             state["queuedMessageIds"] = list(dict.fromkeys([*queued, *unique_ids]))
+        elif status == "queued":
+            trigger = list(state.get("triggerMessageIds", []))
+            state["roundVersion"] = int(state.get("roundVersion", 0)) + 1
+            state["triggerMessageIds"] = self._ordered_message_ids_locked(
+                run,
+                conversation.conversation_id,
+                [*trigger, *unique_ids],
+            )
         else:
             state["roundVersion"] = int(state.get("roundVersion", 0)) + 1
             state["status"] = "queued"
@@ -370,12 +421,9 @@ class RunService:
             state["cooldownDueAt"] = None
             state["finalCheckUsed"] = False
             state["awaitingPlayerOpener"] = False
-        if any(
-            message.get("messageId") in unique_ids
-            and message.get("authorActorId") == self.registry.player_actor_id
-            for message in run.messages.get(conversation.conversation_id, [])
-        ):
+        if contains_player_message:
             state["npcOnlyRounds"] = 0
+            state.pop("syntheticTrigger", None)
         self._wake_chat_worker(run.run_id, conversation.conversation_id)
 
     def _resume_chat_tasks(self, run: Run) -> None:
@@ -2402,6 +2450,32 @@ class RunService:
         segment = segments[-1]
         segment["endedAt"] = run.clock.as_dict()["label"]
         segment["summary"] = await self._summarize_segment_locked(run, conversation, segment)
+        self._record_public_conversation_experience_locked(run, conversation, segment)
+
+    def _record_public_conversation_experience_locked(
+        self,
+        run: Run,
+        conversation: Conversation,
+        segment: dict[str, Any],
+    ) -> None:
+        experience = run.public_conversation_experience(
+            self.registry,
+            conversation,
+            segment,
+        )
+        if experience is None:
+            return
+        experience_id = experience["experienceId"]
+        if any(
+            event.event_type == "conversation_experience_recorded"
+            and event.payload.get("experience", {}).get("experienceId") == experience_id
+            for event in run.events
+        ):
+            return
+        run.append_event(
+            "conversation_experience_recorded",
+            {"experience": experience},
+        )
 
     @staticmethod
     def _empty_segment_summary(participants: list[str]) -> dict[str, Any]:
@@ -4005,6 +4079,12 @@ class RunService:
             )
             if segment is not None and segment.get("summary") is None:
                 segment["summary"] = await self._summarize_segment_locked(
+                    run,
+                    conversation,
+                    segment,
+                )
+            if segment is not None:
+                self._record_public_conversation_experience_locked(
                     run,
                     conversation,
                     segment,

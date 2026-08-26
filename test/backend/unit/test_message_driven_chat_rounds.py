@@ -481,6 +481,124 @@ async def test_player_message_during_active_phase_is_queued_once(registry, phase
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("phase", ["deciding", "generating"])
+async def test_player_message_preempts_inflight_final_check(registry, phase: str) -> None:
+    model = ParallelRoundModel(
+        decision_barrier=1 if phase == "deciding" else 0,
+        speech_barrier=1 if phase == "generating" else 0,
+        speak_calls=2,
+    )
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=10)
+    created = await service.create_run()
+    run = await service.get_run_entity(created["runId"])
+    async with run.lock:
+        conversation = _install_conversation(
+            service,
+            run,
+            [registry.player_actor_id, "npc_001"],
+        )
+        state = service._round_state_locked(run, conversation)
+        state.update(
+            {
+                "status": "final_check",
+                "roundVersion": 1,
+                "finalCheckUsed": True,
+                "syntheticTrigger": "final_check",
+                "triggerMessageIds": [],
+            }
+        )
+        await service.repository.save(run)
+    service._ensure_chat_task(run, conversation.conversation_id)
+
+    if phase == "deciding":
+        await asyncio.wait_for(model.decision_started.wait(), timeout=1)
+    else:
+        await asyncio.wait_for(model.speech_started.wait(), timeout=1)
+
+    player = await service.player_message(
+        run.run_id,
+        conversation.conversation_id,
+        "打断冷场复查的新问题。",
+    )
+    async with run.lock:
+        state = service._round_state_locked(run, conversation)
+        assert state["status"] == "queued"
+        assert state["triggerMessageIds"] == [player["acceptedMessageId"]]
+        assert state["finalCheckUsed"] is False
+
+    model.decision_release.set()
+    model.speech_release.set()
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
+
+    npc_messages = [
+        message
+        for message in run.messages[conversation.conversation_id]
+        if message["authorActorId"] == "npc_001"
+    ]
+    assert len(npc_messages) == 1
+    assert npc_messages[0]["replyToMessageIds"] == [player["acceptedMessageId"]]
+    assert model.chat_batches[:2] == [(), (player["acceptedMessageId"],)]
+    await service.close()
+
+
+@pytest.mark.anyio
+async def test_player_message_discards_unpublished_final_check_speech(registry) -> None:
+    model = ParallelRoundModel(speak_calls=1)
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=10)
+    created = await service.create_run()
+    run = await service.get_run_entity(created["runId"])
+    async with run.lock:
+        conversation = _install_conversation(
+            service,
+            run,
+            [registry.player_actor_id, "npc_001"],
+        )
+        state = service._round_state_locked(run, conversation)
+        state.update(
+            {
+                "status": "publishing",
+                "roundId": 1,
+                "roundVersion": 1,
+                "finalCheckUsed": True,
+                "syntheticTrigger": "final_check",
+                "pendingPublications": [
+                    {
+                        "actorId": "npc_001",
+                        "text": "这句已经生成但不应发布。",
+                        "decision": {
+                            "result": "decided",
+                            "action": "speak",
+                            "responseDesire": 1,
+                            "intent": "冷场后补充",
+                        },
+                        "roundSequence": 1,
+                        "replyToMessageIds": [],
+                    }
+                ],
+            }
+        )
+        await service.repository.save(run)
+
+    player = await service.player_message(
+        run.run_id,
+        conversation.conversation_id,
+        "发布前到达的玩家问题。",
+    )
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
+
+    texts = [message["text"] for message in run.messages[conversation.conversation_id]]
+    assert "这句已经生成但不应发布。" not in texts
+    npc_messages = [
+        message
+        for message in run.messages[conversation.conversation_id]
+        if message["authorActorId"] == "npc_001"
+    ]
+    assert len(npc_messages) == 1
+    assert npc_messages[0]["replyToMessageIds"] == [player["acceptedMessageId"]]
+    await service.close()
+
+
+@pytest.mark.anyio
 async def test_player_message_during_natural_publish_gap_queues_next_round(registry) -> None:
     model = ParallelRoundModel(speak_calls=2)
     service = RunService(

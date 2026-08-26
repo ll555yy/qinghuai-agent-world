@@ -189,14 +189,33 @@ export default function RelationshipGraphPanel() {
       return [{ ...link, otherId, otherName: other?.kind === 'player' ? '你' : other?.name ?? otherId }]
     })
   }, [fullGraphData.links, selectedActorId, snapshot])
-  const selectedConversations = useMemo(() => {
+  const selectedActiveConversations = useMemo(() => {
     if (!selectedActorId || !snapshot) return []
     return snapshot.conversations
-      .filter((conversation) => conversation.participants.includes(selectedActorId))
+      .filter((conversation) => (
+        conversation.status === 'open' && conversation.participants.includes(selectedActorId)
+      ))
       .sort((first, second) => second.creationSeq - first.creationSeq)
       .map((conversation) => ({
         ...conversation,
         others: conversation.participants
+          .filter((actorId) => actorId !== selectedActorId)
+          .map((actorId) => {
+            const actor = snapshot.actors.find((candidate) => candidate.actorId === actorId)
+            return actor?.kind === 'player' ? '你' : actor?.name ?? actorId
+          }),
+      }))
+  }, [selectedActorId, snapshot])
+  const selectedExperiences = useMemo(() => {
+    if (!selectedActorId || !snapshot) return []
+    return [...(snapshot.conversationExperiences ?? [])]
+      .filter((experience) => experience.participantActorIds.includes(selectedActorId))
+      .sort((first, second) => (
+        second.worldDay - first.worldDay || second.at.localeCompare(first.at)
+      ))
+      .map((experience) => ({
+        ...experience,
+        others: experience.participantActorIds
           .filter((actorId) => actorId !== selectedActorId)
           .map((actorId) => {
             const actor = snapshot.actors.find((candidate) => candidate.actorId === actorId)
@@ -527,16 +546,29 @@ export default function RelationshipGraphPanel() {
             </section>
             <section>
               <h3>经历的互动</h3>
-              {selectedConversations.length ? (
+              {selectedActiveConversations.length ? (
                 <ol className="relationship-experience-list">
-                  {selectedConversations.map((conversation) => (
+                  {selectedActiveConversations.map((conversation) => (
                     <li key={conversation.conversationId}>
-                      <span>{conversation.status === 'open' ? '正在参与' : '参与过'}{conversation.others.length ? `与 ${conversation.others.join('、')} 的` : ''}聊天</span>
+                      <span>正在参与{conversation.others.length ? `与 ${conversation.others.join('、')} 的` : ''}聊天</span>
                       <small>互动记录 #{conversation.creationSeq}</small>
                     </li>
                   ))}
                 </ol>
-              ) : <p className="relationship-detail-empty">暂时没有聊天经历。</p>}
+              ) : null}
+              {selectedExperiences.length ? (
+                <ol className="relationship-experience-list">
+                  {selectedExperiences.map((experience) => (
+                    <li key={experience.experienceId}>
+                      <span>{experience.summary}</span>
+                      <small>Day {experience.worldDay} · {experience.at}{experience.others.length ? ` · 与 ${experience.others.join('、')}` : ''}</small>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              {!selectedActiveConversations.length && !selectedExperiences.length ? (
+                <p className="relationship-detail-empty">暂时没有聊天经历。</p>
+              ) : null}
               {selectedWorldEvents.length ? (
                 <ol className="relationship-experience-list world-events">
                   {selectedWorldEvents.map((event) => (

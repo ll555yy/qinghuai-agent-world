@@ -97,4 +97,32 @@ describe('reduceRunEvent', () => {
     expect(updated.snapshot?.conversations[0].status).toBe('closed')
     expect(updated.messages.conv_1[0]).toMatchObject({ system: true, systemAction: 'left' })
   })
+
+  it('adds a public conversation experience from a live event', () => {
+    const updated = reduceRunEvent(state(), {
+      runId: 'run_test',
+      eventSeq: 3,
+      stateVersion: 3,
+      eventType: 'conversation_experience_recorded',
+      payload: {
+        experience: {
+          experienceId: 'experience_seg_1',
+          conversationId: 'conv_1',
+          segmentId: 'seg_1',
+          participantActorIds: ['player_001', 'npc_002'],
+          worldDay: 1,
+          at: '10:05',
+          summary: '玩家与沈星遥讨论了书店未来。',
+          evidenceMessageIds: ['msg_1', 'msg_2'],
+        },
+      },
+    })
+
+    expect(updated.snapshot?.conversationExperiences).toEqual([
+      expect.objectContaining({
+        experienceId: 'experience_seg_1',
+        summary: '玩家与沈星遥讨论了书店未来。',
+      }),
+    ])
+  })
 })

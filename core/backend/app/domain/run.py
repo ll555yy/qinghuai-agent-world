@@ -237,6 +237,125 @@ class Run:
     def events_after(self, after_seq: int) -> list[RunEvent]:
         return [event for event in self.events if event.event_seq > after_seq]
 
+    def public_conversation_experience(
+        self,
+        registry: Any,
+        conversation: Conversation,
+        segment: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Project one completed, player-observed segment as a public experience.
+
+        Segment summaries are neutral and evidence-bound.  Exit consolidation
+        remains NPC-private and is deliberately not exposed through this
+        projection.
+        """
+
+        player_id = registry.player_actor_id
+        participants = [
+            str(actor_id)
+            for actor_id in segment.get("participants", [])
+            if registry.actor(str(actor_id)) is not None
+        ]
+        summary = segment.get("summary")
+        ended_at = segment.get("endedAt")
+        segment_id = segment.get("segmentId")
+        if (
+            player_id not in participants
+            or not isinstance(summary, dict)
+            or not ended_at
+            or not segment_id
+        ):
+            return None
+
+        statements: list[str] = []
+        for key in ("claims", "commitments", "revealedFacts"):
+            values = summary.get(key, [])
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                text = str(value).strip().rstrip("。；")
+                if text and text not in statements:
+                    statements.append(text)
+        questions = summary.get("openQuestions", [])
+        if isinstance(questions, list):
+            for value in questions:
+                text = str(value).strip().rstrip("。；")
+                if text:
+                    statement = f"仍待讨论：{text}"
+                    if statement not in statements:
+                        statements.append(statement)
+
+        actor_labels: dict[str, str] = {}
+        for actor_id in participants:
+            actor = registry.actor(actor_id)
+            actor_labels[actor_id] = (
+                "你" if actor_id == player_id else str(actor.name)
+            )
+        statements = [
+            self._replace_public_actor_ids(statement, actor_labels)
+            for statement in statements
+        ]
+
+        if statements:
+            public_summary = "；".join(statements[:4]) + "。"
+        else:
+            others = [
+                actor_labels[actor_id]
+                for actor_id in participants
+                if actor_id != player_id
+            ]
+            names = "、".join(others) if others else "在场人物"
+            public_summary = f"你与{names}进行了一次交谈。"
+        if len(public_summary) > 280:
+            public_summary = public_summary[:277].rstrip("；，。") + "……"
+
+        ended_label = str(ended_at)
+        world_day = self.clock.current.day
+        at = self.clock.as_dict()["time"]
+        label_parts = ended_label.split()
+        if len(label_parts) == 2 and label_parts[0].startswith("Day"):
+            try:
+                world_day = int(label_parts[0][3:])
+                at = label_parts[1]
+            except ValueError:
+                pass
+
+        evidence_message_ids = [
+            str(message["messageId"])
+            for message in self.messages.get(conversation.conversation_id, [])
+            if message.get("segmentId") == segment_id and message.get("messageId")
+        ]
+        return {
+            "experienceId": f"experience_{segment_id}",
+            "conversationId": conversation.conversation_id,
+            "segmentId": str(segment_id),
+            "participantActorIds": participants,
+            "worldDay": world_day,
+            "at": at,
+            "summary": public_summary,
+            "evidenceMessageIds": evidence_message_ids,
+        }
+
+    @staticmethod
+    def _replace_public_actor_ids(text: str, labels: dict[str, str]) -> str:
+        result = text
+        for actor_id in sorted(labels, key=len, reverse=True):
+            result = result.replace(actor_id, labels[actor_id])
+        return result
+
+    def public_conversation_experiences(self, registry: Any) -> list[dict[str, Any]]:
+        experiences: list[dict[str, Any]] = []
+        for conversation in self.conversations.values():
+            for segment in self.segments.get(conversation.conversation_id, []):
+                experience = self.public_conversation_experience(
+                    registry,
+                    conversation,
+                    segment,
+                )
+                if experience is not None:
+                    experiences.append(experience)
+        return experiences
+
     def to_public_snapshot(self, registry: Any) -> dict[str, Any]:
         # Deliberately construct this projection field by field.  Copying YAML
         # records wholesale here would make it too easy to leak secrets,
@@ -292,6 +411,7 @@ class Run:
             "conversations": [
                 conversation.to_public_dict() for conversation in self.conversations.values()
             ],
+            "conversationExperiences": self.public_conversation_experiences(registry),
             "pendingInvitations": pending_invitations,
             "pendingJoinRequests": pending_join_requests,
             "worldEvents": [

@@ -367,6 +367,20 @@ export function reduceRunEvent(state: WorldData, event: RunEvent): WorldData {
     }
   }
 
+  if (event.eventType === 'conversation_experience_recorded') {
+    const experience = payloadObject<RunSnapshot['conversationExperiences'][number]>(payload, 'experience')
+    if (experience) {
+      const existing = snapshot.conversationExperiences ?? []
+      snapshot = {
+        ...snapshot,
+        conversationExperiences: [
+          ...existing.filter((item) => item.experienceId !== experience.experienceId),
+          experience,
+        ],
+      }
+    }
+  }
+
   if (event.eventType === 'chapter_resolved') {
     snapshot = {
       ...snapshot,

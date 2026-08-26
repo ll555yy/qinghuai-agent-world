@@ -22,7 +22,7 @@
 FastAPI 公开 RunSnapshot
           │
           ▼
-Zustand snapshot.conversations + snapshot.actors
+Zustand snapshot.conversations + conversationExperiences + actors
           │
           ▼
 buildRelationshipGraph（纯函数、隐私边界）
@@ -31,7 +31,7 @@ buildRelationshipGraph（纯函数、隐私边界）
 RelationshipGraphPanel（全屏 Canvas 渲染与交互）
           │
           ├── 点击人物 → 图谱内人物档案浮层
-          ├── 人设 / 当前状态 / 公开关系 / 互动经历
+          ├── 人设 / 当前状态 / 公开关系 / 中立互动摘要
           └── 平移 / 缩放 / 活动聊天高亮
 ```
 
@@ -70,7 +70,9 @@ RelationshipGraphPanel（全屏 Canvas 渲染与交互）
 
 ### 3.2 边
 
-每个公开会话的参与者两两组合成无向边。同一人物对参加多次会话时聚合为一条边：
+每个公开会话的历史参与者 `participantHistory` 两两组合成无向边；当前参与者
+`participants` 只用于判断连线是否仍然活跃。这样人物离开会话后历史关系不会消失。
+同一人物对参加多次会话时聚合为一条边：
 
 ```text
 conversationCount = 两人共同参加的公开会话数
@@ -80,7 +82,17 @@ label             = “N 次共同聊天” + 活动状态
 
 三人会话 `[A, B, C]` 生成 `A-B`、`A-C`、`B-C` 三条关系；重复参与者先去重，避免重复计数。
 
-### 3.3 隐私边界
+### 3.3 公开互动经历
+
+玩家亲历的会话片段结束时，后端复用既有 `SegmentSummary` 中立摘要生成
+`PublicConversationExperience`，并发布 `conversation_experience_recorded` 实时事件。
+摘要只包含该片段公开原话能够支持的事实、承诺和待讨论问题，携带参与者、时间及
+证据消息 ID。NPC 的 `ExitConsolidation` 私有记忆、Goal 和关系变化不进入该投影。
+
+初始快照会从已持久化的片段摘要重建经历，因此旧存档不需要新增数据库表；实时事件
+则保证玩家离开聊天后无需刷新即可在人物档案看到这段经历。
+
+### 3.4 隐私边界
 
 禁止将下列数据加入玩家图谱：
 
@@ -125,7 +137,7 @@ label             = “N 次共同聊天” + 活动状态
 
 | 模块 | 职责 |
 |---|---|
-| `graph/relationshipGraph.ts` | 将公开快照转换成图数据；不包含渲染和全局状态 |
+| `graph/relationshipGraph.ts` | 用完整参与历史将公开快照转换成图数据；不包含渲染和全局状态 |
 | `ui/panels/RelationshipGraphPanel.tsx` | 全屏 Canvas 生命周期、尺寸监听、人物档案、样式与交互 |
 | `state/uiStore.ts` | 打开和关闭关系图谱面板 |
 | `ui/WorldScreen.tsx` | 顶栏入口、全屏覆盖层及延迟加载边界 |
@@ -134,6 +146,7 @@ label             = “N 次共同聊天” + 活动状态
 ### 5.2 更新策略
 
 - `snapshot.actors` 或 `snapshot.conversations` 更新时重新执行纯函数转换。
+- `conversation_experience_recorded` 到达时增量加入人物档案的公开经历列表。
 - React `useMemo` 保证无关面板状态变化不重复构图。
 - 图组件允许布局引擎给节点附加 `x/y/vx/vy`；这些坐标不回写 Zustand。
 - 当前数据量无需 Web Worker；公开节点超过 300 或边超过 1000 时重新评估布局线程。
@@ -156,7 +169,9 @@ label             = “N 次共同聊天” + 活动状态
 
 - 两人多次会话应聚合为一条边并正确累计次数。
 - 任一共同会话为 `open` 时，边应为活动状态。
+- 人物离开仍在继续的会话后，历史边保留但不再误标为活动关系。
 - 三人会话应生成三条不重复的两两边。
+- 玩家亲历片段结束后应生成一条中立公开经历，且不能读取 NPC 私有总结。
 - 无会话时应保留全部公开人物、边数组为空。
 - TypeScript、ESLint、Vitest 和 Vite production build 必须通过。
 - `pnpm build`（包含 `check:bundle-size`）必须检查 `dist/assets` 的分块预算；关键分块缺失或超预算时构建失败。

@@ -53,7 +53,13 @@ export class RunSocket {
         this.options.onError?.('收到无法识别的世界消息。')
       }
     }
-    socket.onerror = () => this.options.onError?.('世界实时连接出现异常。')
+    socket.onerror = () => {
+      // Closing a still-connecting socket during a normal React effect cleanup
+      // can emit an error in the browser.  That socket no longer represents
+      // the active runtime connection, so surfacing it would be a false alarm.
+      if (this.stopped || this.socket !== socket) return
+      this.options.onError?.('世界实时连接出现异常。')
+    }
     socket.onclose = () => {
       this.socket = null
       if (this.stopped) {

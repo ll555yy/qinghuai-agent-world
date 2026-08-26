@@ -55,6 +55,7 @@ export function snapshot(overrides: Partial<RunSnapshot> = {}): RunSnapshot {
       npc_002: { status: 'chatting', position: { x: 2, y: 0 } },
     },
     conversations: [],
+    conversationExperiences: [],
     pendingInvitations: [],
     pendingJoinRequests: [],
     worldEvents: [],

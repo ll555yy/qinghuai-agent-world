@@ -231,6 +231,60 @@ async def test_18_boundary_closes_without_starting_an_idle_round(registry) -> No
 
 
 @pytest.mark.anyio
+async def test_closed_player_segment_records_public_experience(registry) -> None:
+    model = WaitAndSummaryModel()
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=10)
+    run, conversation = await _open(
+        service,
+        [registry.player_actor_id, "npc_002"],
+    )
+
+    async with run.lock:
+        player_message = service._write_message_locked(
+            run,
+            conversation,
+            registry.player_actor_id,
+            "你对书店的未来有什么看法？",
+        )
+        npc_message = service._write_message_locked(
+            run,
+            conversation,
+            "npc_002",
+            "我想把青槐巷和旧书店的故事画下来。",
+        )
+        await service._close_conversation_locked(run, conversation, "test_closed")
+        snapshot = run.to_public_snapshot(registry)
+
+    assert snapshot["conversations"][0]["participantHistory"] == [
+        "npc_002",
+        registry.player_actor_id,
+    ]
+    assert snapshot["conversationExperiences"] == [
+        {
+            "experienceId": "experience_seg_000001",
+            "conversationId": conversation.conversation_id,
+            "segmentId": "seg_000001",
+            "participantActorIds": [registry.player_actor_id, "npc_002"],
+            "worldDay": 1,
+            "at": "09:00",
+            "summary": "滚动摘要已生成。",
+            "evidenceMessageIds": [
+                player_message["messageId"],
+                npc_message["messageId"],
+            ],
+        }
+    ]
+    recorded = [
+        event
+        for event in run.events
+        if event.event_type == "conversation_experience_recorded"
+    ]
+    assert len(recorded) == 1
+    assert recorded[0].payload["experience"] == snapshot["conversationExperiences"][0]
+    await service.close()
+
+
+@pytest.mark.anyio
 async def test_rolling_summary_keeps_eight_raw_messages_and_advances_cursor(registry) -> None:
     model = WaitAndSummaryModel()
     service = RunService(registry, text_model=model)

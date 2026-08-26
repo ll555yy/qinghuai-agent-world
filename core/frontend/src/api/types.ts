@@ -41,8 +41,20 @@ export interface PublicConversation {
   conversationId: string
   creationSeq: number
   participants: string[]
+  participantHistory?: string[]
   status: 'open' | 'closed'
   closeReason?: string
+}
+
+export interface PublicConversationExperience {
+  experienceId: string
+  conversationId: string
+  segmentId: string
+  participantActorIds: string[]
+  worldDay: number
+  at: string
+  summary: string
+  evidenceMessageIds: string[]
 }
 
 export interface PublicMessage {
@@ -93,6 +105,7 @@ export interface RunSnapshot {
   actors: PublicActor[]
   actorStates: Record<string, ActorState>
   conversations: PublicConversation[]
+  conversationExperiences: PublicConversationExperience[]
   pendingInvitations: PublicInvitation[]
   pendingJoinRequests: PublicJoinRequest[]
   worldEvents: PublicWorldEvent[]
@@ -185,6 +198,7 @@ export function isRunSnapshot(value: unknown): value is RunSnapshot {
     Array.isArray(value.actors) &&
     isRecord(value.actorStates) &&
     Array.isArray(value.conversations) &&
+    Array.isArray(value.conversationExperiences) &&
     Array.isArray(value.worldEvents)
   )
 }
