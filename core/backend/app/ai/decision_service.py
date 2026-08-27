@@ -32,6 +32,18 @@ PROTOCOL_RULES = {
     "ExitConsolidation": "只根据当前 NPC 实际可见的消息和已验证草稿生成原子记忆与变化；章节效果只能引用该 NPC 本人明确说出的证据。chapterContext 给出合法 Agenda ID、公开说明和当前 NPC 自己的立场；若本人台词已经明确表达 support/conditional/oppose/withdrawn，必须用对应本人消息 ID 生成 chapterEffects，周慎之明确授权、附条件或拒绝时同理。没有明确证据就不要生成。不要生成不存在的系统 ID 或权威时间。",
 }
 
+PROTOCOL_RULES["ChatDecision"] += (
+    "生成决定前必须逐条检查 context.recentOwnMessages。不得仅用近义词、调整语序"
+    "或泛化措辞复述自己已经表达过的结论；只有能新增事实、理由、计划、问题、"
+    "态度变化，或回答尚未回答的新问题时才选择 speak。如果只能换一种说法重复"
+    "自己，必须选择 wait。"
+)
+PROTOCOL_RULES["SpeechGeneration"] += (
+    "生成台词前必须逐条对照 context.recentOwnMessages，不得通过替换近义词、"
+    "调整语序或泛化措辞来重复自己刚说过的结论；本句必须相对近期自身发言新增"
+    "事实、理由、计划、问题、态度变化，或明确回答尚未回答的新问题。"
+)
+
 TIME_POLICY_RULE = (
     "输入中的 timePolicy 是后端根据权威虚拟时钟在本次调用前生成的只读结构化字段；"
     "不得虚构、修改或绕过其中的时间。请把 remainingMinutes、newChatAllowed 和 "

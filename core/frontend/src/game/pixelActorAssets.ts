@@ -54,8 +54,15 @@ export interface PixelActorManifestEntry {
   readonly sourceSize: PixelActorSourceSize
   readonly grid: PixelActorGrid
   readonly display: PixelActorDisplayLayout
+  /** Main connected figure centre/feet for each row-major animation frame. */
+  readonly frameAnchors: readonly PixelActorFrameAnchor[]
   /** Non-transparent bounds of the down/idle frame, relative to its cell. */
   readonly graphPortraitCrop: PixelActorFrameRect
+}
+
+export interface PixelActorFrameAnchor {
+  readonly x: number
+  readonly y: number
 }
 
 const TALL_PIXEL_DISPLAY: PixelActorDisplayLayout = {
@@ -89,6 +96,12 @@ export const PIXEL_ACTOR_ASSETS = {
     sourceSize: { width: 256, height: 384 },
     grid: PIXEL_GRID,
     display: TALL_PIXEL_DISPLAY,
+    frameAnchors: [
+      { x: 30, y: 91 }, { x: 30, y: 93 }, { x: 31, y: 93 }, { x: 31, y: 93 },
+      { x: 30, y: 83 }, { x: 31, y: 82 }, { x: 32, y: 83 }, { x: 31, y: 83 },
+      { x: 32, y: 70 }, { x: 29, y: 68 }, { x: 30, y: 69 }, { x: 31, y: 69 },
+      { x: 29, y: 61 }, { x: 29, y: 61 }, { x: 30, y: 61 }, { x: 30, y: 61 },
+    ],
     graphPortraitCrop: { x: 11, y: 16, width: 39, height: 77 },
   },
   npc_001: {
@@ -100,6 +113,12 @@ export const PIXEL_ACTOR_ASSETS = {
     sourceSize: { width: 360, height: 360 },
     grid: PIXEL_GRID,
     display: SQUARE_PIXEL_DISPLAY,
+    frameAnchors: [
+      { x: 57, y: 89 }, { x: 51, y: 89 }, { x: 42, y: 89 }, { x: 34, y: 89 },
+      { x: 58, y: 84 }, { x: 50, y: 83 }, { x: 42, y: 84 }, { x: 34, y: 84 },
+      { x: 59, y: 69 }, { x: 50, y: 69 }, { x: 43, y: 69 }, { x: 35, y: 69 },
+      { x: 55, y: 56 }, { x: 49, y: 56 }, { x: 41, y: 56 }, { x: 33, y: 56 },
+    ],
     graphPortraitCrop: { x: 39, y: 17, width: 37, height: 73 },
   },
   npc_002: {
@@ -111,6 +130,12 @@ export const PIXEL_ACTOR_ASSETS = {
     sourceSize: { width: 256, height: 384 },
     grid: PIXEL_GRID,
     display: TALL_PIXEL_DISPLAY,
+    frameAnchors: [
+      { x: 32, y: 95 }, { x: 31, y: 95 }, { x: 28, y: 95 }, { x: 29, y: 95 },
+      { x: 32, y: 91 }, { x: 31, y: 91 }, { x: 29, y: 93 }, { x: 30, y: 92 },
+      { x: 33, y: 85 }, { x: 30, y: 83 }, { x: 30, y: 85 }, { x: 29, y: 84 },
+      { x: 31, y: 79 }, { x: 30, y: 78 }, { x: 28, y: 79 }, { x: 29, y: 78 },
+    ],
     graphPortraitCrop: { x: 11, y: 12, width: 45, height: 84 },
   },
   npc_003: {
@@ -122,6 +147,12 @@ export const PIXEL_ACTOR_ASSETS = {
     sourceSize: { width: 256, height: 384 },
     grid: PIXEL_GRID,
     display: TALL_PIXEL_DISPLAY,
+    frameAnchors: [
+      { x: 32, y: 88 }, { x: 32, y: 90 }, { x: 32, y: 90 }, { x: 31, y: 90 },
+      { x: 32, y: 80 }, { x: 32, y: 80 }, { x: 31, y: 81 }, { x: 32, y: 81 },
+      { x: 31, y: 70 }, { x: 31, y: 71 }, { x: 31, y: 70 }, { x: 30, y: 71 },
+      { x: 31, y: 62 }, { x: 32, y: 63 }, { x: 31, y: 63 }, { x: 31, y: 63 },
+    ],
     graphPortraitCrop: { x: 15, y: 12, width: 37, height: 80 },
   },
   npc_004: {
@@ -133,6 +164,12 @@ export const PIXEL_ACTOR_ASSETS = {
     sourceSize: { width: 256, height: 384 },
     grid: PIXEL_GRID,
     display: TALL_PIXEL_DISPLAY,
+    frameAnchors: [
+      { x: 32, y: 89 }, { x: 32, y: 90 }, { x: 32, y: 90 }, { x: 32, y: 90 },
+      { x: 32, y: 89 }, { x: 32, y: 90 }, { x: 32, y: 89 }, { x: 32, y: 90 },
+      { x: 31, y: 83 }, { x: 31, y: 82 }, { x: 31, y: 83 }, { x: 31, y: 83 },
+      { x: 30, y: 76 }, { x: 31, y: 75 }, { x: 31, y: 75 }, { x: 31, y: 76 },
+    ],
     graphPortraitCrop: { x: 10, y: 12, width: 43, height: 80 },
   },
   npc_005: {
@@ -144,6 +181,12 @@ export const PIXEL_ACTOR_ASSETS = {
     sourceSize: { width: 360, height: 360 },
     grid: PIXEL_GRID,
     display: SQUARE_PIXEL_DISPLAY,
+    frameAnchors: [
+      { x: 70, y: 89 }, { x: 56, y: 89 }, { x: 41, y: 89 }, { x: 26, y: 89 },
+      { x: 70, y: 78 }, { x: 55, y: 78 }, { x: 40, y: 78 }, { x: 26, y: 78 },
+      { x: 69, y: 65 }, { x: 57, y: 64 }, { x: 41, y: 64 }, { x: 27, y: 64 },
+      { x: 69, y: 50 }, { x: 54, y: 49 }, { x: 38, y: 49 }, { x: 24, y: 49 },
+    ],
     graphPortraitCrop: { x: 55, y: 20, width: 31, height: 70 },
   },
 } satisfies Record<PixelActorId, PixelActorManifestEntry>
@@ -290,6 +333,40 @@ export function pixelActorDisplaySize(
   return {
     width: Math.round(cell.width * scale),
     height: Math.round(cell.height * scale),
+  }
+}
+
+export interface PixelActorFrameOffset {
+  readonly x: number
+  readonly y: number
+}
+
+/**
+ * Align the main connected figure in every AI-generated frame to the stable
+ * actor-container origin. Isolated transparent-edge noise is intentionally not
+ * part of these anchors, so it cannot pull the visible feet away from shadow.
+ */
+export function pixelActorFrameOffset(
+  actorId: string,
+  direction: PixelActorDirection,
+  action: PixelActorAction,
+): PixelActorFrameOffset {
+  const asset = getPixelActorAsset(actorId)
+  const displaySize = pixelActorDisplaySize(actorId)
+  if (!asset || !displaySize) return { x: 0, y: 0 }
+  const cell = pixelActorCellRect(asset, 0, 0, asset.sourceSize)
+  const frameIndex = PIXEL_ACTOR_FRAME_LAYOUT.rows[direction] * asset.grid.columns
+    + PIXEL_ACTOR_FRAME_LAYOUT.columns[action]
+  const anchor = asset.frameAnchors[frameIndex]
+  if (!anchor) return { x: 0, y: 0 }
+  const opaqueCenter = ((anchor.x + 0.5) / cell.width) * displaySize.width
+  const opaqueBottom = ((anchor.y + 1) / cell.height) * displaySize.height
+  const anchoredCenter = asset.display.originX * displaySize.width
+  const anchoredBottom = asset.display.originY * displaySize.height
+  const x = Math.round(anchoredCenter - opaqueCenter)
+  return {
+    x: x === 0 ? 0 : x,
+    y: Math.round(anchoredBottom - opaqueBottom),
   }
 }
 

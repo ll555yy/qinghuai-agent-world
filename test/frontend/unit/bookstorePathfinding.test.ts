@@ -1,4 +1,6 @@
 import {
+  BOOKSTORE_ACTOR_CLEARANCE,
+  BOOKSTORE_ACTOR_CLEARANCE_Y,
   BOOKSTORE_OBSTACLES,
   findBookstoreActorSlot,
   findBookstorePath,
@@ -85,6 +87,20 @@ describe('bookstorePathfinding', () => {
         expect(Math.hypot(occupied[first].x - occupied[second].x, occupied[first].y - occupied[second].y)).toBeGreaterThanOrEqual(52)
       }
     }
+  })
+
+  it('keeps actor bodies clear of furniture at their final standing slots', () => {
+    const slot = findBookstoreActorSlot(
+      { x: 240, y: 340 },
+      { left: 96, right: 780, top: 298, bottom: 470 },
+      [],
+    )
+
+    expect(slot).not.toEqual({ x: 240, y: 340 })
+    expect(isBookstoreWalkable(slot, {
+      clearanceX: BOOKSTORE_ACTOR_CLEARANCE,
+      clearanceY: BOOKSTORE_ACTOR_CLEARANCE_Y,
+    })).toBe(true)
   })
 
   it('finds a free reachable approach point even when the preferred area is crowded', () => {

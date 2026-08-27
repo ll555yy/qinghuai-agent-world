@@ -444,11 +444,11 @@ async def test_event_hub_buffers_out_of_order_publishers_by_event_sequence() -> 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("phase", ["deciding", "generating"])
-async def test_player_message_during_active_phase_is_queued_once(registry, phase: str) -> None:
+async def test_player_message_preempts_unpublished_active_round(registry, phase: str) -> None:
     model = ParallelRoundModel(
         decision_barrier=1 if phase == "deciding" else 0,
         speech_barrier=1 if phase == "generating" else 0,
-        speak_calls=1,
+        speak_calls=2,
     )
     service = RunService(registry, text_model=model, chat_cooldown_seconds=10)
     created = await service.create_run()
@@ -472,11 +472,20 @@ async def test_player_message_during_active_phase_is_queued_once(registry, phase
     model.decision_release.set()
     model.speech_release.set()
     await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
-    batches_with_second = [
-        batch for batch in model.chat_batches if second["acceptedMessageId"] in batch
+    assert model.chat_batches[:2] == [
+        (first["acceptedMessageId"],),
+        (first["acceptedMessageId"], second["acceptedMessageId"]),
     ]
-    assert len(batches_with_second) == 1
-    assert first["acceptedMessageId"] not in batches_with_second[0]
+    npc_messages = [
+        message
+        for message in run.messages[conversation.conversation_id]
+        if message["authorActorId"] == "npc_001"
+    ]
+    assert len(npc_messages) == 1
+    assert npc_messages[0]["replyToMessageIds"] == [
+        first["acceptedMessageId"],
+        second["acceptedMessageId"],
+    ]
     await service.close()
 
 
@@ -599,8 +608,8 @@ async def test_player_message_discards_unpublished_final_check_speech(registry) 
 
 
 @pytest.mark.anyio
-async def test_player_message_during_natural_publish_gap_queues_next_round(registry) -> None:
-    model = ParallelRoundModel(speak_calls=2)
+async def test_player_message_during_publish_gap_discards_unpublished_tail(registry) -> None:
+    model = ParallelRoundModel(speak_calls=4)
     service = RunService(
         registry,
         text_model=model,
@@ -623,7 +632,6 @@ async def test_player_message_during_natural_publish_gap_queues_next_round(regis
     assert player_event["eventType"] == "message_created"
     first_npc_event = await asyncio.wait_for(queue.get(), timeout=1)
     assert first_npc_event["payload"]["authorActorId"].startswith("npc_")
-    first_npc_at = time.monotonic()
     inserted = await service.player_message(
         run.run_id,
         conversation.conversation_id,
@@ -633,7 +641,10 @@ async def test_player_message_during_natural_publish_gap_queues_next_round(regis
     assert inserted_event["payload"]["messageId"] == inserted["acceptedMessageId"]
     second_npc_event = await asyncio.wait_for(queue.get(), timeout=1)
     assert second_npc_event["payload"]["authorActorId"].startswith("npc_")
-    assert time.monotonic() - first_npc_at >= 0.09
+    assert second_npc_event["payload"]["replyToMessageIds"] == [
+        inserted["acceptedMessageId"]
+    ]
+    assert second_npc_event["payload"]["roundId"] != first_npc_event["payload"]["roundId"]
     await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
     batches_with_inserted = [
         batch
@@ -642,6 +653,45 @@ async def test_player_message_during_natural_publish_gap_queues_next_round(regis
     ]
     assert len(set(batches_with_inserted)) == 1
     assert len(batches_with_inserted) == 2  # one frozen next-round decision per NPC
+    await service.close()
+
+
+@pytest.mark.anyio
+async def test_chat_context_explicitly_lists_recent_own_messages(registry) -> None:
+    service = RunService(registry, text_model=None)
+    created = await service.create_run()
+    run = await service.get_run_entity(created["runId"])
+    async with run.lock:
+        conversation = _install_conversation(
+            service,
+            run,
+            [registry.player_actor_id, "npc_001", "npc_002"],
+        )
+        for index in range(5):
+            service._write_message_locked(
+                run,
+                conversation,
+                "npc_001",
+                f"自己的第 {index + 1} 句。",
+            )
+        service._write_message_locked(
+            run,
+            conversation,
+            "npc_002",
+            "别人的一句。",
+        )
+        context = service._chat_context(run, conversation, "npc_001")
+
+    assert [item["text"] for item in context["recentOwnMessages"]] == [
+        "自己的第 2 句。",
+        "自己的第 3 句。",
+        "自己的第 4 句。",
+        "自己的第 5 句。",
+    ]
+    assert all(
+        item["authorActorId"] == "npc_001"
+        for item in context["recentOwnMessages"]
+    )
     await service.close()
 
 

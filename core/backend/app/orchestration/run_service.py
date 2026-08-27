@@ -367,20 +367,29 @@ class RunService:
         contains_player_message = any(
             message_id in player_message_ids for message_id in unique_ids
         )
-        preempts_final_check = (
-            contains_player_message
-            and bool(state.get("finalCheckUsed"))
-            and status in {"deciding", "generating", "publishing"}
-        )
-        if preempts_final_check:
-            # A final-check result belongs to the silence that preceded this
-            # player message. Invalidate the frozen model pipeline even when
-            # it has already decided or generated speech, then process only
-            # the player messages that arrived during that stale check.
+        preempts_active_round = contains_player_message and status in {
+            "deciding",
+            "generating",
+            "publishing",
+        }
+        if preempts_active_round:
+            # Any unpublished result was generated without this player
+            # message and is stale. Already published messages stay public,
+            # while the unpublished tail is discarded.
+            published_ids = list(
+                state.get("recovery", {}).get("publishedMessageIds", [])
+            )
+            active_ids = [] if published_ids else list(
+                state.get("triggerMessageIds", [])
+            )
             replacement_ids = self._ordered_message_ids_locked(
                 run,
                 conversation.conversation_id,
-                [*state.get("queuedMessageIds", []), *unique_ids],
+                [
+                    *active_ids,
+                    *state.get("queuedMessageIds", []),
+                    *unique_ids,
+                ],
             )
             state["roundVersion"] = int(state.get("roundVersion", 0)) + 1
             state["status"] = "queued"
@@ -3706,6 +3715,17 @@ class RunService:
                 npc_id,
             ),
             "messages": messages,
+            # Expose the NPC's wording directly to both decision and speech
+            # prompts, without adding a semantic filtering pipeline.
+            "recentOwnMessages": [
+                {
+                    key: deepcopy(value)
+                    for key, value in message.items()
+                    if key != "visibleToNpcIds"
+                }
+                for message in visible_messages
+                if message.get("authorActorId") == npc_id
+            ][-4:],
         }
 
     def _consolidation_prompt_messages(

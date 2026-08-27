@@ -6,6 +6,7 @@ import {
   applyPixelActorLayout,
   pixelActorCellRect,
   pixelActorDisplaySize,
+  pixelActorFrameOffset,
   pixelActorFrame,
   pixelActorGraphPortraitRect,
   pixelActorSpriteConfig,
@@ -118,5 +119,33 @@ describe('pixel actor runtime assets', () => {
     expect(pixelActorDisplaySize('npc_005')).toEqual({ width: 66, height: 66 })
     expect(pixelActorDisplaySize('player_001')).toEqual({ width: 44, height: 66 })
     expect(calls).toEqual([['origin', 0.5, 0.95], ['size', 66, 66]])
+  })
+
+  it('centers every uneven animation frame on the same ground shadow', () => {
+    expect(pixelActorFrameOffset('player_001', 'down', 'idle')).toEqual({ x: 1, y: -1 })
+    expect(pixelActorFrameOffset('player_001', 'left', 'idle').y).toBeGreaterThanOrEqual(13)
+    expect(pixelActorFrameOffset('player_001', 'right', 'idle').y).toBeGreaterThanOrEqual(19)
+    expect(pixelActorFrameOffset('npc_005', 'down', 'idle').x).toBeLessThanOrEqual(-18)
+    expect(pixelActorFrameOffset('npc_005', 'right', 'idle').y).toBeGreaterThanOrEqual(25)
+    expect(pixelActorFrameOffset('npc_002', 'down', 'idle')).toEqual({ x: 0, y: -3 })
+
+    for (const asset of PIXEL_ACTOR_MANIFEST) {
+      const display = pixelActorDisplaySize(asset.actorId)!
+      const cell = pixelActorCellRect(asset, 0, 0)
+      for (const direction of PIXEL_ACTOR_DIRECTIONS) {
+        for (const action of PIXEL_ACTOR_ACTIONS) {
+          const row = PIXEL_ACTOR_DIRECTIONS.indexOf(direction)
+          const column = PIXEL_ACTOR_ACTIONS.indexOf(action)
+          const anchor = asset.frameAnchors[row * 4 + column]
+          const offset = pixelActorFrameOffset(asset.actorId, direction, action)
+          const renderedCenterX = ((anchor.x + 0.5) / cell.width) * display.width
+            - asset.display.originX * display.width + offset.x
+          const renderedFeetY = ((anchor.y + 1) / cell.height) * display.height
+            - asset.display.originY * display.height + offset.y
+          expect(Math.abs(renderedCenterX)).toBeLessThanOrEqual(0.5)
+          expect(Math.abs(renderedFeetY)).toBeLessThanOrEqual(0.5)
+        }
+      }
+    }
   })
 })

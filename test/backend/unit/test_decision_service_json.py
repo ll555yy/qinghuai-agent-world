@@ -34,6 +34,10 @@ def test_action_and_consolidation_rules_expose_required_semantics() -> None:
     assert "participantLimitReached=true" in PROTOCOL_RULES["InvitationDecision"]
     assert "具体问题" in PROTOCOL_RULES["SpeechGeneration"]
     assert "不能绕开问题" in PROTOCOL_RULES["SpeechGeneration"]
+    assert "context.recentOwnMessages" in PROTOCOL_RULES["ChatDecision"]
+    assert "必须选择 wait" in PROTOCOL_RULES["ChatDecision"]
+    assert "context.recentOwnMessages" in PROTOCOL_RULES["SpeechGeneration"]
+    assert "不得通过替换近义词" in PROTOCOL_RULES["SpeechGeneration"]
     consolidation = PROTOCOL_RULES["ExitConsolidation"]
     assert "chapterContext" in consolidation
     assert "必须" in consolidation

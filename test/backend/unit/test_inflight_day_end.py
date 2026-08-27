@@ -105,7 +105,10 @@ async def test_pre_boundary_speech_may_land_once_then_day_end_closes(registry) -
     ]
     assert [line["text"] for line in npc_lines] == ["时间不早了，今天先说到这里。"]
     assert npc_lines[0]["createdAt"] == "Day1 18:00"
-    assert model.protocols.count("ChatDecision") == 1
+    # The player message invalidates the conversation opener decision that
+    # was already in flight, then one fresh decision handles the player's
+    # actual message. Only the fresh round may publish speech.
+    assert model.protocols.count("ChatDecision") == 2
     assert model.protocols.count("SpeechGeneration") == 1
     assert run.active_chat_pipelines == 0
     assert run.pending_day_end is None

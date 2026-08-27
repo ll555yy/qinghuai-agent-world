@@ -3,6 +3,8 @@ import Phaser from 'phaser'
 import type { PublicActor, PublicConversation, RunSnapshot } from '../api/types'
 import {
   BOOKSTORE_OBSTACLES,
+  BOOKSTORE_ACTOR_CLEARANCE,
+  BOOKSTORE_ACTOR_CLEARANCE_Y,
   findBookstoreActorSlot,
   findBookstorePath,
   type NavigationPoint,
@@ -39,6 +41,7 @@ import {
 } from './bookstoreTilemap'
 import {
   applyPixelActorLayout,
+  pixelActorFrameOffset,
   pixelActorSpriteConfig,
   queuePixelActorSheets,
   registerPixelActorFrames,
@@ -92,11 +95,6 @@ interface TileObjectRect {
   rows: number
 }
 
-const BOOKSHELF_LABEL_OCCLUDERS: readonly TileObjectRect[] = collectTileObjects(
-  buildBookstoreMap().furniture,
-  T_BOOKSHELF,
-)
-
 function collectTileObjects(grid: readonly (readonly number[])[], tile: number): TileObjectRect[] {
   const objects: TileObjectRect[] = []
   let active = new Map<string, TileObjectRect>()
@@ -144,6 +142,9 @@ const ROOM_BOUNDS: Record<SceneRoom, { left: number; right: number; top: number;
 }
 
 const ACTOR_RADIUS = 26
+// Characters deliberately stay above every architectural/furniture layer.
+// This trades furniture occlusion for a stable, never-clipped presentation.
+const ACTOR_RENDER_DEPTH = 50
 const ROOM_DOORWAY = { left: 396, right: 484, top: 220, bottom: 296 }
 const ACTOR_WALK_SPEED = 112
 
@@ -966,6 +967,8 @@ export class BookstoreScene extends Phaser.Scene {
     for (const [actorId, view] of this.actorViews) {
       if (!liveActorIds.has(actorId)) {
         view.container.destroy(true)
+        view.name.destroy()
+        view.status.destroy()
         this.actorViews.delete(actorId)
         this.logicalPositions.delete(actorId)
       }
@@ -1039,6 +1042,8 @@ export class BookstoreScene extends Phaser.Scene {
       if (config && !this.failedTextures.has(config.textureKey) && this.textures.exists(config.textureKey)) {
         sprite = this.add.sprite(0, 0, config.textureKey, config.frame)
         applyPixelActorLayout(sprite, actor.actorId)
+        const offset = pixelActorFrameOffset(actor.actorId, 'down', 'idle')
+        sprite.setPosition(offset.x, offset.y)
       }
 
       // 现代圆角质感备用头像
@@ -1052,30 +1057,32 @@ export class BookstoreScene extends Phaser.Scene {
       const ring = this.add.ellipse(0, 0, 42, 15).setStrokeStyle(2.5, 0xf2b861, 0).setVisible(false)
 
       // 雅致卡片式名牌
-      const name = this.add.text(0, 14, actor.kind === 'player' ? '你' : actor.name, {
+      const name = this.add.text(target.x, target.y + 16, actor.kind === 'player' ? '你' : actor.name, {
         fontFamily: 'STSong, "PingFang SC", "Microsoft YaHei", serif',
-        fontSize: '11px',
+        fontSize: '12px',
         fontStyle: 'bold',
-        color: '#261b12',
-        backgroundColor: '#fbf5e8f0',
-        padding: { x: 6, y: 2 },
-      }).setOrigin(0.5)
+        color: '#1b120c',
+        stroke: '#fffaf0',
+        strokeThickness: 1,
+        backgroundColor: '#fffaf0ff',
+        padding: { x: 7, y: 3 },
+      }).setOrigin(0.5).setDepth(100).setResolution(2)
 
       // 微型胶囊状态徽章
-      const status = this.add.text(0, 31, '', {
+      const status = this.add.text(target.x, target.y + 35, '', {
         fontFamily: 'STSong, "Microsoft YaHei", sans-serif',
-        fontSize: '9px',
+        fontSize: '10px',
         color: '#fff5e6',
-        backgroundColor: '#382b22ee',
-        padding: { x: 5, y: 1 },
-      }).setOrigin(0.5)
+        backgroundColor: '#2b211aff',
+        padding: { x: 6, y: 2 },
+      }).setOrigin(0.5).setDepth(100).setResolution(2)
 
       const children: Phaser.GameObjects.GameObject[] = [shadow]
       if (sprite) children.push(sprite)
-      children.push(fallbackBackground, fallback, ring, name, status)
+      children.push(fallbackBackground, fallback, ring)
 
       const container = this.add.container(target.x, target.y, children)
-        .setDepth(10 + target.y / 1000)
+        .setDepth(ACTOR_RENDER_DEPTH)
         .setSize(72, 92)
         .setInteractive({ useHandCursor: true })
 
@@ -1097,6 +1104,7 @@ export class BookstoreScene extends Phaser.Scene {
         movementToken: 0,
       }
       this.actorViews.set(actor.actorId, view)
+      this.syncActorLabels(view)
     }
 
     view.actorStatus = actorState?.status ?? 'present'
@@ -1118,7 +1126,7 @@ export class BookstoreScene extends Phaser.Scene {
     }
     const visibleStatus = view.moving ? 'approaching' : view.actorStatus
     view.status.setText(labels[visibleStatus] ?? '').setVisible(Boolean(labels[visibleStatus]))
-    this.syncActorLabelOcclusion(view)
+    this.syncActorLabels(view)
 
     if (view.actorStatus === 'departed') {
       this.tweens.killTweensOf(view.container)
@@ -1126,8 +1134,12 @@ export class BookstoreScene extends Phaser.Scene {
       view.movementToken += 1
       if (this.reducedMotion) view.container.setAlpha(0.25)
       else this.tweens.add({ targets: view.container, alpha: 0.25, duration: 420 })
+      view.name.setAlpha(0.35)
+      view.status.setAlpha(0.35)
     } else {
       view.container.setAlpha(1)
+      view.name.setAlpha(1)
+      view.status.setAlpha(1)
     }
     if (this.bubbleQueue.size(actor.actorId) && !this.activeBubbleActors.has(actor.actorId)) this.playNextBubble(actor.actorId)
   }
@@ -1135,7 +1147,11 @@ export class BookstoreScene extends Phaser.Scene {
   private setActorPixelFrame(actorId: string, view: ActorView, action: PixelActorAction): void {
     if (!view.sprite) return
     const config = pixelActorSpriteConfig(actorId, view.direction, action)
-    if (config && view.sprite.texture.key === config.textureKey) view.sprite.setFrame(config.frame)
+    if (config && view.sprite.texture.key === config.textureKey) {
+      view.sprite.setFrame(config.frame)
+      const offset = pixelActorFrameOffset(actorId, view.direction, action)
+      view.sprite.setPosition(offset.x, offset.y)
+    }
   }
 
   private moveActorAlongPath(actorId: string, view: ActorView, target: SceneTarget): void {
@@ -1146,7 +1162,8 @@ export class BookstoreScene extends Phaser.Scene {
 
     if (this.reducedMotion) {
       view.container.setPosition(target.x, target.y)
-      view.container.setDepth(10 + target.y / 1000)
+      view.container.setDepth(ACTOR_RENDER_DEPTH)
+      this.syncActorLabels(view)
       view.moving = false
       this.setActorPixelFrame(actorId, view, 'idle')
       this.refreshConversationVisuals()
@@ -1163,6 +1180,8 @@ export class BookstoreScene extends Phaser.Scene {
         bottom: otherView.container.y + 10,
       }))
     const fullRoute = findBookstorePath(start, target, {
+      clearanceX: BOOKSTORE_ACTOR_CLEARANCE,
+      clearanceY: BOOKSTORE_ACTOR_CLEARANCE_Y,
       obstacles: [...BOOKSTORE_OBSTACLES, ...actorObstacles],
     })
     const routeEnd = fullRoute[fullRoute.length - 1]
@@ -1187,7 +1206,8 @@ export class BookstoreScene extends Phaser.Scene {
       if (!next) {
         view.moving = false
         view.container.setPosition(target.x, target.y)
-        view.container.setDepth(10 + target.y / 1000)
+        view.container.setDepth(ACTOR_RENDER_DEPTH)
+        this.syncActorLabels(view)
         this.setActorPixelFrame(actorId, view, 'idle')
         this.refreshConversationVisuals()
         return
@@ -1212,8 +1232,8 @@ export class BookstoreScene extends Phaser.Scene {
           const actions: PixelActorAction[] = ['walkA', 'pass', 'walkB', 'pass']
           const stride = Math.floor((tween.progress * Math.max(distance, 24)) / 18)
           this.setActorPixelFrame(actorId, view, actions[stride % actions.length])
-          view.container.setDepth(10 + view.container.y / 1000)
-          this.syncActorLabelOcclusion(view)
+          view.container.setDepth(ACTOR_RENDER_DEPTH)
+          this.syncActorLabels(view)
         },
         onComplete: () => walkSegment(index + 1),
       })
@@ -1222,19 +1242,11 @@ export class BookstoreScene extends Phaser.Scene {
     walkSegment(0)
   }
 
-  private syncActorLabelOcclusion(view: ActorView): void {
+  private syncActorLabels(view: ActorView): void {
     const x = view.container.x
     const y = view.container.y
-    const behindShelf = BOOKSHELF_LABEL_OCCLUDERS.some((shelf) => {
-      const left = shelf.col * TILE_SIZE
-      const right = left + shelf.cols * TILE_SIZE
-      const top = shelf.row * TILE_SIZE
-      const bottom = top + shelf.rows * TILE_SIZE
-      return x >= left - 12 && x <= right + 12 && y >= top - 44 && y < bottom
-    })
-    const alpha = behindShelf ? 0.2 : 1
-    view.name.setAlpha(alpha)
-    view.status.setAlpha(alpha)
+    view.name.setPosition(Math.round(x), Math.round(y + 16))
+    view.status.setPosition(Math.round(x), Math.round(y + 36))
   }
 
   private refreshConversationVisuals(): void {

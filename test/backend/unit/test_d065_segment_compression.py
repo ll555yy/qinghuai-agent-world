@@ -429,6 +429,7 @@ async def test_short_segment_join_summarizes_and_carries_tail_for_old_members_on
         "segmentSummaries": [],
         "boundaryMessages": [],
         "messages": [],
+        "recentOwnMessages": [],
     }
 
     restored = deserialize_run(serialize_run(run))

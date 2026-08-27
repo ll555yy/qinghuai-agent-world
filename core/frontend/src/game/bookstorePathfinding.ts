@@ -18,10 +18,15 @@ export interface NavigationRect {
 
 export interface BookstorePathOptions {
   clearance?: number
+  clearanceX?: number
+  clearanceY?: number
   obstacles?: readonly NavigationRect[]
 }
 
 const GRID_SIZE = 14
+const DEFAULT_ACTOR_CLEARANCE = 10
+export const BOOKSTORE_ACTOR_CLEARANCE = 20
+export const BOOKSTORE_ACTOR_CLEARANCE_Y = 36
 // Bounds represent the actor's foot centre, inset from the painted outer wall
 // by enough room for the full sprite body.
 const MAP_BOUNDS = TILEMAP_BOUNDS
@@ -49,19 +54,23 @@ function inside(point: NavigationPoint, rect: NavigationRect, inset = 0): boolea
   return point.x >= rect.left + inset && point.x <= rect.right - inset && point.y >= rect.top + inset && point.y <= rect.bottom - inset
 }
 
-function insideExpanded(point: NavigationPoint, rect: NavigationRect, amount: number): boolean {
-  return point.x >= rect.left - amount && point.x <= rect.right + amount && point.y >= rect.top - amount && point.y <= rect.bottom + amount
+function insideExpanded(point: NavigationPoint, rect: NavigationRect, amountX: number, amountY: number): boolean {
+  return point.x >= rect.left - amountX && point.x <= rect.right + amountX
+    && point.y >= rect.top - amountY && point.y <= rect.bottom + amountY
 }
 
 export function isBookstoreWalkable(
   point: NavigationPoint,
   options: BookstorePathOptions = {},
 ): boolean {
-  const clearance = options.clearance ?? 10
+  // The navigation point is the centre of the actor's feet, not the whole
+  // sprite. Keep enough room for the visible body near furniture edges.
+  const clearanceX = options.clearanceX ?? options.clearance ?? DEFAULT_ACTOR_CLEARANCE
+  const clearanceY = options.clearanceY ?? options.clearance ?? DEFAULT_ACTOR_CLEARANCE
   const obstacles = options.obstacles ?? BOOKSTORE_OBSTACLES
   if (!inside(point, MAP_BOUNDS)) return false
   if (!BOOKSTORE_WALKABLE_AREAS.some((area) => inside(point, area))) return false
-  return !obstacles.some((obstacle) => insideExpanded(point, obstacle, clearance))
+  return !obstacles.some((obstacle) => insideExpanded(point, obstacle, clearanceX, clearanceY))
 }
 
 function gridPoint(column: number, row: number): NavigationPoint {
@@ -125,7 +134,10 @@ export function findBookstoreActorSlot(
       x: clampToRange(base.x + offset.x, roomBounds.left, roomBounds.right),
       y: clampToRange(base.y + offset.y, roomBounds.top, roomBounds.bottom),
     }
-    if (!isBookstoreWalkable(candidate)) continue
+    if (!isBookstoreWalkable(candidate, {
+      clearanceX: BOOKSTORE_ACTOR_CLEARANCE,
+      clearanceY: BOOKSTORE_ACTOR_CLEARANCE_Y,
+    })) continue
     if (occupied.every((other) => Math.hypot(candidate.x - other.x, candidate.y - other.y) >= minimumDistance)) return candidate
   }
 
@@ -136,7 +148,10 @@ export function findBookstoreActorSlot(
   for (let y = roomBounds.top; y <= roomBounds.bottom; y += GRID_SIZE) {
     for (let x = roomBounds.left; x <= roomBounds.right; x += GRID_SIZE) {
       const candidate = { x, y }
-      if (isBookstoreWalkable(candidate)) roomCandidates.push(candidate)
+      if (isBookstoreWalkable(candidate, {
+        clearanceX: BOOKSTORE_ACTOR_CLEARANCE,
+        clearanceY: BOOKSTORE_ACTOR_CLEARANCE_Y,
+      })) roomCandidates.push(candidate)
     }
   }
   roomCandidates.sort((first, second) => {
