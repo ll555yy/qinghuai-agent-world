@@ -1,3 +1,9 @@
+import {
+  buildTilemapObstacles,
+  TILEMAP_BOUNDS,
+  TILEMAP_WALKABLE_AREAS,
+} from './bookstoreTilemap'
+
 export interface NavigationPoint {
   x: number
   y: number
@@ -17,36 +23,19 @@ export interface BookstorePathOptions {
 
 const GRID_SIZE = 14
 // Bounds represent the actor's foot centre, inset from the painted outer wall
-// by enough room for the full sprite body. The narrow strip beside the right
-// counter is decorative, not a traversable aisle.
-const MAP_BOUNDS = { left: 82, right: 800, top: 70, bottom: 486 } as const
+// by enough room for the full sprite body.
+const MAP_BOUNDS = TILEMAP_BOUNDS
 
 /**
- * Hand-tuned collision footprints for the approved two-room background.
- * They cover furniture bases rather than decorative upper pixels so actors
- * can still appear visually behind shelves while their feet remain on floor.
+ * Collision footprints derived directly from the tilemap furniture grid, so
+ * rendered furniture and pathfinding obstacles can never drift apart. They
+ * cover furniture bases rather than decorative upper pixels so actors can
+ * still appear visually behind shelves while their feet remain on floor.
  */
-export const BOOKSTORE_OBSTACLES: readonly NavigationRect[] = [
-  // Back study: only furniture bases block feet. The upper pixels are handled
-  // by foreground occluders so an actor can correctly walk behind a desk.
-  { left: 128, right: 260, top: 145, bottom: 184 },
-  { left: 322, right: 452, top: 137, bottom: 166 },
-  { left: 508, right: 616, top: 128, bottom: 162 },
-  { left: 640, right: 770, top: 140, bottom: 176 },
-  // Front shop: central reading table, right counter and lower shelves.
-  { left: 336, right: 516, top: 306, bottom: 398 },
-  { left: 580, right: 792, top: 306, bottom: 375 },
-  { left: 115, right: 265, top: 372, bottom: 468 },
-  { left: 505, right: 595, top: 408, bottom: 468 },
-  { left: 600, right: 785, top: 400, bottom: 468 },
-]
+export const BOOKSTORE_OBSTACLES: readonly NavigationRect[] = buildTilemapObstacles()
 
 /** Only the central door connects the two walkable room polygons. */
-export const BOOKSTORE_WALKABLE_AREAS: readonly NavigationRect[] = [
-  { left: 82, right: 800, top: 70, bottom: 236 },
-  { left: 400, right: 480, top: 220, bottom: 296 },
-  { left: 82, right: 800, top: 278, bottom: 486 },
-]
+export const BOOKSTORE_WALKABLE_AREAS: readonly NavigationRect[] = TILEMAP_WALKABLE_AREAS
 
 const ACTOR_SLOT_OFFSETS: readonly NavigationPoint[] = [
   { x: 0, y: 0 },
@@ -205,8 +194,20 @@ function addEndpointBridge(
   }
   const horizontalFirst = { x: anchor.x, y: endpoint.y }
   const verticalFirst = { x: endpoint.x, y: anchor.y }
-  const bridge = isBookstoreWalkable(horizontalFirst, options) ? horizontalFirst : verticalFirst
-  return atStart ? [endpoint, bridge, ...points] : [...points, bridge, endpoint]
+  if (isBookstoreWalkable(horizontalFirst, options)) {
+    return atStart ? [endpoint, horizontalFirst, ...points] : [...points, horizontalFirst, endpoint]
+  }
+  if (isBookstoreWalkable(verticalFirst, options)) {
+    return atStart ? [endpoint, verticalFirst, ...points] : [...points, verticalFirst, endpoint]
+  }
+  // Dense furniture can make both L-shaped corners unwalkable. Snap the
+  // endpoint onto the route's first/last row or column instead of emitting a
+  // corner point inside a shelf or in the wall gap between rooms.
+  const rowStub = { x: endpoint.x, y: anchor.y }
+  const colStub = { x: anchor.x, y: endpoint.y }
+  return atStart
+    ? [endpoint, colStub, ...points]
+    : [...points, rowStub, endpoint]
 }
 
 /**
