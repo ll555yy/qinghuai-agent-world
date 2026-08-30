@@ -12,6 +12,7 @@ from core.backend.app.ai.decision_service import (
     extract_json_object,
 )
 from core.backend.app.ai.models import TextGenerationResult
+from core.backend.app.ai.protocols import SpeechGeneration
 
 
 def test_chat_rule_distinguishes_cache_use_from_required_recall() -> None:
@@ -43,9 +44,30 @@ def test_action_and_consolidation_rules_expose_required_semantics() -> None:
     assert "context.speechExamples" in PROTOCOL_RULES["SpeechGeneration"]
     assert "不得照抄" in PROTOCOL_RULES["SpeechGeneration"]
     assert "不能作为 Memory" in PROTOCOL_RULES["SpeechGeneration"]
+    assert "addressedActorIds" in PROTOCOL_RULES["SpeechGeneration"]
+    assert "activeParticipants" in PROTOCOL_RULES["SpeechGeneration"]
     consolidation = PROTOCOL_RULES["ExitConsolidation"]
     assert "chapterContext" in consolidation
     assert "必须" in consolidation
+
+
+def test_speech_generation_parses_and_deduplicates_addressed_actor_ids() -> None:
+    empty = SpeechGeneration.model_validate(
+        {"text": "方案定稿前，我们还得征求周老板的意见。"}
+    )
+    single = SpeechGeneration.model_validate(
+        {"text": "林老师，您说得对。", "addressedActorIds": ["npc_001"]}
+    )
+    multiple = SpeechGeneration.model_validate(
+        {
+            "text": "二位都说说。",
+            "addressedActorIds": ["npc_001", "npc_002", "npc_001"],
+        }
+    )
+
+    assert empty.addressed_actor_ids == []
+    assert single.addressed_actor_ids == ["npc_001"]
+    assert multiple.addressed_actor_ids == ["npc_001", "npc_002"]
 
 
 def test_extract_json_object_accepts_exact_plain_object() -> None:

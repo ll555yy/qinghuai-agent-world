@@ -2918,7 +2918,12 @@ class RunService:
                 "triggerMessageId": trigger_ids[-1] if trigger_ids else None,
                 "triggerMessageIds": trigger_ids,
                 "roundId": state.get("roundId"),
-                **self._chat_context(run, conversation, npc_id),
+                **self._chat_context(
+                    run,
+                    conversation,
+                    npc_id,
+                    reply_to_message_ids=trigger_ids,
+                ),
                 "memoryCache": cached_memory_ids,
             }
             prompt = self._npc_prompt(run, npc_id, "chat_decision", extra)
@@ -3144,7 +3149,12 @@ class RunService:
                                 "replyToMessageIds": trigger_message_ids,
                                 "intent": decision.intent,
                                 "speechExamples": self._speech_example_payload(result),
-                                **self._chat_context(run, conversation, npc_id),
+                                **self._chat_context(
+                                    run,
+                                    conversation,
+                                    npc_id,
+                                    reply_to_message_ids=trigger_message_ids,
+                                ),
                             },
                         ),
                     )
@@ -3152,11 +3162,23 @@ class RunService:
                         ordered, example_results, strict=True
                     )
                 ]
+                speech_participant_ids = tuple(conversation.participants)
                 run.in_flight_speech_calls += len(prompts)
                 await self.repository.save(run)
 
             speech_results = await asyncio.gather(
-                *(self._generate_one_speech(npc_id, decision, prompt) for npc_id, decision, prompt in prompts)
+                *(
+                    self._generate_one_speech(
+                        npc_id,
+                        decision,
+                        prompt,
+                        run_id=run.run_id,
+                        conversation_id=conversation_id,
+                        round_id=round_id,
+                        participant_ids=speech_participant_ids,
+                    )
+                    for npc_id, decision, prompt in prompts
+                )
             )
 
             async with run.lock:
@@ -3224,15 +3246,81 @@ class RunService:
         npc_id: str,
         decision: ChatDecision,
         prompt: str,
+        *,
+        run_id: str,
+        conversation_id: str,
+        round_id: int,
+        participant_ids: tuple[str, ...],
     ) -> tuple[str, ChatDecision, str]:
-        try:
-            speech = await asyncio.wait_for(
-                self._npc_agent(npc_id).generate_speech(prompt),
-                timeout=self.chat_model_call_timeout_seconds,
+        allowed_ids = set(participant_ids)
+        current_prompt = prompt
+        for attempt in range(2):
+            try:
+                speech = await asyncio.wait_for(
+                    self._npc_agent(npc_id).generate_speech(current_prompt),
+                    timeout=self.chat_model_call_timeout_seconds,
+                )
+            except Exception:
+                return npc_id, decision, ""
+
+            invalid_ids = sorted(
+                set(speech.addressed_actor_ids) - allowed_ids
             )
-            return npc_id, decision, speech.text
-        except Exception:
-            return npc_id, decision, ""
+            if not invalid_ids:
+                if attempt:
+                    logger.info(
+                        "speech addressee correction succeeded",
+                        extra={
+                            "speech_identity_validation": {
+                                "runId": run_id,
+                                "conversationId": conversation_id,
+                                "roundId": round_id,
+                                "npcId": npc_id,
+                                "corrected": True,
+                            }
+                        },
+                    )
+                return npc_id, decision, speech.text
+
+            logger.warning(
+                "speech addressee validation failed",
+                extra={
+                    "speech_identity_validation": {
+                        "runId": run_id,
+                        "conversationId": conversation_id,
+                        "roundId": round_id,
+                        "npcId": npc_id,
+                        "invalidAddressedActorIds": invalid_ids,
+                        "attempt": attempt + 1,
+                        "corrected": False,
+                    }
+                },
+            )
+            if attempt == 0:
+                current_prompt = self._speech_identity_correction_prompt(
+                    prompt,
+                    invalid_ids=invalid_ids,
+                )
+
+        return npc_id, decision, ""
+
+    @staticmethod
+    def _speech_identity_correction_prompt(
+        prompt: str,
+        *,
+        invalid_ids: list[str],
+    ) -> str:
+        payload = json.loads(prompt)
+        context = payload.setdefault("context", {})
+        context["identityCorrection"] = {
+            "invalidAddressedActorIds": list(invalid_ids),
+            "allowedParticipants": deepcopy(context.get("activeParticipants", [])),
+            "instruction": (
+                "重新生成完整 SpeechGeneration。直接对话对象只能来自 allowedParticipants；"
+                "不要只删除非法 ID 后保留仍面向错误人物的称呼或表达。"
+            ),
+        }
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
     async def _retrieve_speech_examples(
         self,
@@ -3699,9 +3787,18 @@ class RunService:
                         **self._chat_context(run, conversation, npc_id),
                     },
                 )
+                speech_participant_ids = tuple(conversation.participants)
                 run.in_flight_speech_calls += 1
                 await self.repository.save(run)
-            _, decision, text = await self._generate_one_speech(npc_id, decision, prompt)
+            _, decision, text = await self._generate_one_speech(
+                npc_id,
+                decision,
+                prompt,
+                run_id=run.run_id,
+                conversation_id=conversation_id,
+                round_id=round_id,
+                participant_ids=speech_participant_ids,
+            )
             async with run.lock:
                 run.in_flight_speech_calls = max(0, run.in_flight_speech_calls - 1)
                 conversation = run.conversations.get(conversation_id)
@@ -3805,13 +3902,16 @@ class RunService:
         run: Run,
         conversation: Conversation,
         npc_id: str,
+        *,
+        reply_to_message_ids: list[str] | tuple[str, ...] = (),
     ) -> dict[str, Any]:
         segments = run.segments.get(conversation.conversation_id, [])
         current_segment = segments[-1] if segments else None
         current_segment_id = current_segment.get("segmentId") if current_segment else None
+        all_visible_messages = self._visible_messages(run, conversation, npc_id)
         visible_messages = [
             message
-            for message in self._visible_messages(run, conversation, npc_id)
+            for message in all_visible_messages
             if message.get("segmentId") == current_segment_id
         ]
         if current_segment is not None:
@@ -3828,24 +3928,75 @@ class RunService:
         # failed summary never hides source evidence from the Agent.
         return {
             "segmentSummaries": summaries,
-            "boundaryMessages": self._boundary_carryover_messages(
-                run,
-                conversation,
-                npc_id,
+            "activeParticipants": [
+                self._prompt_actor_identity(actor_id)
+                for actor_id in conversation.participants
+            ],
+            "replyTargets": self._reply_target_payload(
+                all_visible_messages,
+                reply_to_message_ids,
             ),
-            "messages": messages,
+            "boundaryMessages": [
+                self._prompt_message(message)
+                for message in self._boundary_carryover_messages(
+                    run,
+                    conversation,
+                    npc_id,
+                )
+            ],
+            "messages": [self._prompt_message(message) for message in messages],
             # Expose the NPC's wording directly to both decision and speech
             # prompts, without adding a semantic filtering pipeline.
             "recentOwnMessages": [
-                {
-                    key: deepcopy(value)
-                    for key, value in message.items()
-                    if key != "visibleToNpcIds"
-                }
+                self._prompt_message(message)
                 for message in visible_messages
                 if message.get("authorActorId") == npc_id
             ][-4:],
         }
+
+    def _prompt_actor_identity(self, actor_id: str) -> dict[str, str]:
+        actor = self.registry.actor(actor_id)
+        return {
+            "actorId": actor_id,
+            "name": actor.name if actor is not None else actor_id,
+            "kind": actor.kind if actor is not None else "unknown",
+        }
+
+    def _prompt_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        projected = {
+            key: deepcopy(value)
+            for key, value in message.items()
+            if key != "visibleToNpcIds"
+        }
+        author_id = str(message.get("authorActorId", ""))
+        actor = self.registry.actor(author_id)
+        projected["authorName"] = actor.name if actor is not None else author_id
+        return projected
+
+    def _reply_target_payload(
+        self,
+        visible_messages: list[dict[str, Any]],
+        reply_to_message_ids: list[str] | tuple[str, ...],
+    ) -> list[dict[str, str]]:
+        by_id = {
+            str(message.get("messageId")): message
+            for message in visible_messages
+        }
+        result: list[dict[str, str]] = []
+        for message_id in dict.fromkeys(str(item) for item in reply_to_message_ids):
+            message = by_id.get(message_id)
+            if message is None:
+                continue
+            author_id = str(message.get("authorActorId", ""))
+            actor = self.registry.actor(author_id)
+            result.append(
+                {
+                    "messageId": message_id,
+                    "authorActorId": author_id,
+                    "authorName": actor.name if actor is not None else author_id,
+                }
+            )
+        return result
 
     def _consolidation_prompt_messages(
         self,

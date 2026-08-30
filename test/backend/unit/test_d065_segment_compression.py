@@ -427,6 +427,12 @@ async def test_short_segment_join_summarizes_and_carries_tail_for_old_members_on
     ]
     assert joiner_context == {
         "segmentSummaries": [],
+        "activeParticipants": [
+            {"actorId": "npc_001", "name": "林慧兰", "kind": "npc"},
+            {"actorId": "npc_002", "name": "沈星遥", "kind": "npc"},
+            {"actorId": "npc_003", "name": "赵磊", "kind": "npc"},
+        ],
+        "replyTargets": [],
         "boundaryMessages": [],
         "messages": [],
         "recentOwnMessages": [],

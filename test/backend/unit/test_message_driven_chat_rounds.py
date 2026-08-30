@@ -74,7 +74,10 @@ class ParallelRoundModel:
                 if self.speech_calls == self.speech_barrier:
                     self.speech_started.set()
                 await self.speech_release.wait()
-            value = {"text": f"{actor_id} 的并行回复。"}
+            value = {
+                "text": f"{actor_id} 的并行回复。",
+                "addressedActorIds": [],
+            }
         elif protocol == "SegmentSummary":
             value = {"claims": [], "actorIds": payload.get("participants", [])}
         else:
@@ -797,13 +800,21 @@ async def test_chat_context_explicitly_lists_recent_own_messages(registry) -> No
                 "npc_001",
                 f"自己的第 {index + 1} 句。",
             )
-        service._write_message_locked(
+        other_message = service._write_message_locked(
             run,
             conversation,
             "npc_002",
             "别人的一句。",
         )
-        context = service._chat_context(run, conversation, "npc_001")
+        persisted_before = json.loads(
+            json.dumps(run.messages[conversation.conversation_id], ensure_ascii=False)
+        )
+        context = service._chat_context(
+            run,
+            conversation,
+            "npc_001",
+            reply_to_message_ids=[other_message["messageId"]],
+        )
 
     assert [item["text"] for item in context["recentOwnMessages"]] == [
         "自己的第 2 句。",
@@ -814,6 +825,125 @@ async def test_chat_context_explicitly_lists_recent_own_messages(registry) -> No
     assert all(
         item["authorActorId"] == "npc_001"
         for item in context["recentOwnMessages"]
+    )
+    assert all(
+        item["authorName"] == "林慧兰" for item in context["recentOwnMessages"]
+    )
+    assert [item["actorId"] for item in context["activeParticipants"]] == [
+        registry.player_actor_id,
+        "npc_001",
+        "npc_002",
+    ]
+    assert all(
+        item["actorId"] != "npc_005" for item in context["activeParticipants"]
+    )
+    assert context["replyTargets"] == [
+        {
+            "messageId": other_message["messageId"],
+            "authorActorId": "npc_002",
+            "authorName": "沈星遥",
+        }
+    ]
+    assert all("authorName" in item for item in context["messages"])
+    assert run.messages[conversation.conversation_id] == persisted_before
+    await service.close()
+
+
+@pytest.mark.anyio
+async def test_invalid_speech_addressee_retries_once_and_publishes_correction(
+    registry,
+) -> None:
+    class CorrectingAddresseeModel(ParallelRoundModel):
+        async def generate(self, request: Any) -> TextGenerationResult:
+            protocol = request.system_prompt.split("协议=", 1)[1].splitlines()[0]
+            payload = json.loads(request.messages[0].content)
+            if protocol != "SpeechGeneration":
+                return await super().generate(request)
+            self.speech_calls += 1
+            self.speech_contexts.append(payload)
+            if self.speech_calls == 1:
+                value = {
+                    "text": "周老板，您放心。",
+                    "addressedActorIds": ["npc_005"],
+                }
+            else:
+                value = {
+                    "text": "林老师，您放心。",
+                    "addressedActorIds": ["npc_001"],
+                }
+            return TextGenerationResult(
+                text=json.dumps(value, ensure_ascii=False),
+                provider="test",
+                model="correcting-addressee",
+            )
+
+    model = CorrectingAddresseeModel(speak_calls=1)
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=10)
+    created = await service.create_run()
+    run = await service.get_run_entity(created["runId"])
+    async with run.lock:
+        conversation = _install_conversation(
+            service,
+            run,
+            [registry.player_actor_id, "npc_003", "npc_001"],
+        )
+        await service.repository.save(run)
+
+    await service.player_message(run.run_id, conversation.conversation_id, "请回答。")
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
+
+    assert model.speech_calls == 2
+    assert model.speech_contexts[1]["context"]["identityCorrection"][
+        "invalidAddressedActorIds"
+    ] == ["npc_005"]
+    npc_messages = [
+        message
+        for message in run.messages[conversation.conversation_id]
+        if message["authorActorId"].startswith("npc_")
+    ]
+    assert [message["text"] for message in npc_messages] == ["林老师，您放心。"]
+    await service.close()
+
+
+@pytest.mark.anyio
+async def test_twice_invalid_speech_addressee_is_not_published(registry) -> None:
+    class InvalidAddresseeModel(ParallelRoundModel):
+        async def generate(self, request: Any) -> TextGenerationResult:
+            protocol = request.system_prompt.split("协议=", 1)[1].splitlines()[0]
+            if protocol != "SpeechGeneration":
+                return await super().generate(request)
+            self.speech_calls += 1
+            return TextGenerationResult(
+                text=json.dumps(
+                    {
+                        "text": "周老板，您放心。",
+                        "addressedActorIds": ["npc_005"],
+                    },
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="invalid-addressee",
+            )
+
+    model = InvalidAddresseeModel(speak_calls=1)
+    service = RunService(registry, text_model=model, chat_cooldown_seconds=10)
+    created = await service.create_run()
+    run = await service.get_run_entity(created["runId"])
+    async with run.lock:
+        conversation = _install_conversation(
+            service,
+            run,
+            [registry.player_actor_id, "npc_003", "npc_001"],
+        )
+        await service.repository.save(run)
+
+    await service.player_message(run.run_id, conversation.conversation_id, "请回答。")
+    await service.wait_for_chat_idle(run.run_id, conversation.conversation_id)
+
+    assert model.speech_calls == 2
+    assert all(
+        not message["authorActorId"].startswith("npc_")
+        for message in run.messages[conversation.conversation_id]
     )
     await service.close()
 

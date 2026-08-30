@@ -48,6 +48,12 @@ PROTOCOL_RULES["SpeechGeneration"] += (
     "节奏、措辞密度和处理方式；必须结合当前上下文和 intent 重新作答，不得照抄"
     "完整示例，不得继承示例中的人物、事件、事实或承诺。示例不能作为 Memory、"
     "关系、Goal 或章节效果的证据；发生冲突时，以当前上下文、角色边界和 intent 为准。"
+    "context.activeParticipants 是当前会话唯一合法的直接对话对象名单，"
+    "context.replyTargets 是本句所回复消息的权威作者信息。输出 addressedActorIds 时，"
+    "直接回答、称呼、劝说或询问某位角色必须填写其 actorId；同时面向多人可填写多个并去重；"
+    "泛说或只在第三人称谈到某人时可以为空。addressedActorIds 只能取自 activeParticipants，"
+    "不得把未入场或已离场角色列为直接对话对象。若 context.identityCorrection 存在，"
+    "必须根据其中的合法参与者重新生成完整台词；不能只删除非法 ID，却保留仍直接面向错误对象的表达。"
 )
 
 TIME_POLICY_RULE = (

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from .models import AIContractModel
 
@@ -139,6 +139,15 @@ class ChatDecision(AIContractModel):
 
 class SpeechGeneration(AIContractModel):
     text: str = Field(min_length=1, max_length=300)
+    addressed_actor_ids: list[str] = Field(
+        default_factory=list,
+        alias="addressedActorIds",
+    )
+
+    @field_validator("addressed_actor_ids")
+    @classmethod
+    def deduplicate_addressed_actor_ids(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(value))
 
 
 class SegmentSummary(AIContractModel):
