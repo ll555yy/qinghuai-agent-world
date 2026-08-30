@@ -29,6 +29,7 @@ class FakeEmbeddingPort:
         self.fail = fail
         self.wrong_batch_size = wrong_batch_size
         self.calls: list[str] = []
+        self.batch_sizes: list[int] = []
 
     async def embed(self, text: str) -> list[float]:
         self.calls.append(text)
@@ -37,6 +38,7 @@ class FakeEmbeddingPort:
         return self.vectors[text]
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        self.batch_sizes.append(len(texts))
         values = [await self.embed(text) for text in texts]
         return values[:-1] if self.wrong_batch_size else values
 
@@ -75,6 +77,7 @@ async def test_retrieval_is_npc_scoped_deterministic_and_cached(registry) -> Non
     )[:3]
     assert len(second.hits) == 3
     assert len(port.calls) == index_call_count + 2
+    assert port.batch_sizes == [10, 10, 10, 10]
     assert all("这话我替你递不合适" not in text for text in port.calls)
 
 

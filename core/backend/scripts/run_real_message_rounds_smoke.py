@@ -27,8 +27,15 @@ load_dotenv(_ROOT / ".env", override=False)
 sys.path.insert(0, str(_ROOT))
 
 from core.backend.app.ai.ark_client import ArkClient  # noqa: E402
+from core.backend.app.ai.ark_embedding import (  # noqa: E402
+    ArkEmbeddingClient,
+    ArkEmbeddingSettings,
+)
 from core.backend.app.domain.conversation import Conversation  # noqa: E402
 from core.backend.app.orchestration.run_service import RunService  # noqa: E402
+from core.backend.app.persistence.speech_example_retriever import (  # noqa: E402
+    VectorSpeechExampleRetriever,
+)
 from core.backend.app.scenario.loader import ScenarioLoader  # noqa: E402
 
 
@@ -46,6 +53,7 @@ class _MeasuredBoundedModel:
         self.total_tokens = 0
         self.protocol_counts: Counter[str] = Counter()
         self.spans: list[dict[str, Any]] = []
+        self.speech_observations: list[dict[str, Any]] = []
         self.errors: Counter[str] = Counter()
 
     async def generate(self, request: Any) -> Any:
@@ -69,6 +77,40 @@ class _MeasuredBoundedModel:
         self.peak = max(self.peak, self.active)
         try:
             result = await self.delegate.generate(request)
+            if protocol == "SpeechGeneration":
+                try:
+                    response = json.loads(result.text)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    response = {}
+                participants = context.get("activeParticipants", [])
+                participant_ids = [
+                    str(item.get("actorId", ""))
+                    for item in participants
+                    if isinstance(item, dict)
+                ]
+                addressed_ids = response.get("addressedActorIds", [])
+                if not isinstance(addressed_ids, list):
+                    addressed_ids = []
+                self.speech_observations.append(
+                    {
+                        "actorId": payload.get("actor", {}).get("actorId"),
+                        "actorName": payload.get("actor", {}).get("name"),
+                        "conversationId": context.get("conversationId"),
+                        "activeParticipants": participants,
+                        "replyTargets": context.get("replyTargets", []),
+                        "speechExampleCount": len(context.get("speechExamples", [])),
+                        "identityCorrection": bool(context.get("identityCorrection")),
+                        "text": response.get("text"),
+                        "addressedActorIds": addressed_ids,
+                        "addressedIdsValid": set(map(str, addressed_ids)).issubset(
+                            set(participant_ids)
+                        ),
+                        "allVisibleMessagesNamed": all(
+                            isinstance(message, dict) and bool(message.get("authorName"))
+                            for message in context.get("messages", [])
+                        ),
+                    }
+                )
             usage = result.usage
             if usage is not None:
                 self.prompt_tokens += int(usage.prompt_tokens or 0)
@@ -91,6 +133,11 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260826)
     parser.add_argument("--max-model-calls", type=int, default=40)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
+    parser.add_argument(
+        "--disable-speech-examples",
+        action="store_true",
+        help="run the same live flow without dynamic speech examples for A/B comparison",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -133,6 +180,11 @@ def _install_conversation(
     return conversation
 
 
+def _actor_name(registry: Any, actor_id: str) -> str:
+    actor = registry.actor(actor_id)
+    return actor.name if actor is not None else actor_id
+
+
 def _has_cross_conversation_overlap(spans: list[dict[str, Any]]) -> bool:
     decision_spans = [
         span
@@ -154,11 +206,25 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     registry = ScenarioLoader(_ROOT / "core" / "scenario").load()
     client = ArkClient()
     model = _MeasuredBoundedModel(client, args.max_model_calls)
+    embedding_client: ArkEmbeddingClient | None = None
+    speech_example_retriever = None
+    if not args.disable_speech_examples:
+        embedding_model = os.environ.get("ARK_EMBEDDING_MODEL", "").strip()
+        if not embedding_model:
+            raise RuntimeError("ARK_EMBEDDING_MODEL is required for speech-example A/B")
+        embedding_client = ArkEmbeddingClient(
+            ArkEmbeddingSettings(model=embedding_model)
+        )
+        speech_example_retriever = VectorSpeechExampleRetriever(
+            registry.speech_examples,
+            embedding_client,
+        )
     # Run creation may execute a scheduled Day1 action. Keep that setup
     # deterministic, then attach the real model only for the chat smoke.
     service = RunService(
         registry,
         text_model=None,
+        speech_example_retriever=speech_example_retriever,
         seed=args.seed,
         chat_cooldown_seconds=0.5,
         chat_publish_delay_min_seconds=0.05,
@@ -188,8 +254,14 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 run,
                 ["npc_003", "npc_004", "npc_005"],
             )
-            first_names = [registry.actor(npc_id).name for npc_id in ("npc_001", "npc_002")]
-            second_names = [registry.actor(npc_id).name for npc_id in ("npc_004", "npc_005")]
+            first_names = [
+                _actor_name(registry, npc_id)
+                for npc_id in ("npc_001", "npc_002")
+            ]
+            second_names = [
+                _actor_name(registry, npc_id)
+                for npc_id in ("npc_004", "npc_005")
+            ]
             first_message = service._write_message_locked(
                 run,
                 first,
@@ -270,6 +342,8 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     finally:
         await service.close()
         await client.close()
+        if embedding_client is not None:
+            await embedding_client.close()
 
     provider = client.metrics_snapshot()
     first_messages = run.messages.get(first.conversation_id, []) if run and first else []
@@ -291,6 +365,23 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         for span in model.spans
         if span["protocol"] == "ChatDecision" and span["trigger"] == "final_check"
     )
+    published_synthetic_speech = [
+        {
+            "conversationId": conversation_id,
+            "actorId": message.get("authorActorId"),
+            "actorName": _actor_name(
+                registry, str(message.get("authorActorId"))
+            ),
+            "text": message.get("text"),
+            "replyToMessageIds": message.get("replyToMessageIds", []),
+        }
+        for conversation_id, messages in (run.messages.items() if run else [])
+        for message in messages
+        if str(message.get("authorActorId", "")).startswith("npc_")
+    ]
+    successful_speech_observations = [
+        item for item in model.speech_observations if isinstance(item.get("text"), str)
+    ]
     gates = {
         "doubleNpcSameRound": len({item["authorActorId"] for item in first_round_replies}) >= 2
         and len(first_round_ids) == 1,
@@ -306,12 +397,30 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         + provider["providerRetries"],
         "noModelErrors": not model.errors,
         "noUnhandledError": error_code is None,
+        "speechObserved": bool(successful_speech_observations),
+        "identityContextComplete": all(
+            item["allVisibleMessagesNamed"]
+            and all(
+                participant.get("actorId") and participant.get("name")
+                for participant in item["activeParticipants"]
+            )
+            for item in successful_speech_observations
+        ),
+        "addressedIdsWithinActiveParticipants": all(
+            item["addressedIdsValid"] for item in successful_speech_observations
+        ),
+        "speechExampleModeMatched": (
+            all(item["speechExampleCount"] == 0 for item in successful_speech_observations)
+            if args.disable_speech_examples
+            else all(item["speechExampleCount"] > 0 for item in successful_speech_observations)
+        ),
     }
     return {
         "live": True,
         "requestSent": provider["providerAttempts"] > 0,
         "status": "passed" if all(gates.values()) else "failed",
         "seed": args.seed,
+        "speechExamplesEnabled": not args.disable_speech_examples,
         "latencyMs": int((time.perf_counter() - started) * 1000),
         "modelLogicalCalls": model.calls,
         "modelPhysicalRequests": provider["providerAttempts"],
@@ -333,6 +442,11 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         "events": dict(sorted(event_types.items())),
         "gates": gates,
         "errorCode": error_code,
+        "speechObservations": model.speech_observations,
+        "publishedSyntheticSpeech": published_synthetic_speech,
+        "embeddingMetrics": (
+            embedding_client.metrics_snapshot() if embedding_client is not None else None
+        ),
     }
 
 
@@ -347,6 +461,10 @@ async def _main() -> int:
         "ARK_MODEL", ""
     ).strip():
         raise SystemExit("Ark text model is not configured")
+    if not args.disable_speech_examples and not os.environ.get(
+        "ARK_EMBEDDING_MODEL", ""
+    ).strip():
+        raise SystemExit("ARK_EMBEDDING_MODEL is required for speech-example A/B")
     report = await asyncio.wait_for(_run(args), timeout=args.timeout_seconds)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

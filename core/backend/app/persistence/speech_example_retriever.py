@@ -38,14 +38,18 @@ class VectorSpeechExampleRetriever:
         embedding_port: EmbeddingPort,
         *,
         dimensions: int = MEMORY_EMBEDDING_DIMENSIONS,
+        index_batch_size: int = 10,
     ) -> None:
         if dimensions != MEMORY_EMBEDDING_DIMENSIONS:
             raise ValueError(
                 f"speech example retriever requires {MEMORY_EMBEDDING_DIMENSIONS}-dimension vectors"
             )
+        if index_batch_size <= 0:
+            raise ValueError("index_batch_size must be greater than zero")
         self._examples = examples
         self._embedding_port = embedding_port
         self._dimensions = dimensions
+        self._index_batch_size = index_batch_size
         self._index: dict[str, tuple[float, ...]] | None = None
         self._index_lock = asyncio.Lock()
 
@@ -67,7 +71,12 @@ class VectorSpeechExampleRetriever:
     async def _embed_many(self, texts: list[str]) -> Sequence[Sequence[float]]:
         embed_many = getattr(self._embedding_port, "embed_many", None)
         if callable(embed_many):
-            return await embed_many(texts)
+            vectors: list[Sequence[float]] = []
+            for start in range(0, len(texts), self._index_batch_size):
+                batch = texts[start : start + self._index_batch_size]
+                produced = await embed_many(batch)
+                vectors.extend(produced)
+            return vectors
         return await asyncio.gather(
             *(self._embedding_port.embed(text) for text in texts)
         )

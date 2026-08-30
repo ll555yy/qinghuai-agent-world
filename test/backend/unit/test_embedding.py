@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
+
 from core.backend.app.ai.ark_embedding import (
     DEFAULT_ARK_EMBEDDING_BASE_URL,
     ArkEmbeddingClient,
@@ -120,10 +121,10 @@ async def test_ark_embedding_rejects_empty_and_oversized_batches() -> None:
         client=_FakeClient(),
     )
 
-    with pytest.raises(ValueError, match="1..256"):
+    with pytest.raises(ValueError, match="1..10"):
         await provider.embed_many([])
-    with pytest.raises(ValueError, match="1..256"):
-        await provider.embed_many(["x"] * 257)
+    with pytest.raises(ValueError, match="1..10"):
+        await provider.embed_many(["x"] * 11)
 
 
 def test_ark_embedding_model_is_required() -> None:

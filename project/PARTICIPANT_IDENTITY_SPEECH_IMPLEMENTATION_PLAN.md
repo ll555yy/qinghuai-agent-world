@@ -187,4 +187,4 @@ pytest test/backend/unit/test_conversation.py test/backend/integration/test_conv
 - [x] `SpeechGeneration.addressedActorIds` 已加入协议。
 - [x] 后端集合校验与一次校正重试已实现。
 - [x] 单元测试和聊天相关回归测试通过。
-- [ ] 使用新 Run 实测未把林慧兰误称为周老板或陈姑娘。
+- [x] 使用新 Run 完成真实 Ark 多人对话验收；本轮 8 次 A/B SpeechGeneration 均未出现参与者身份错配，详见 `project/evaluation-results/speech-identity-ab-2026-08-30/README.md`。

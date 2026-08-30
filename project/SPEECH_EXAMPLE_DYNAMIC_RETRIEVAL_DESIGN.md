@@ -1,6 +1,6 @@
 # NPC 示例对白动态检索设计
 
-- 状态：首版已实现，待行为 A/B 评测与人工验收
+- 状态：首版已实现并完成单 seed 真实 A/B；自然度有改善，但事实扩写风险仍需继续调优
 - 日期：2026-08-30
 - 范围：NPC 最终决定发言后的示例对白检索与 SpeechGeneration 注入
 - 不变边界：保留现有消息驱动轮次、ChatDecision、LangGraph 私有记忆召回、可见性、会话草稿和 ExitConsolidation

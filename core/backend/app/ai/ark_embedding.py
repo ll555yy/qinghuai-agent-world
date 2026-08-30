@@ -90,8 +90,8 @@ class ArkEmbeddingClient(EmbeddingPort):
             raise RuntimeError("ARK_API_KEY is not configured for embeddings")
         assert self._client is not None
         inputs = [str(text) for text in texts]
-        if not inputs or len(inputs) > 256 or any(not text.strip() for text in inputs):
-            raise ValueError("embedding batch must contain 1..256 non-empty texts")
+        if not inputs or len(inputs) > 10 or any(not text.strip() for text in inputs):
+            raise ValueError("embedding batch must contain 1..10 non-empty texts")
         response = await self._client.embeddings.create(
             model=self.model_name,
             input=inputs,

@@ -1,0 +1,273 @@
+{
+  "cost": null,
+  "costNote": "Provider response exposes token usage but no billed amount.",
+  "embeddingMetrics": {
+    "completedRequests": 8,
+    "totalTokens": 1947
+  },
+  "errorCode": null,
+  "errors": {},
+  "events": {
+    "conversation_activity": 5,
+    "conversation_closed": 2,
+    "conversation_idle": 3,
+    "message_created": 3,
+    "npc_consolidated": 2,
+    "npc_thought_started": 1,
+    "npc_waited": 1,
+    "run_created": 1,
+    "world_event_occurred": 1
+  },
+  "finalCheckDecisionCalls": 4,
+  "gates": {
+    "addressedIdsWithinActiveParticipants": true,
+    "allPhysicalRequestsSettled": true,
+    "cooldownConversationClosed": true,
+    "cooldownEntered": true,
+    "crossConversationDecisionOverlap": true,
+    "doubleNpcSameRound": true,
+    "finalCheckExecuted": true,
+    "globalConcurrencyObserved": true,
+    "identityContextComplete": true,
+    "noModelErrors": true,
+    "noUnhandledError": true,
+    "speechExampleModeMatched": true,
+    "speechObserved": true,
+    "withinLogicalCallBudget": true
+  },
+  "latencyMs": 50720,
+  "live": true,
+  "modelCompletedRequests": 15,
+  "modelLogicalCalls": 15,
+  "modelPhysicalRequests": 15,
+  "observedConcurrencyPeak": 4,
+  "protocolCounts": {
+    "ChatDecision": 8,
+    "ExitConsolidation": 2,
+    "SegmentSummary": 1,
+    "SpeechGeneration": 4
+  },
+  "providerFailedRequests": 0,
+  "providerRetries": 0,
+  "publishedSyntheticSpeech": [
+    {
+      "actorId": "npc_001",
+      "actorName": "林慧兰",
+      "conversationId": "conv_000001",
+      "replyToMessageIds": [
+        "msg_000001"
+      ],
+      "text": "老话说得好，做事要循序渐进，我琢磨着咱们可以先以青槐文社作为核心方案整合各方想法，先去跟周慎之谈谈，争取他开放书店场地的许可，等这事落定了，咱们再挨个确认各位的参与意向，你们要是有不同想法，尽管说出来咱们慢慢商量。"
+    },
+    {
+      "actorId": "npc_002",
+      "actorName": "沈星遥",
+      "conversationId": "conv_000001",
+      "replyToMessageIds": [
+        "msg_000001"
+      ],
+      "text": "...我打算做《巷口五人》的绘本，记录青槐巷街坊和旧书店的故事，我支持保住旧书店，也愿意配合大家的整体方案推进，不过每个人的故事我都会先征得本人同意才会记录的。"
+    },
+    {
+      "actorId": "npc_003",
+      "actorName": "赵磊",
+      "conversationId": "conv_000002",
+      "replyToMessageIds": [],
+      "text": "陈月和周慎之，请分别说清最后一项建议；说完我们就结束今天的讨论。"
+    },
+    {
+      "actorId": "npc_004",
+      "actorName": "陈月",
+      "conversationId": "conv_000002",
+      "replyToMessageIds": [
+        "msg_000002"
+      ],
+      "text": "我跟你说，青槐健康角就是在慎之这书店腾块小地方，摆上健康手册、基础检测仪器，我每周抽两个下午过来，给街坊免费测测血压血糖，讲讲日常保健常识。这事儿既方便了老街坊，还能给书店拉人气帮着留铺面，我已经攒了不少器械和手册了，就等大家点头搭把手。"
+    },
+    {
+      "actorId": "npc_005",
+      "actorName": "周慎之",
+      "conversationId": "conv_000002",
+      "replyToMessageIds": [
+        "msg_000002"
+      ],
+      "text": "我的底线只有一条：店里所有旧书、古籍一件都不能动，必须原样传承，不得变卖糟蹋。"
+    },
+    {
+      "actorId": "npc_004",
+      "actorName": "陈月",
+      "conversationId": "conv_000003",
+      "replyToMessageIds": [],
+      "text": "今天已经谈完，我没有更多内容，现在告别离开；这句话不需要回应。"
+    },
+    {
+      "actorId": "npc_005",
+      "actorName": "周慎之",
+      "conversationId": "conv_000003",
+      "replyToMessageIds": [],
+      "text": "好的，我也没有更多内容，今天到此结束；无需客套回复。"
+    }
+  ],
+  "rateLimited": false,
+  "requestSent": true,
+  "seed": 20260830,
+  "speechExamplesEnabled": true,
+  "speechObservations": [
+    {
+      "activeParticipants": [
+        {
+          "actorId": "player_001",
+          "kind": "player",
+          "name": "玩家"
+        },
+        {
+          "actorId": "npc_001",
+          "kind": "npc",
+          "name": "林慧兰"
+        },
+        {
+          "actorId": "npc_002",
+          "kind": "npc",
+          "name": "沈星遥"
+        }
+      ],
+      "actorId": "npc_002",
+      "actorName": "沈星遥",
+      "addressedActorIds": [
+        "player_001"
+      ],
+      "addressedIdsValid": true,
+      "allVisibleMessagesNamed": true,
+      "conversationId": "conv_000001",
+      "identityCorrection": false,
+      "replyTargets": [
+        {
+          "authorActorId": "player_001",
+          "authorName": "玩家",
+          "messageId": "msg_000001"
+        }
+      ],
+      "speechExampleCount": 3,
+      "text": "...我打算做《巷口五人》的绘本，记录青槐巷街坊和旧书店的故事，我支持保住旧书店，也愿意配合大家的整体方案推进，不过每个人的故事我都会先征得本人同意才会记录的。"
+    },
+    {
+      "activeParticipants": [
+        {
+          "actorId": "npc_003",
+          "kind": "npc",
+          "name": "赵磊"
+        },
+        {
+          "actorId": "npc_004",
+          "kind": "npc",
+          "name": "陈月"
+        },
+        {
+          "actorId": "npc_005",
+          "kind": "npc",
+          "name": "周慎之"
+        }
+      ],
+      "actorId": "npc_005",
+      "actorName": "周慎之",
+      "addressedActorIds": [
+        "npc_003"
+      ],
+      "addressedIdsValid": true,
+      "allVisibleMessagesNamed": true,
+      "conversationId": "conv_000002",
+      "identityCorrection": false,
+      "replyTargets": [
+        {
+          "authorActorId": "npc_003",
+          "authorName": "赵磊",
+          "messageId": "msg_000002"
+        }
+      ],
+      "speechExampleCount": 3,
+      "text": "我的底线只有一条：店里所有旧书、古籍一件都不能动，必须原样传承，不得变卖糟蹋。"
+    },
+    {
+      "activeParticipants": [
+        {
+          "actorId": "player_001",
+          "kind": "player",
+          "name": "玩家"
+        },
+        {
+          "actorId": "npc_001",
+          "kind": "npc",
+          "name": "林慧兰"
+        },
+        {
+          "actorId": "npc_002",
+          "kind": "npc",
+          "name": "沈星遥"
+        }
+      ],
+      "actorId": "npc_001",
+      "actorName": "林慧兰",
+      "addressedActorIds": [
+        "player_001",
+        "npc_002"
+      ],
+      "addressedIdsValid": true,
+      "allVisibleMessagesNamed": true,
+      "conversationId": "conv_000001",
+      "identityCorrection": false,
+      "replyTargets": [
+        {
+          "authorActorId": "player_001",
+          "authorName": "玩家",
+          "messageId": "msg_000001"
+        }
+      ],
+      "speechExampleCount": 3,
+      "text": "老话说得好，做事要循序渐进，我琢磨着咱们可以先以青槐文社作为核心方案整合各方想法，先去跟周慎之谈谈，争取他开放书店场地的许可，等这事落定了，咱们再挨个确认各位的参与意向，你们要是有不同想法，尽管说出来咱们慢慢商量。"
+    },
+    {
+      "activeParticipants": [
+        {
+          "actorId": "npc_003",
+          "kind": "npc",
+          "name": "赵磊"
+        },
+        {
+          "actorId": "npc_004",
+          "kind": "npc",
+          "name": "陈月"
+        },
+        {
+          "actorId": "npc_005",
+          "kind": "npc",
+          "name": "周慎之"
+        }
+      ],
+      "actorId": "npc_004",
+      "actorName": "陈月",
+      "addressedActorIds": [
+        "npc_003",
+        "npc_005"
+      ],
+      "addressedIdsValid": true,
+      "allVisibleMessagesNamed": true,
+      "conversationId": "conv_000002",
+      "identityCorrection": false,
+      "replyTargets": [
+        {
+          "authorActorId": "npc_003",
+          "authorName": "赵磊",
+          "messageId": "msg_000002"
+        }
+      ],
+      "speechExampleCount": 3,
+      "text": "我跟你说，青槐健康角就是在慎之这书店腾块小地方，摆上健康手册、基础检测仪器，我每周抽两个下午过来，给街坊免费测测血压血糖，讲讲日常保健常识。这事儿既方便了老街坊，还能给书店拉人气帮着留铺面，我已经攒了不少器械和手册了，就等大家点头搭把手。"
+    }
+  ],
+  "status": "passed",
+  "tokenUsage": {
+    "completionTokens": 10595,
+    "promptTokens": 54678,
+    "totalTokens": 65273
+  }
+}
