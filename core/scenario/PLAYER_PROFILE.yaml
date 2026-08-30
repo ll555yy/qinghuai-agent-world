@@ -1,0 +1,25 @@
+version: 1
+status: confirmed
+
+player:
+  actorId: player_001
+  control: human
+
+  identity:
+    role: "慎之旧书店的年轻兼职帮手"
+    publicBackground: "半个月前租下青槐巷老宅，平日在慎之旧书店帮周慎之整理书架、看店并处理日常杂事。"
+
+  publicImpression:
+    - "话不多"
+    - "手脚勤快"
+    - "做事稳妥"
+    - "从不主动探听别人私事"
+    - "很少提及自己的过往"
+    - "整体看着本分安稳"
+
+  gameplayBoundary:
+    freeTextInput: true
+    fixedPersonaEnforced: false
+    backgroundWorkIsFlavorOnly: true
+    hiddenBackstoryPreset: false
+    backstoryMode: emergent_from_player_dialogue

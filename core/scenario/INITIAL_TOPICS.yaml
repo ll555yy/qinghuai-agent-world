@@ -1,0 +1,35 @@
+version: 1
+status: confirmed
+
+topics:
+  - topicId: topic_bookstore_survival
+    name: "慎之旧书店的存续"
+    aliases: ["旧书店关门风险", "守住旧书店", "书店经营"]
+
+  - topicId: topic_qinghuai_literary_society
+    name: "青槐文社"
+    aliases: ["文社公益项目", "书法课与老街故事会"]
+
+  - topicId: topic_five_people_picture_book
+    name: "《巷口五人》绘本"
+    aliases: ["巷口五人", "五人主题插画", "老巷绘本"]
+
+  - topicId: topic_neighborhood_cultural_operation
+    name: "青槐巷邻里文创"
+    aliases: ["书店商业运营", "邻里文创项目", "书店商业化"]
+
+  - topicId: topic_health_corner
+    name: "青槐健康角"
+    aliases: ["书店健康角", "邻里健康站", "健康科普项目"]
+
+  - topicId: topic_bookstore_legacy
+    name: "旧书店的传承"
+    aliases: ["书店托付", "旧书与古籍传承", "书店未来"]
+
+  - topicId: topic_lin_zhou_old_grudge
+    name: "林家与周家的旧怨"
+    aliases: ["父辈过节", "办学理念之争", "林周旧憾"]
+
+  - topicId: topic_valuable_ancient_book
+    name: "林家遗留古籍"
+    aliases: ["贵重古籍", "林慧兰祖父的遗物", "未归还的古籍"]

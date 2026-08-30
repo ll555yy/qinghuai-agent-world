@@ -1,0 +1,151 @@
+version: 1
+status: confirmed
+
+chapter:
+  chapterId: chapter_01_proposal_deadline
+  name: "七日方案期"
+  startsAt: "Day1 09:00"
+  endsAt: "Day7 18:00"
+  realDurationMinutesApprox: 140
+  estimatedActiveDurationMinutes: 138
+  activeDayWindow: "08:00-18:00"
+  virtualHoursPerRealMinute: 0.5
+  realSecondsPerVirtualMinute: 2
+  overnightMode: jump_to_next_day_0800
+  chapterEndsAfterResolution: true
+
+externalSourcePolicy:
+  createsActorNodes: false
+  canBeConversationTarget: false
+  description: "居委会、产权方代理和勘测人员只作为脚本化世界事件来源，不参加 AI 聊天。"
+
+events:
+  - eventId: event_day1_recovery_notice
+    worldDay: 1
+    at: "09:00"
+    visibility: public
+    visibleActorIds: [player_001, npc_001, npc_002, npc_003, npc_004, npc_005]
+    sourceLabel: "青槐巷居委会与铺面产权方"
+    summary: "慎之旧书店所在铺面将在30天后被收回改造；如要续租、联合运营或整体承接，需在Day7 18:00前提交方案。"
+    topicIds: [topic_bookstore_survival, topic_bookstore_legacy]
+    currentWorldStateChanges:
+      - key: proposalDeadline
+        value: "Day7 18:00"
+      - key: propertyRecoveryDeadline
+        value: "Day30 09:00"
+    schedulingRule: "该事件在所有 NPC 的 Day1 首次主动思考之前发生；五名 NPC 随后的错峰决策均可使用此事件。"
+    reactionPolicy: dynamic
+
+  - eventId: event_day2_bookstore_leak
+    worldDay: 2
+    at: "08:00"
+    visibility: observed
+    visibleActorIds: dynamic_by_event_radius
+    sourceLabel: "持续降雨造成的场景事件"
+    summary: "慎之旧书店西北角漏雨，一排旧书被打湿，空置区域也受到影响。"
+    topicIds: [topic_bookstore_survival, topic_bookstore_legacy]
+    currentWorldStateChanges:
+      - key: bookstoreLeak
+        value: active
+    reactionPolicy: dynamic
+    authoringIntent: "推动角色从各自观望转向讨论是否共同守住书店；不固定谁一定帮忙或如何反应。"
+
+  - eventId: event_day3_property_survey
+    worldDay: 3
+    at: "10:00"
+    visibility: observed
+    visibleActorIds: dynamic_by_event_radius
+    sourceLabel: "铺面产权方勘测人员"
+    summary: "不可交互的勘测人员进入书店测量和拍照，并通过系统播报告知以后还会评估改造成本。"
+    topicIds: [topic_bookstore_survival, topic_neighborhood_cultural_operation]
+    reactionPolicy: dynamic
+    secretPressure:
+      ownerNpcId: npc_003
+      description: "勘测事件可能使赵磊担心自己私查经营情况和夸大危机的行为被察觉，但不强制他表现出固定动作或台词。"
+
+  - eventId: event_day4_cultural_market_notice
+    worldDay: 4
+    at: "09:00"
+    visibility: public
+    visibleActorIds: [player_001, npc_001, npc_002, npc_003, npc_004, npc_005]
+    sourceLabel: "青槐巷居委会公告"
+    summary: "半个月后将举行老街文创市集，提供免费摊位；该通知只提供新的合作话题，不产生报名、制作或摆摊操作任务。"
+    topicIds:
+      - topic_qinghuai_literary_society
+      - topic_five_people_picture_book
+      - topic_neighborhood_cultural_operation
+      - topic_health_corner
+    reactionPolicy: dynamic
+
+  - eventId: event_day5_ancient_book_damp
+    worldDay: 5
+    at: "09:00"
+    visibility: observed
+    visibleActorIds: dynamic_by_event_radius
+    sourceLabel: "书店漏雨后的持续潮气"
+    triggerCondition: "currentWorldState.bookstoreLeak == active"
+    summary: "潮气蔓延到柜台内侧，一套旧函套受潮变形；该物件的具体来历和价值对旁观者并不公开。"
+    topicIds: [topic_bookstore_survival, topic_bookstore_legacy, topic_valuable_ancient_book, topic_lin_zhou_old_grudge]
+    currentWorldStateChanges:
+      - key: ancientBookAtRisk
+        value: true
+    reactionPolicy: dynamic
+    secretPressure:
+      ownerNpcId: npc_005
+      description: "旧函套受潮会对周慎之的古籍秘密形成压力，但是否阻止旁人、发怒、解释或沉默仍由其动态决策。"
+    visibilityNote: "只有当时位于事件可见半径内且实际看到事件的角色获得亲历 Memory；是否正在聊天不决定可见性，其他人必须通过转述得知。"
+
+  - eventId: event_day6_coordination_window
+    worldDay: 6
+    at: "09:00"
+    visibility: public
+    visibleActorIds: [player_001, npc_001, npc_002, npc_003, npc_004, npc_005]
+    sourceLabel: "方案截止前一天的系统提醒"
+    summary: "距离方案截止只剩一天，五人需要通过多场最多三人的聊天协调公益、商业、插画、健康角和书店底线。"
+    topicIds:
+      - topic_bookstore_survival
+      - topic_qinghuai_literary_society
+      - topic_five_people_picture_book
+      - topic_neighborhood_cultural_operation
+      - topic_health_corner
+    currentWorldStateChanges:
+      - key: proposalRemainingWorldDays
+        value: 1
+    conversationPolicy:
+      maxParticipants: 3
+      allHandsConversationAllowed: false
+      resolutionSource: "多场聊天中实际形成的许可、承诺、拒绝和未解决分歧"
+    reactionPolicy: dynamic
+
+  - eventId: event_day7_proposal_deadline
+    worldDay: 7
+    at: "18:00"
+    visibility: public
+    visibleActorIds: [player_001, npc_001, npc_002, npc_003, npc_004, npc_005]
+    sourceLabel: "七日方案截止"
+    summary: "方案提交窗口关闭；系统根据Day1至Day7写入章节状态表的五人最终提交立场、周慎之授权和各公开主张态度结算本章。"
+    topicIds: [topic_bookstore_survival, topic_bookstore_legacy]
+    reactionPolicy: branch_evaluation
+    branches:
+      - branchId: consensus_submitted
+        description: "周慎之授权且核心合作承诺充分，形成相对一致的方案并提交。"
+        conditions:
+          zhouAuthorization: approved
+          supportCount: 5
+      - branchId: compromise_submitted
+        description: "具备最低授权和合作承诺，但仍有明显理念冲突，拼合出妥协方案并提交。"
+        conditions:
+          zhouAuthorization: [approved, conditional]
+          positiveCountMin: 3
+          negativeCountMax: 1
+      - branchId: no_submission
+        description: "关键授权或合作承诺不足，未能按时提交，书店危机升级。"
+        conditions:
+          fallback: true
+    chapterEnd: true
+
+runtimeBoundaries:
+  - "固定世界事件和场景状态由系统产生；NPC 的邀请、发言、关系变化和 Goal 判断仍由现有 AI 决策流程产生。"
+  - "搬书、堵漏、拍照、报名、制作和提交文件不形成玩家操作任务或背包物品。"
+  - "事件描述中的角色倾向只作为设计意图，不强制 NPC 输出固定台词或采取固定反应。"
+  - "第一版只运行到 Day7 章节结算；Day8至Day30暂不实现。"

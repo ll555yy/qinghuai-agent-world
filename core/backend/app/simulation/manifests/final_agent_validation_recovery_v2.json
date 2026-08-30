@@ -1,0 +1,135 @@
+{
+  "schemaVersion": "1.0",
+  "experimentId": "final-agent-validation-recovery-20260823",
+  "createdAt": "2026-08-23T23:30:00+08:00",
+  "preregistrationBaseCommit": "235b36b",
+  "models": {
+    "candidate": "doubao-seed-2.0-lite",
+    "embedding": "doubao-embedding-vision-251215",
+    "provider": "Ark-compatible Agent Plan"
+  },
+  "artifacts": {
+    "promptPolicy": {
+      "sourceId": "core/backend/app/simulation/runner.py#ROUTE_PLAYER_STEPS",
+      "sha256": "1200de1f7d43a3e3dcb463d87a3431341436720e99658cdf5099f3424dfb7d4d",
+      "digestAlgorithm": "sha256(canonical-json(all route step dataclasses))"
+    },
+    "scenario": {
+      "sourceId": "core/scenario/*.yaml",
+      "sha256": "b21ecca9b5283be198bd6875a175b86e33ed6e981712e5e253680fdbbb0e7e81",
+      "digestAlgorithm": "sha256(sorted relative path + LF + raw bytes + LF)"
+    },
+    "case": {
+      "sourceId": "core/evaluation/agent_semantic_cases.yaml",
+      "sha256": "29354573692efe15f26addcb11d3f0e9f34e343907c9a6465eb8f95ccb445981",
+      "digestAlgorithm": "sha256(raw bytes)"
+    }
+  },
+  "strategies": [
+    {
+      "strategyId": "strategy.observer.v1",
+      "kind": "fixed_public_route",
+      "version": "1.0.0",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "digestAlgorithm": "sha256(canonical-json(route step dataclasses))",
+      "privateInputsUsed": false,
+      "description": "No player invitations, joins, or messages."
+    },
+    {
+      "strategyId": "strategy.pro_lin.v1",
+      "kind": "fixed_public_route",
+      "version": "1.0.0",
+      "sha256": "cc6c4b5f133c1fdfe403e051e586f7f94b0417175c8c4fe36bc557a94d0c4faa",
+      "digestAlgorithm": "sha256(canonical-json(route step dataclasses))",
+      "privateInputsUsed": false,
+      "description": "Seven public-information coalition prompts, one per day."
+    },
+    {
+      "strategyId": "strategy.pro_zhao.v1",
+      "kind": "fixed_public_route",
+      "version": "1.0.0",
+      "sha256": "a6ce8dfb48fa8fff7d5e2f062e4a3df42ddb276f3f1e69e305fe28d9525beddb",
+      "digestAlgorithm": "sha256(canonical-json(route step dataclasses))",
+      "privateInputsUsed": false,
+      "description": "Two public-information single-target prompts as a low-investment control."
+    }
+  ],
+  "routes": {
+    "observer": {
+      "strategyId": "strategy.observer.v1",
+      "seeds": [20260845, 20260846, 20260847, 20260848, 20260849],
+      "plannedRuns": 5
+    },
+    "pro_lin": {
+      "strategyId": "strategy.pro_lin.v1",
+      "seeds": [20260845, 20260846, 20260847, 20260848, 20260849],
+      "plannedRuns": 5
+    },
+    "pro_zhao": {
+      "strategyId": "strategy.pro_zhao.v1",
+      "seeds": [20260845, 20260846, 20260847, 20260848, 20260849],
+      "plannedRuns": 5
+    }
+  },
+  "budget": {
+    "maxCallsPerRun": 600,
+    "maxTotalCalls": 9000,
+    "timeoutsSeconds": {
+      "step": 900,
+      "run": 5400
+    },
+    "retries": {
+      "provider": 1,
+      "structuredOutput": 1
+    },
+    "maxCostCny": null
+  },
+  "infraInvalidRules": [
+    "database_unavailable_before_run",
+    "provider_unavailable_or_authentication_failure",
+    "provider_timeout",
+    "budget_or_rate_limit_exhausted",
+    "runner_crash_before_terminal_record",
+    "missing_or_non_terminal_attempt_record"
+  ],
+  "pricing": {
+    "currency": "CNY",
+    "textInputCnyPerMillion": 0.6,
+    "textOutputCnyPerMillion": 3.6,
+    "embeddingCnyPerMillion": 0.7,
+    "basis": "public configured Ark rate card; maxCostCny is intentionally null"
+  },
+  "acceptance": {
+    "observer": {
+      "playerSpeechCount": 0
+    },
+    "pro_lin": {
+      "minimumGameplayPasses": 4,
+      "minimumPlayerCompletedRuns": 2
+    },
+    "pro_zhao": {
+      "minimumFailureControlPasses": 4
+    }
+  },
+  "plannedRuns": [
+    {"attemptId": "final-agent-validation-recovery-20260823:observer:20260845", "experimentId": "final-agent-validation-recovery-20260823", "route": "observer", "seed": 20260845, "strategyId": "strategy.observer.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:observer:20260846", "experimentId": "final-agent-validation-recovery-20260823", "route": "observer", "seed": 20260846, "strategyId": "strategy.observer.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:observer:20260847", "experimentId": "final-agent-validation-recovery-20260823", "route": "observer", "seed": 20260847, "strategyId": "strategy.observer.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:observer:20260848", "experimentId": "final-agent-validation-recovery-20260823", "route": "observer", "seed": 20260848, "strategyId": "strategy.observer.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:observer:20260849", "experimentId": "final-agent-validation-recovery-20260823", "route": "observer", "seed": 20260849, "strategyId": "strategy.observer.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_lin:20260845", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_lin", "seed": 20260845, "strategyId": "strategy.pro_lin.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_lin:20260846", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_lin", "seed": 20260846, "strategyId": "strategy.pro_lin.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_lin:20260847", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_lin", "seed": 20260847, "strategyId": "strategy.pro_lin.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_lin:20260848", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_lin", "seed": 20260848, "strategyId": "strategy.pro_lin.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_lin:20260849", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_lin", "seed": 20260849, "strategyId": "strategy.pro_lin.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_zhao:20260845", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_zhao", "seed": 20260845, "strategyId": "strategy.pro_zhao.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_zhao:20260846", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_zhao", "seed": 20260846, "strategyId": "strategy.pro_zhao.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_zhao:20260847", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_zhao", "seed": 20260847, "strategyId": "strategy.pro_zhao.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_zhao:20260848", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_zhao", "seed": 20260848, "strategyId": "strategy.pro_zhao.v1", "planned": true},
+    {"attemptId": "final-agent-validation-recovery-20260823:pro_zhao:20260849", "experimentId": "final-agent-validation-recovery-20260823", "route": "pro_zhao", "seed": 20260849, "strategyId": "strategy.pro_zhao.v1", "planned": true}
+  ],
+  "integrity": {
+    "externalSha256File": "final_agent_validation_recovery_v2.sha256",
+    "hashScope": "canonical-json-without-external-digest-field"
+  }
+}

@@ -1,0 +1,254 @@
+version: 1
+status: confirmed
+
+# authoringNote 仅保留设计依据，不作为正式 RELATIONSHIP 边字段。
+relationships:
+  - fromActorId: npc_001
+    toActorId: npc_005
+    socialRoles: [old_acquaintance, neighbor]
+    familiarity: 3
+    trust: 1
+    affinity: 1
+    tension: 1
+    interactionCount: 0
+    authoringNote: "敬重周慎之，但因父辈旧怨和自己的愧疚而保持距离。"
+
+  - fromActorId: npc_005
+    toActorId: npc_001
+    socialRoles: [old_acquaintance, neighbor]
+    familiarity: 3
+    trust: 1
+    affinity: 1
+    tension: 1
+    interactionCount: 0
+    authoringNote: "认可林慧兰的学识与初心，但始终拉不下面子主动谈父辈旧怨。"
+
+  - fromActorId: npc_001
+    toActorId: npc_004
+    socialRoles: [close_neighbor]
+    familiarity: 3
+    trust: 2
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "把陈月当晚辈，爱说教但真心信任她。"
+
+  - fromActorId: npc_004
+    toActorId: npc_001
+    socialRoles: [close_neighbor]
+    familiarity: 3
+    trust: 2
+    affinity: 2
+    tension: 0
+    interactionCount: 0
+    authoringNote: "因过去的用药失误心怀愧疚，所以格外关心林慧兰。"
+
+  - fromActorId: npc_003
+    toActorId: npc_005
+    socialRoles: [neighbor, potential_business_partner]
+    familiarity: 2
+    trust: 0
+    affinity: 0
+    tension: 1
+    interactionCount: 0
+    authoringNote: "需要周慎之的授权，又因自己私下探查经营情况而心虚。"
+
+  - fromActorId: npc_005
+    toActorId: npc_003
+    socialRoles: [neighbor, potential_business_partner]
+    familiarity: 2
+    trust: -1
+    affinity: -1
+    tension: 1
+    interactionCount: 0
+    authoringNote: "察觉赵磊目的不单纯，提防他的商业介入和底线。"
+
+  - fromActorId: npc_004
+    toActorId: npc_003
+    socialRoles: [neighbor, frequent_banter]
+    familiarity: 2
+    trust: -1
+    affinity: 0
+    tension: 1
+    interactionCount: 0
+    authoringNote: "看不惯赵磊的油滑，但办项目时又确实需要他的资源。"
+
+  - fromActorId: npc_003
+    toActorId: npc_004
+    socialRoles: [neighbor, frequent_banter]
+    familiarity: 2
+    trust: 0
+    affinity: 0
+    tension: 1
+    interactionCount: 0
+    authoringNote: "既怕陈月直接拆台，又需要她参与项目，只能用热情打圆场。"
+
+  - fromActorId: npc_002
+    toActorId: npc_005
+    socialRoles: [regular_customer, neighbor]
+    familiarity: 2
+    trust: 1
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "常去书店安静找素材，喜欢周慎之从不打扰自己的分寸。"
+
+  - fromActorId: npc_005
+    toActorId: npc_002
+    socialRoles: [shopkeeper_and_customer, neighbor]
+    familiarity: 2
+    trust: 1
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "欣赏沈星遥安静尊重旧书的态度，但从未与她深谈。"
+
+  - fromActorId: npc_002
+    toActorId: npc_001
+    socialRoles: [neighbor, respected_elder]
+    familiarity: 1
+    trust: 1
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "佩服林慧兰的学识，想请教又担心被说教。"
+
+  - fromActorId: npc_001
+    toActorId: npc_002
+    socialRoles: [neighbor, younger_neighbor]
+    familiarity: 1
+    trust: 1
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "注意到沈星遥安静敏感，有心提点但怕把她吓退。"
+
+  - fromActorId: npc_002
+    toActorId: npc_004
+    socialRoles: [neighbor]
+    familiarity: 1
+    trust: 1
+    affinity: 1
+    tension: 1
+    interactionCount: 0
+    authoringNote: "知道陈月是真心关心自己，但常被她过度热情的叮嘱弄得招架不住。"
+
+  - fromActorId: npc_004
+    toActorId: npc_002
+    socialRoles: [neighbor, caregiver]
+    familiarity: 1
+    trust: 1
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "心疼沈星遥熬夜和不善照顾自己，总想多提醒几句。"
+
+  - fromActorId: npc_002
+    toActorId: npc_003
+    socialRoles: [neighbor, potential_collaborator]
+    familiarity: 1
+    trust: -1
+    affinity: -1
+    tension: 1
+    interactionCount: 0
+    authoringNote: "害怕赵磊的自来熟和商业拉拢，能回避就回避。"
+
+  - fromActorId: npc_003
+    toActorId: npc_002
+    socialRoles: [neighbor, potential_collaborator]
+    familiarity: 1
+    trust: 0
+    affinity: 0
+    tension: 0
+    interactionCount: 0
+    authoringNote: "看重沈星遥的插画能力，想尽快拉她加入项目。"
+
+  - fromActorId: npc_001
+    toActorId: npc_003
+    socialRoles: [neighbor, potential_collaborator]
+    familiarity: 2
+    trust: -1
+    affinity: -1
+    tension: 1
+    interactionCount: 0
+    authoringNote: "嫌赵磊油滑不稳重，但为了文社物资不得不与他合作。"
+
+  - fromActorId: npc_003
+    toActorId: npc_001
+    socialRoles: [neighbor, potential_collaborator]
+    familiarity: 2
+    trust: 0
+    affinity: -1
+    tension: 1
+    interactionCount: 0
+    authoringNote: "觉得林慧兰古板难说服，但需要她的威望为项目背书。"
+
+  - fromActorId: npc_004
+    toActorId: npc_005
+    socialRoles: [neighbor]
+    familiarity: 2
+    trust: 1
+    affinity: 0
+    tension: 0
+    interactionCount: 0
+    authoringNote: "觉得周慎之虽然冷淡但可靠，合作办事可以放心。"
+
+  - fromActorId: npc_005
+    toActorId: npc_004
+    socialRoles: [neighbor]
+    familiarity: 2
+    trust: 2
+    affinity: 0
+    tension: 0
+    interactionCount: 0
+    authoringNote: "认可陈月的人品和责任心，愿意支持她的健康角。"
+
+  - fromActorId: npc_001
+    toActorId: player_001
+    socialRoles: [neighbor, younger_neighbor, bookstore_helper]
+    familiarity: 1
+    trust: 1
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "把主角视为懂事知礼、值得提点和栽培的晚辈。"
+
+  - fromActorId: npc_002
+    toActorId: player_001
+    socialRoles: [neighbor, quiet_companion]
+    familiarity: 1
+    trust: 1
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "觉得主角安静有分寸，是少数能让自己放松同处的人。"
+
+  - fromActorId: npc_003
+    toActorId: player_001
+    socialRoles: [neighbor, bookstore_helper, potential_contact]
+    familiarity: 1
+    trust: 0
+    affinity: 0
+    tension: 0
+    interactionCount: 0
+    authoringNote: "把主角视为接近周慎之和探查书店情况的潜在突破口。"
+
+  - fromActorId: npc_004
+    toActorId: player_001
+    socialRoles: [neighbor, younger_neighbor]
+    familiarity: 1
+    trust: 1
+    affinity: 1
+    tension: 0
+    interactionCount: 0
+    authoringNote: "觉得主角作息和身体状态让人操心，愿意主动提醒和照顾。"
+
+  - fromActorId: npc_005
+    toActorId: player_001
+    socialRoles: [employer, bookstore_helper]
+    familiarity: 2
+    trust: 1
+    affinity: 0
+    tension: 1
+    interactionCount: 0
+    authoringNote: "认可主角做事守分寸，但怀疑他来兼职另有原因，仍处于观察期。"

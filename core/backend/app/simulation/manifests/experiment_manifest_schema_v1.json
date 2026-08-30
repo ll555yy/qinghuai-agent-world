@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qinghuai://simulation/experiment-manifest/1.0",
+  "title": "Qinghuai final agent validation preregistration",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "experimentId",
+    "createdAt",
+    "preregistrationBaseCommit",
+    "models",
+    "artifacts",
+    "strategies",
+    "routes",
+    "budget",
+    "infraInvalidRules",
+    "pricing",
+    "integrity"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "experimentId": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "minLength": 1},
+    "preregistrationBaseCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "models": {
+      "type": "object",
+      "required": ["candidate", "embedding"],
+      "properties": {
+        "candidate": {"type": "string", "minLength": 1},
+        "embedding": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["promptPolicy", "scenario", "case"],
+      "properties": {
+        "promptPolicy": {"$ref": "#/$defs/artifactDigest"},
+        "scenario": {"$ref": "#/$defs/artifactDigest"},
+        "case": {"$ref": "#/$defs/artifactDigest"}
+      },
+      "additionalProperties": false
+    },
+    "strategies": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["strategyId", "kind", "version", "sha256", "privateInputsUsed"],
+        "properties": {
+          "strategyId": {"type": "string", "minLength": 1},
+          "kind": {"type": "string", "minLength": 1},
+          "version": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "privateInputsUsed": {"const": false}
+        },
+        "additionalProperties": true
+      }
+    },
+    "routes": {
+      "type": "object",
+      "required": ["observer", "pro_lin", "pro_zhao"],
+      "additionalProperties": false,
+      "properties": {
+        "observer": {"$ref": "#/$defs/routePlan"},
+        "pro_lin": {"$ref": "#/$defs/routePlan"},
+        "pro_zhao": {"$ref": "#/$defs/routePlan"}
+      }
+    },
+    "plannedRuns": {"type": "array", "minItems": 15, "maxItems": 15},
+    "budget": {
+      "type": "object",
+      "required": ["maxCallsPerRun", "maxTotalCalls", "timeoutsSeconds", "retries", "maxCostCny"],
+      "properties": {
+        "maxCallsPerRun": {"type": "integer", "minimum": 1},
+        "maxTotalCalls": {"type": "integer", "minimum": 1},
+        "timeoutsSeconds": {
+          "type": "object",
+          "required": ["step", "run"],
+          "properties": {
+            "step": {"type": "integer", "minimum": 1},
+            "run": {"type": "integer", "minimum": 1}
+          }
+        },
+        "retries": {
+          "type": "object",
+          "required": ["provider", "structuredOutput"],
+          "properties": {
+            "provider": {"type": "integer", "minimum": 0},
+            "structuredOutput": {"type": "integer", "minimum": 0}
+          }
+        },
+        "maxCostCny": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "infraInvalidRules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "pricing": {
+      "type": "object",
+      "required": [
+        "currency",
+        "textInputCnyPerMillion",
+        "textOutputCnyPerMillion",
+        "embeddingCnyPerMillion"
+      ],
+      "properties": {
+        "currency": {"const": "CNY"},
+        "textInputCnyPerMillion": {"type": "number", "minimum": 0},
+        "textOutputCnyPerMillion": {"type": "number", "minimum": 0},
+        "embeddingCnyPerMillion": {"type": "number", "minimum": 0}
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["externalSha256File", "hashScope"],
+      "properties": {
+        "externalSha256File": {"type": "string", "minLength": 1},
+        "hashScope": {
+          "const": "canonical-json-without-external-digest-field"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifactDigest": {
+      "type": "object",
+      "required": ["sourceId", "sha256", "digestAlgorithm"],
+      "properties": {
+        "sourceId": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "digestAlgorithm": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "routePlan": {
+      "type": "object",
+      "required": ["strategyId", "seeds", "plannedRuns"],
+      "properties": {
+        "strategyId": {"type": "string", "minLength": 1},
+        "seeds": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {"type": "integer"}
+        },
+        "plannedRuns": {"const": 5}
+      }
+    }
+  }
+}

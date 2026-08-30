@@ -1,0 +1,347 @@
+version: 1
+status: confirmed
+
+# scenario_seed 表示开局设定提供的私有记忆，不要求存在聊天证据消息。
+memories:
+  - memoryId: memory_seed_001
+    ownerNpcId: npc_001
+    type: belief
+    content: "林慧兰认为主角坐得住、肯安静接触旧书，是懂事知礼且值得提点的晚辈。"
+    actorIds: [player_001]
+    topicIds: []
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_002
+    ownerNpcId: npc_001
+    type: belief
+    content: "林慧兰相信主角做事稳妥，可以放心参与文社相关的沟通与协调。"
+    actorIds: [player_001]
+    topicIds: [topic_qinghuai_literary_society]
+    importance: 3
+    confidence: medium
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_003
+    ownerNpcId: npc_002
+    type: belief
+    content: "沈星遥觉得主角安静、有分寸，与他同处时没有明显的社交压力。"
+    actorIds: [player_001]
+    topicIds: []
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_004
+    ownerNpcId: npc_002
+    type: belief
+    content: "沈星遥对主角的过往感到好奇，但不愿主动追问。"
+    actorIds: [player_001]
+    topicIds: []
+    importance: 2
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_005
+    ownerNpcId: npc_003
+    type: belief
+    content: "赵磊认为主角是周慎之身边能说上话的人，可以成为了解书店情况的突破口。"
+    actorIds: [player_001, npc_005]
+    topicIds: [topic_bookstore_survival, topic_neighborhood_cultural_operation]
+    importance: 4
+    confidence: medium
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_006
+    ownerNpcId: npc_003
+    type: belief
+    content: "赵磊认为主角看起来老实、城府不深，可能比较容易被自己拉拢。"
+    actorIds: [player_001]
+    topicIds: [topic_neighborhood_cultural_operation]
+    importance: 3
+    confidence: low
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_007
+    ownerNpcId: npc_004
+    type: belief
+    content: "陈月认为主角可能经常熬夜、缺少活动，需要多注意作息和身体。"
+    actorIds: [player_001]
+    topicIds: [topic_health_corner]
+    importance: 3
+    confidence: medium
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_008
+    ownerNpcId: npc_004
+    type: belief
+    content: "陈月把主角视为让人操心的年轻邻居，嘴上会催促，实际愿意关心他。"
+    actorIds: [player_001]
+    topicIds: []
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_009
+    ownerNpcId: npc_005
+    type: belief
+    content: "周慎之观察到主角做事守分寸、尊重旧书，暂时认可他处理日常书店事务。"
+    actorIds: [player_001]
+    topicIds: [topic_bookstore_survival]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_010
+    ownerNpcId: npc_005
+    type: belief
+    content: "周慎之怀疑主角来旧书店兼职可能另有原因，因此仍在观察，不愿让他接触贵重古籍。"
+    actorIds: [player_001]
+    topicIds: [topic_valuable_ancient_book]
+    importance: 5
+    confidence: low
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_011
+    ownerNpcId: npc_001
+    type: belief
+    content: "林慧兰记得祖父遗物中曾有一种特殊的旧函套，但不知道那些遗物后来去了哪里。"
+    actorIds: []
+    topicIds: [topic_valuable_ancient_book, topic_lin_zhou_old_grudge]
+    importance: 4
+    confidence: medium
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  # 下列 20 条将 NPC-NPC 的关系创作说明转为各自私有、可检索的开局记忆。
+  # NPC-player 的 5 条有向关系已由 memory_seed_001..010 覆盖。
+  - memoryId: memory_seed_rel_npc_001_npc_005
+    ownerNpcId: npc_001
+    type: belief
+    content: "林慧兰敬重周慎之，但因父辈旧怨和自己的愧疚而与他保持距离。"
+    actorIds: [npc_005]
+    topicIds: [topic_lin_zhou_old_grudge]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_005_npc_001
+    ownerNpcId: npc_005
+    type: belief
+    content: "周慎之认可林慧兰的学识与初心，但始终拉不下面子主动和她谈父辈旧怨。"
+    actorIds: [npc_001]
+    topicIds: [topic_lin_zhou_old_grudge]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_001_npc_004
+    ownerNpcId: npc_001
+    type: belief
+    content: "林慧兰把陈月当晚辈，虽然常说教，但真心信任她。"
+    actorIds: [npc_004]
+    topicIds: [topic_health_corner]
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_004_npc_001
+    ownerNpcId: npc_004
+    type: belief
+    content: "陈月因过去给林慧兰配错药量而心怀愧疚，所以格外关心她。"
+    actorIds: [npc_001]
+    topicIds: [topic_health_corner]
+    importance: 5
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_003_npc_005
+    ownerNpcId: npc_003
+    type: belief
+    content: "赵磊需要周慎之授权书店运营，又因自己私下探查书店经营情况而面对他时心虚。"
+    actorIds: [npc_005]
+    topicIds: [topic_bookstore_survival, topic_neighborhood_cultural_operation]
+    importance: 5
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_005_npc_003
+    ownerNpcId: npc_005
+    type: belief
+    content: "周慎之察觉赵磊的目的不单纯，提防他的商业介入并准备测试他的底线。"
+    actorIds: [npc_003]
+    topicIds: [topic_bookstore_survival, topic_neighborhood_cultural_operation]
+    importance: 5
+    confidence: medium
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_004_npc_003
+    ownerNpcId: npc_004
+    type: belief
+    content: "陈月看不惯赵磊的油滑，但办健康角和保住书店时确实需要他的资源。"
+    actorIds: [npc_003]
+    topicIds: [topic_health_corner, topic_bookstore_survival]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_003_npc_004
+    ownerNpcId: npc_003
+    type: belief
+    content: "赵磊既怕陈月直接拆台，又需要她参与项目，因此总用热情和玩笑打圆场。"
+    actorIds: [npc_004]
+    topicIds: [topic_health_corner, topic_neighborhood_cultural_operation]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_002_npc_005
+    ownerNpcId: npc_002
+    type: belief
+    content: "沈星遥常去周慎之的书店安静找素材，喜欢他从不打扰自己的分寸。"
+    actorIds: [npc_005]
+    topicIds: [topic_five_people_picture_book, topic_bookstore_survival]
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_005_npc_002
+    ownerNpcId: npc_005
+    type: belief
+    content: "周慎之欣赏沈星遥安静并尊重旧书的态度，但还没有与她深谈。"
+    actorIds: [npc_002]
+    topicIds: [topic_bookstore_legacy, topic_five_people_picture_book]
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_002_npc_001
+    ownerNpcId: npc_002
+    type: belief
+    content: "沈星遥佩服林慧兰的学识，想向她请教，又担心被长篇说教。"
+    actorIds: [npc_001]
+    topicIds: [topic_five_people_picture_book, topic_qinghuai_literary_society]
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_001_npc_002
+    ownerNpcId: npc_001
+    type: belief
+    content: "林慧兰注意到沈星遥安静敏感，有心提点她，又怕主动靠近会把她吓退。"
+    actorIds: [npc_002]
+    topicIds: [topic_five_people_picture_book, topic_qinghuai_literary_society]
+    importance: 3
+    confidence: medium
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_002_npc_004
+    ownerNpcId: npc_002
+    type: belief
+    content: "沈星遥知道陈月是真心关心自己，但常被她过度热情的叮嘱弄得招架不住。"
+    actorIds: [npc_004]
+    topicIds: [topic_health_corner]
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_004_npc_002
+    ownerNpcId: npc_004
+    type: belief
+    content: "陈月心疼沈星遥总熬夜又不善照顾自己，见到她就想多提醒几句。"
+    actorIds: [npc_002]
+    topicIds: [topic_health_corner]
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_002_npc_003
+    ownerNpcId: npc_002
+    type: belief
+    content: "沈星遥害怕赵磊的自来熟和商业拉拢，因此能回避他就回避。"
+    actorIds: [npc_003]
+    topicIds: [topic_neighborhood_cultural_operation]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_003_npc_002
+    ownerNpcId: npc_003
+    type: belief
+    content: "赵磊看重沈星遥的插画能力，想尽快说服她加入文创项目。"
+    actorIds: [npc_002]
+    topicIds: [topic_five_people_picture_book, topic_neighborhood_cultural_operation]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_001_npc_003
+    ownerNpcId: npc_001
+    type: belief
+    content: "林慧兰嫌赵磊油滑不稳重，但为了文社物资不得不考虑与他合作。"
+    actorIds: [npc_003]
+    topicIds: [topic_qinghuai_literary_society, topic_neighborhood_cultural_operation]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_003_npc_001
+    ownerNpcId: npc_003
+    type: belief
+    content: "赵磊觉得林慧兰古板难说服，但需要她的威望为文创项目背书。"
+    actorIds: [npc_001]
+    topicIds: [topic_qinghuai_literary_society, topic_neighborhood_cultural_operation]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_004_npc_005
+    ownerNpcId: npc_004
+    type: belief
+    content: "陈月觉得周慎之虽然冷淡但可靠，和他合作办事可以放心。"
+    actorIds: [npc_005]
+    topicIds: [topic_bookstore_survival, topic_health_corner]
+    importance: 3
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []
+
+  - memoryId: memory_seed_rel_npc_005_npc_004
+    ownerNpcId: npc_005
+    type: belief
+    content: "周慎之认可陈月的人品和责任心，愿意支持她在书店设立健康角。"
+    actorIds: [npc_004]
+    topicIds: [topic_health_corner]
+    importance: 4
+    confidence: high
+    source: scenario_seed
+    evidenceMessageIds: []

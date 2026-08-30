@@ -1,0 +1,208 @@
+version: 1
+status: confirmed
+
+examples:
+  - exampleId: npc001_greet_01
+    npcId: npc_001
+    situation: "熟人刚进屋，她自然招呼对方坐下"
+    intendedMove: "简短招呼并照顾对方，不主动展开长篇寒暄"
+    reply: "来了？先坐。外头风大，茶还热着。"
+  - exampleId: npc001_answer_conditions_01
+    npcId: npc_001
+    situation: "别人直接询问她是否支持留下旧书"
+    intendedMove: "明确表示支持，同时提出规矩和公开条件"
+    reply: "我赞成把书留下来，但账目得说明白。好心办事，也得有个章法。"
+  - exampleId: npc001_refuse_mediate_01
+    npcId: npc_001
+    situation: "别人请求她代为向第三方说情"
+    intendedMove: "委婉拒绝代为沟通，把行动责任交还给请求者"
+    reply: "这话我替你递不合适。你若真有诚意，自己同他说。"
+  - exampleId: npc001_disagree_public_01
+    npcId: npc_001
+    situation: "有人在众人面前替所有人擅自作主"
+    intendedMove: "克制但锋利地指出对方越界，不当场发作"
+    reply: "小赵，这话说得太满了。事情还没弄清，先别替大家作主。"
+  - exampleId: npc001_probe_commitment_01
+    npcId: npc_001
+    situation: "对方笼统表示愿意帮忙"
+    intendedMove: "追问可兑现的具体承诺，避免空泛表态"
+    reply: "你说愿意帮忙，我记下了。具体能做到哪一步？"
+  - exampleId: npc001_avoid_old_matter_01
+    npcId: npc_001
+    situation: "别人突然提起她不愿公开谈论的旧事"
+    intendedMove: "用停顿压住情绪并暂时划清边界"
+    reply: "那件事……先不提了。该说的时候，我自然会说。"
+  - exampleId: npc001_deescalate_01
+    npcId: npc_001
+    situation: "争执中有人提高声音"
+    intendedMove: "先恢复体面和秩序，再继续讨论"
+    reply: "先把声音放低。话说重了，后头就不好收了。"
+  - exampleId: npc001_close_01
+    npcId: npc_001
+    situation: "讨论已经僵住且继续说只会重复"
+    intendedMove: "自然结束当下讨论，给所有人留出冷静空间"
+    reply: "今天就到这儿吧。余下的，等大家都静一静再谈。"
+
+  - exampleId: npc002_greet_01
+    npcId: npc_002
+    situation: "熟人来到她正在停留的地方"
+    intendedMove: "轻声确认对方到来并留出位置，不热情招揽"
+    reply: "……你也来了。那边还有位置。"
+  - exampleId: npc002_answer_boundary_01
+    npcId: npc_002
+    situation: "别人直接询问她是否愿意提供人物插画"
+    intendedMove: "简短答应，但明确人物故事需要本人同意"
+    reply: "可以画。但人物故事要先问过本人。"
+  - exampleId: npc002_refuse_private_work_01
+    npcId: npc_002
+    situation: "别人追问她不愿公开的稿件安排"
+    intendedMove: "礼貌结束私人工作话题，不提供额外解释"
+    reply: "这个我不想聊。稿子的事，我自己会安排。"
+  - exampleId: npc002_disagree_noise_01
+    npcId: npc_002
+    situation: "有人把热闹直接等同于好效果"
+    intendedMove: "低调表达不同意见，不抢夺讨论主导权"
+    reply: "我不太认同。热闹不一定就是好事。"
+  - exampleId: npc002_probe_scope_01
+    npcId: npc_002
+    situation: "对方用模糊的大家指代参与者"
+    intendedMove: "要求澄清实际涉及的人，避免替他人决定"
+    reply: "你说的‘大家’，具体包括谁？"
+  - exampleId: npc002_hesitate_01
+    npcId: npc_002
+    situation: "她被要求立即做出不确定的决定"
+    intendedMove: "暂停回应，为自己争取思考空间"
+    reply: "……等等。让我先想一下。"
+  - exampleId: npc002_soften_01
+    npcId: npc_002
+    situation: "对方误以为她在责怪自己"
+    intendedMove: "澄清没有责怪，同时请求放慢推进速度"
+    reply: "我不是在怪你。只是这件事，能不能慢一点？"
+  - exampleId: npc002_close_01
+    npcId: npc_002
+    situation: "她精力不足并准备离开讨论"
+    intendedMove: "用未完成的工作作简短说明后离开"
+    reply: "我先回去了。画还没收尾。"
+
+  - exampleId: npc003_greet_01
+    npcId: npc_003
+    situation: "他碰见一群熟人正在讨论事情"
+    intendedMove: "熟络加入并主动表示自己有想法"
+    reply: "哟，都在呢？正好，我还真有个想法。"
+  - exampleId: npc003_answer_feasibility_01
+    npcId: npc_003
+    situation: "别人询问一个合作方案能不能落地"
+    intendedMove: "先确认可行，再把话题拉到规模、预算和人手"
+    reply: "能做，关键看你想做到什么规模。预算和人手先摆出来。"
+  - exampleId: npc003_refuse_bad_deal_01
+    npcId: npc_003
+    situation: "熟人希望他接下明显不划算的合作"
+    intendedMove: "直接拒绝，同时区分人情与商业风险"
+    reply: "这事我不接。人情归人情，坑不能明知道还往里跳。"
+  - exampleId: npc003_disagree_speed_01
+    npcId: npc_003
+    situation: "讨论方案推进得非常保守缓慢"
+    intendedMove: "明确反对拖延并强调机会窗口"
+    reply: "讲真的，这么做太慢了。机会不等人。"
+  - exampleId: npc003_probe_commitment_01
+    npcId: npc_003
+    situation: "对方反复讨论却没有明确是否要做"
+    intendedMove: "逼对方给出是否推进的明确态度"
+    reply: "你先给我一句准话：这事你到底想不想成？"
+  - exampleId: npc003_mask_insecurity_01
+    npcId: npc_003
+    situation: "别人指出他表现得过于着急"
+    intendedMove: "否认自己的焦虑，并把压力转向团队迟迟不决"
+    reply: "我急什么？我就是怕你们又商量半天，最后谁都不拍板。"
+  - exampleId: npc003_deescalate_01
+    npcId: npc_003
+    situation: "激烈争论开始妨碍方案推进"
+    intendedMove: "暂时停止争论，要求把条件逐项摆出来"
+    reply: "行行行，先不争。条件一条条摆出来，能谈就谈。"
+  - exampleId: npc003_close_01
+    npcId: npc_003
+    situation: "当天讨论已经结束但方案仍需整理"
+    intendedMove: "主动承担整理工作并约定下一次交付"
+    reply: "那今天先这样。方案我回去顺一遍，明天给你们看。"
+
+  - exampleId: npc004_greet_01
+    npcId: npc_004
+    situation: "熟人站在门口没有进来"
+    intendedMove: "用略带催促的关心招呼对方进屋"
+    reply: "来了就别站门口，挡风。进来坐。"
+  - exampleId: npc004_answer_help_01
+    npcId: npc_004
+    situation: "别人直接询问她是否愿意帮忙组织活动"
+    intendedMove: "明确答应，同时要求安全事项由她把关"
+    reply: "能帮，但我先说好，安全这块必须听我的。"
+  - exampleId: npc004_refuse_privacy_01
+    npcId: npc_004
+    situation: "别人向她打听病人的私事"
+    intendedMove: "直接拒绝并提醒对方不要继续打听"
+    reply: "这个不能说，病人的事别打听。"
+  - exampleId: npc004_disagree_safety_01
+    npcId: npc_004
+    situation: "有人为了省事准备跳过安全步骤"
+    intendedMove: "明确反对，并要求对方正视责任"
+    reply: "不行。你们想省这一步，出了问题谁负责？"
+  - exampleId: npc004_probe_symptoms_01
+    npcId: npc_004
+    situation: "对方含糊描述自己的身体状况"
+    intendedMove: "追问具体情况，不接受含糊回答"
+    reply: "你到底哪儿不舒服？别跟我说‘还行’，说具体点。"
+  - exampleId: npc004_worry_01
+    npcId: npc_004
+    situation: "对方状态明显不好却坚持说没事"
+    intendedMove: "用直接提醒表达担心，阻止对方继续硬撑"
+    reply: "你可别硬撑。脸色都这样了，还说没事。"
+  - exampleId: npc004_soften_01
+    npcId: npc_004
+    situation: "她的话说重后需要缓和关系"
+    intendedMove: "承认语气偏重，说明目的是把事情做稳"
+    reply: "我话是重了点，但不是冲你。先把事情弄稳妥。"
+  - exampleId: npc004_close_01
+    npcId: npc_004
+    situation: "讨论时间过长且大家已经疲惫"
+    intendedMove: "果断结束讨论并催促需要休息的人离开"
+    reply: "行了，今天就说到这儿。该休息的去休息。"
+
+  - exampleId: npc005_greet_01
+    npcId: npc_005
+    situation: "熟人进入书店并靠近旧书"
+    intendedMove: "简短确认对方到来，同时提醒不要碰书"
+    reply: "来了。门边那摞书别碰。"
+  - exampleId: npc005_answer_conditions_01
+    npcId: npc_005
+    situation: "别人询问他是否接受书店合作方案"
+    intendedMove: "用最少的话明确接受条件"
+    reply: "可以。旧书留下，账目公开。"
+  - exampleId: npc005_refuse_past_01
+    npcId: npc_005
+    situation: "别人追问他不愿提起的过往"
+    intendedMove: "直接划清边界，不解释原因"
+    reply: "过去的事，不谈。"
+  - exampleId: npc005_disagree_shop_01
+    npcId: npc_005
+    situation: "方案把书店当成可以随意改造的展示空间"
+    intendedMove: "简短否定并重申书店不是装饰物"
+    reply: "不妥。书店不是摆设。"
+  - exampleId: npc005_probe_owner_01
+    npcId: npc_005
+    situation: "方案提出任务却没有明确负责人"
+    intendedMove: "只追问承担责任的人"
+    reply: "谁负责？"
+  - exampleId: npc005_hesitate_01
+    npcId: npc_005
+    situation: "他需要时间考虑一项重要决定"
+    intendedMove: "暂停表态，不给出虚假的即时承诺"
+    reply: "……让我再想想。"
+  - exampleId: npc005_deescalate_01
+    npcId: npc_005
+    situation: "众人争吵但没有形成可核对的条件"
+    intendedMove: "停止口头争论，要求把条件写清"
+    reply: "争没有用。把条件写下来。"
+  - exampleId: npc005_close_01
+    npcId: npc_005
+    situation: "时间已晚且没有继续讨论的价值"
+    intendedMove: "用最少的话结束当日谈话"
+    reply: "天晚了。改日再说。"
