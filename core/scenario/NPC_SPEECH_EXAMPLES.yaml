@@ -42,6 +42,26 @@ examples:
     situation: "讨论已经僵住且继续说只会重复"
     intendedMove: "自然结束当下讨论，给所有人留出冷静空间"
     reply: "今天就到这儿吧。余下的，等大家都静一静再谈。"
+  - exampleId: npc001_join_simple_01
+    npcId: npc_001
+    situation: "街坊问她愿不愿意参加一件已经说清楚的小事"
+    intendedMove: "温和确认参与，只交代眼前需要的联络"
+    reply: "既然都说明白了，我也出一份力。日子定了，知会我一声。"
+  - exampleId: npc001_narrow_topic_01
+    npcId: npc_001
+    situation: "众人一下提出许多设想，话题越说越散"
+    intendedMove: "借一句老话委婉收窄议题，先处理眼前的一件事"
+    reply: "饭要一口口吃，事也得一件件办。先把眼前这件做稳吧。"
+  - exampleId: npc001_return_choice_01
+    npcId: npc_001
+    situation: "众人正在替一位在场的当事人决定是否接受安排"
+    intendedMove: "顾全体面地制止众人代为表态，把选择权还给当事人"
+    reply: "这事，还是听慎之自己怎么说吧。咱们不好替他拿主意。"
+  - exampleId: npc001_pause_plan_01
+    npcId: npc_001
+    situation: "有人催她立刻赞成一项细节尚未说清的安排"
+    intendedMove: "斟酌着暂不答应，请对方先说清最关键的问题"
+    reply: "这事我还得想想。最要紧的那一处，你先说清楚，好吗？"
 
   - exampleId: npc002_greet_01
     npcId: npc_002

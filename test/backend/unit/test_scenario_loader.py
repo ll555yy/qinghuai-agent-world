@@ -21,7 +21,7 @@ def test_real_yaml_files_load(registry) -> None:
     assert len(registry.events) == 7
     assert len(registry.npc_personas) == 5
     assert len(registry.relationships) == 25
-    assert len(registry.speech_examples) == 40
+    assert len(registry.speech_examples) == 44
     assert registry.virtual_hours_per_real_minute == 0.5
     assert registry.real_seconds_per_virtual_minute == 2
     covered_relationships = {
@@ -63,18 +63,38 @@ def test_invalid_cross_reference_has_file_and_field(tmp_path: Path) -> None:
         ScenarioLoader(tmp_path).load()
 
 
-def test_speech_examples_are_scoped_eight_per_npc(registry) -> None:
+def test_speech_examples_include_extra_conversational_examples_for_lin_huilan(
+    registry,
+) -> None:
     assert {
         npc.actor_id: sum(
             example.npc_id == npc.actor_id
             for example in registry.speech_examples.values()
         )
         for npc in registry.npcs
-    } == {npc.actor_id: 8 for npc in registry.npcs}
+    } == {
+        "npc_001": 12,
+        "npc_002": 8,
+        "npc_003": 8,
+        "npc_004": 8,
+        "npc_005": 8,
+    }
     example = registry.speech_examples["npc001_refuse_mediate_01"]
     assert example.npc_id == "npc_001"
     assert "代为" in example.situation
     assert "拒绝" in example.intended_move
+    assert registry.speech_examples["npc001_join_simple_01"].reply == (
+        "既然都说明白了，我也出一份力。日子定了，知会我一声。"
+    )
+    assert registry.speech_examples["npc001_narrow_topic_01"].reply == (
+        "饭要一口口吃，事也得一件件办。先把眼前这件做稳吧。"
+    )
+    assert registry.speech_examples["npc001_return_choice_01"].reply == (
+        "这事，还是听慎之自己怎么说吧。咱们不好替他拿主意。"
+    )
+    assert registry.speech_examples["npc001_pause_plan_01"].reply == (
+        "这事我还得想想。最要紧的那一处，你先说清楚，好吗？"
+    )
 
 
 @pytest.mark.parametrize(
@@ -113,7 +133,7 @@ def test_each_npc_requires_eight_speech_examples(tmp_path: Path) -> None:
         copyfile(source / filename, tmp_path / filename)
     path = tmp_path / "NPC_SPEECH_EXAMPLES.yaml"
     text = path.read_text(encoding="utf-8")
-    start = text.index("  - exampleId: npc001_close_01")
+    start = text.index("  - exampleId: npc001_probe_commitment_01")
     end = text.index("  - exampleId: npc002_greet_01")
     path.write_text(text[:start] + text[end:], encoding="utf-8")
     with pytest.raises(

@@ -77,7 +77,7 @@ async def test_retrieval_is_npc_scoped_deterministic_and_cached(registry) -> Non
     )[:3]
     assert len(second.hits) == 3
     assert len(port.calls) == index_call_count + 2
-    assert port.batch_sizes == [10, 10, 10, 10]
+    assert port.batch_sizes == [10, 10, 10, 10, 4]
     assert all("这话我替你递不合适" not in text for text in port.calls)
 
 
