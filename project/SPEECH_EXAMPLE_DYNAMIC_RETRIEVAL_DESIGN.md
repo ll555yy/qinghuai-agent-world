@@ -298,7 +298,7 @@ SpeechExampleRetriever.search(
 - 不根据玩家点赞、重试或人工评分更新示例；
 - 不新增 relationshipTier、speechAct、emotionState 等协议字段；
 - 不使用当前轮消息执行第二路场景向量检索；
-- 不改变 SpeechGeneration 的温度；
+- 示例检索本身不决定温度；运行时独立配置决策、台词和辅助协议温度；
 - 不修改现有记忆召回状态机；
 - 不允许示例影响 ChatDecision、Goal、关系、章节效果或 ExitConsolidation。
 

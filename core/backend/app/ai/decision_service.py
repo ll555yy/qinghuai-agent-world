@@ -23,6 +23,14 @@ from .protocols import (
 
 T = TypeVar("T", bound=BaseModel)
 
+DEFAULT_DECISION_TEMPERATURE = 0.1
+DEFAULT_SPEECH_TEMPERATURE = 0.5
+DEFAULT_AUXILIARY_TEMPERATURE = 0.2
+
+DECISION_PROTOCOLS = frozenset(
+    {"DailyActionDecision", "InvitationDecision", "ChatDecision"}
+)
+
 PROTOCOL_RULES = {
     "DailyActionDecision": "只从输入 candidateActorIds/candidateGoalIds 中选择；综合人设、有效目标、关系、私有记忆、当天事件和可接近状态。候选列表为空、timePolicy.newChatAllowed=false 或 actorState=departed 时必须 wait，且 wait 不得携带 goalId、targetActorId 或 intent。priorConversationCounts 较高表示已反复找过该人；除非重要 Goal 明确仍需要对方，否则优先尝试不同的合法对象。如果 freshEvents 让一段未解旧事、既往承诺或关系原因成为当前 Goal 的真实障碍，可以邀请相关人物核实，并在 intent 中自然说明要核实的过去线索；不要为了召回而虚构旧事。没有合适对象就 wait。",
     "InvitationDecision": "只以当前 NPC 的立场判断邀请或加入申请的 accept/refuse；不得假定知道申请者未说出口的 Goal、意图或秘密。actorState=departed、participantLimitReached=true 或 timePolicy.newChatAllowed=false 时必须 refuse。",
@@ -86,9 +94,24 @@ def extract_json_object(text: str) -> dict[str, Any]:
 class DecisionService:
     """One small adapter layer; no domain state is changed here."""
 
-    def __init__(self, model: TextModel | None, *, max_concurrency: int = 6) -> None:
+    def __init__(
+        self,
+        model: TextModel | None,
+        *,
+        max_concurrency: int = 6,
+        decision_temperature: float = DEFAULT_DECISION_TEMPERATURE,
+        speech_temperature: float = DEFAULT_SPEECH_TEMPERATURE,
+        auxiliary_temperature: float = DEFAULT_AUXILIARY_TEMPERATURE,
+    ) -> None:
         if max_concurrency <= 0:
             raise ValueError("max_concurrency must be greater than zero")
+        for name, temperature in (
+            ("decision_temperature", decision_temperature),
+            ("speech_temperature", speech_temperature),
+            ("auxiliary_temperature", auxiliary_temperature),
+        ):
+            if not 0 <= temperature <= 2:
+                raise ValueError(f"{name} must be between 0 and 2")
         self.model = model
         self._last_failed_protocol: ContextVar[str | None] = ContextVar(
             f"decision_service_last_failed_protocol_{id(self)}",
@@ -101,6 +124,16 @@ class DecisionService:
         # covered by the same process-wide cap.
         self._model_semaphore = asyncio.Semaphore(max_concurrency)
         self.max_concurrency = max_concurrency
+        self.decision_temperature = float(decision_temperature)
+        self.speech_temperature = float(speech_temperature)
+        self.auxiliary_temperature = float(auxiliary_temperature)
+
+    def _temperature_for(self, protocol: str) -> float:
+        if protocol in DECISION_PROTOCOLS:
+            return self.decision_temperature
+        if protocol == "SpeechGeneration":
+            return self.speech_temperature
+        return self.auxiliary_temperature
 
     @property
     def last_failed_protocol(self) -> str | None:
@@ -133,7 +166,7 @@ class DecisionService:
                 f"时间政策={policy_rule}\nSchema={schema}"
             ),
             messages=[ChatMessage(role="user", content=prompt)],
-            temperature=0.2,
+            temperature=self._temperature_for(protocol),
             max_output_tokens=900,
         )
         for _attempt in range(2):

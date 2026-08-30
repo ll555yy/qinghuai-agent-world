@@ -21,6 +21,9 @@ def test_settings_default_to_explicit_in_memory_backend(
         "SEGMENT_SUMMARY_THRESHOLD",
         "SEGMENT_RECENT_MESSAGES",
         "ARK_MODEL_MAX_CONCURRENCY",
+        "ARK_DECISION_TEMPERATURE",
+        "ARK_SPEECH_TEMPERATURE",
+        "ARK_AUXILIARY_TEMPERATURE",
         "CHAT_COOLDOWN_SECONDS",
         "CHAT_PUBLISH_DELAY_MIN_SECONDS",
         "CHAT_PUBLISH_DELAY_MAX_SECONDS",
@@ -34,6 +37,9 @@ def test_settings_default_to_explicit_in_memory_backend(
     assert settings.database_url is None
     assert settings.scenario_dir == Path(__file__).resolve().parents[3] / "core" / "scenario"
     assert settings.model_max_concurrency == 6
+    assert settings.decision_temperature == 0.1
+    assert settings.speech_temperature == 0.5
+    assert settings.auxiliary_temperature == 0.2
     assert settings.chat_cooldown_seconds == 12.0
     assert settings.chat_publish_delay_min_seconds == 1.2
     assert settings.chat_publish_delay_max_seconds == 3.0
@@ -69,6 +75,9 @@ def test_database_and_summary_settings_are_parsed(
     monkeypatch.setenv("SEGMENT_RECENT_MESSAGES", "10")
     monkeypatch.setenv("SEGMENT_BOUNDARY_CARRYOVER_MESSAGES", "5")
     monkeypatch.setenv("ARK_MODEL_MAX_CONCURRENCY", "9")
+    monkeypatch.setenv("ARK_DECISION_TEMPERATURE", "0.05")
+    monkeypatch.setenv("ARK_SPEECH_TEMPERATURE", "0.65")
+    monkeypatch.setenv("ARK_AUXILIARY_TEMPERATURE", "0.15")
     monkeypatch.setenv("CHAT_COOLDOWN_SECONDS", "15")
     monkeypatch.setenv("CHAT_PUBLISH_DELAY_MIN_SECONDS", "0.8")
     monkeypatch.setenv("CHAT_PUBLISH_DELAY_MAX_SECONDS", "2.4")
@@ -86,6 +95,9 @@ def test_database_and_summary_settings_are_parsed(
     assert settings.segment_recent_messages == 10
     assert settings.segment_boundary_carryover_messages == 5
     assert settings.model_max_concurrency == 9
+    assert settings.decision_temperature == 0.05
+    assert settings.speech_temperature == 0.65
+    assert settings.auxiliary_temperature == 0.15
     assert settings.chat_cooldown_seconds == 15.0
     assert settings.chat_publish_delay_min_seconds == 0.8
     assert settings.chat_publish_delay_max_seconds == 2.4
@@ -128,4 +140,16 @@ def test_embedding_dimension_must_match_current_schema(
     monkeypatch.setenv("ARK_EMBEDDING_DIMENSIONS", "384")
 
     with pytest.raises(ValueError, match="must be 2048"):
+        Settings.from_environment()
+
+
+@pytest.mark.parametrize("value", ("2.1", "nan", "inf"))
+def test_protocol_temperature_must_be_finite_and_at_most_two(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("ARK_SPEECH_TEMPERATURE", value)
+
+    with pytest.raises(
+        ValueError, match="ARK_SPEECH_TEMPERATURE must be between 0 and 2"
+    ):
         Settings.from_environment()

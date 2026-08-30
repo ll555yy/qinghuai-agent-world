@@ -17,7 +17,13 @@ from typing import Any, cast
 from ..agents.memory_tool import RetrieveOwnedMemoriesTool
 from ..agents.models import AgentInvocation, MemoryToolContext
 from ..agents.runtime import NPCAgent, NPCAgentRegistry, NPCAgentRuntime
-from ..ai.decision_service import DecisionService, StructuredCallFailed
+from ..ai.decision_service import (
+    DEFAULT_AUXILIARY_TEMPERATURE,
+    DEFAULT_DECISION_TEMPERATURE,
+    DEFAULT_SPEECH_TEMPERATURE,
+    DecisionService,
+    StructuredCallFailed,
+)
 from ..ai.protocols import (
     ChatDecision,
     DailyActionDecision,
@@ -93,6 +99,9 @@ class RunService:
         segment_summary_recent_messages: int = SEGMENT_SUMMARY_RECENT_MESSAGES,
         segment_boundary_carryover_messages: int = SEGMENT_BOUNDARY_CARRYOVER_MESSAGES,
         model_max_concurrency: int = 6,
+        decision_temperature: float = DEFAULT_DECISION_TEMPERATURE,
+        speech_temperature: float = DEFAULT_SPEECH_TEMPERATURE,
+        auxiliary_temperature: float = DEFAULT_AUXILIARY_TEMPERATURE,
         chat_cooldown_seconds: float = CHAT_COOLDOWN_SECONDS,
         chat_publish_delay_min_seconds: float = 0.0,
         chat_publish_delay_max_seconds: float = 0.0,
@@ -135,6 +144,9 @@ class RunService:
         self.decisions = DecisionService(
             text_model,
             max_concurrency=model_max_concurrency,
+            decision_temperature=decision_temperature,
+            speech_temperature=speech_temperature,
+            auxiliary_temperature=auxiliary_temperature,
         )
         # Five logical NPC Agents share this DecisionService and one compiled
         # LangGraph.  They receive only invocation snapshots; RunService

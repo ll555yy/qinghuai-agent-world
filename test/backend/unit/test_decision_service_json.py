@@ -11,7 +11,7 @@ from core.backend.app.ai.decision_service import (
     DecisionService,
     extract_json_object,
 )
-from core.backend.app.ai.models import TextGenerationResult
+from core.backend.app.ai.models import TextGenerationRequest, TextGenerationResult
 from core.backend.app.ai.protocols import SpeechGeneration
 
 
@@ -120,3 +120,42 @@ async def test_physical_model_requests_share_global_concurrency_limit() -> None:
     model.release.set()
     await asyncio.gather(*tasks)
     assert model.maximum == 2
+
+
+@pytest.mark.anyio
+async def test_protocols_use_separate_configurable_temperatures() -> None:
+    class RecordingModel:
+        def __init__(self) -> None:
+            self.requests: list[TextGenerationRequest] = []
+
+        async def generate(
+            self, request: TextGenerationRequest
+        ) -> TextGenerationResult:
+            self.requests.append(request)
+            if "协议=SpeechGeneration" in request.system_prompt:
+                text = '{"text":"这句话自然一些。"}'
+            elif "协议=ChatDecision" in request.system_prompt:
+                text = '{"result":"decided","action":"wait"}'
+            else:
+                text = "{}"
+            return TextGenerationResult(text=text, provider="test", model="recording")
+
+    model = RecordingModel()
+    decisions = DecisionService(
+        model,
+        decision_temperature=0.05,
+        speech_temperature=0.65,
+        auxiliary_temperature=0.15,
+    )
+
+    await decisions.chat("decide")
+    await decisions.speech("speak")
+    await decisions.segment_summary("summarize")
+
+    assert [request.temperature for request in model.requests] == [0.05, 0.65, 0.15]
+
+
+@pytest.mark.parametrize("temperature", (-0.1, 2.1, float("nan")))
+def test_decision_service_rejects_invalid_temperatures(temperature: float) -> None:
+    with pytest.raises(ValueError, match="speech_temperature must be between 0 and 2"):
+        DecisionService(None, speech_temperature=temperature)

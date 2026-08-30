@@ -122,6 +122,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 runtime_settings.segment_boundary_carryover_messages
             ),
             model_max_concurrency=runtime_settings.model_max_concurrency,
+            decision_temperature=runtime_settings.decision_temperature,
+            speech_temperature=runtime_settings.speech_temperature,
+            auxiliary_temperature=runtime_settings.auxiliary_temperature,
             chat_cooldown_seconds=runtime_settings.chat_cooldown_seconds,
             chat_publish_delay_min_seconds=(
                 runtime_settings.chat_publish_delay_min_seconds

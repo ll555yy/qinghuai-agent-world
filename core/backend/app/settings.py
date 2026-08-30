@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,11 @@ from typing import Literal
 
 from dotenv import load_dotenv
 
+from .ai.decision_service import (
+    DEFAULT_AUXILIARY_TEMPERATURE,
+    DEFAULT_DECISION_TEMPERATURE,
+    DEFAULT_SPEECH_TEMPERATURE,
+)
 from .ai.embedding import MEMORY_EMBEDDING_DIMENSIONS
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -55,6 +61,13 @@ def _nonnegative_float(name: str, default: float) -> float:
     return value
 
 
+def _temperature(name: str, default: float) -> float:
+    value = _nonnegative_float(name, default)
+    if not math.isfinite(value) or value > 2:
+        raise ValueError(f"{name} must be between 0 and 2")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     scenario_dir: Path
@@ -70,6 +83,9 @@ class Settings:
     segment_recent_messages: int = 8
     segment_boundary_carryover_messages: int = 4
     model_max_concurrency: int = 6
+    decision_temperature: float = DEFAULT_DECISION_TEMPERATURE
+    speech_temperature: float = DEFAULT_SPEECH_TEMPERATURE
+    auxiliary_temperature: float = DEFAULT_AUXILIARY_TEMPERATURE
     chat_cooldown_seconds: float = 12.0
     chat_publish_delay_min_seconds: float = 1.2
     chat_publish_delay_max_seconds: float = 3.0
@@ -117,6 +133,15 @@ class Settings:
         embedding_model = os.environ.get("ARK_EMBEDDING_MODEL", "").strip() or None
         embedding_base_url = os.environ.get("ARK_EMBEDDING_BASE_URL", "").strip() or None
         model_max_concurrency = _positive_int("ARK_MODEL_MAX_CONCURRENCY", 6)
+        decision_temperature = _temperature(
+            "ARK_DECISION_TEMPERATURE", DEFAULT_DECISION_TEMPERATURE
+        )
+        speech_temperature = _temperature(
+            "ARK_SPEECH_TEMPERATURE", DEFAULT_SPEECH_TEMPERATURE
+        )
+        auxiliary_temperature = _temperature(
+            "ARK_AUXILIARY_TEMPERATURE", DEFAULT_AUXILIARY_TEMPERATURE
+        )
         chat_cooldown_seconds = _nonnegative_float("CHAT_COOLDOWN_SECONDS", 12.0)
         chat_publish_delay_min_seconds = _nonnegative_float(
             "CHAT_PUBLISH_DELAY_MIN_SECONDS", 1.2
@@ -147,6 +172,9 @@ class Settings:
             segment_recent_messages=recent_messages,
             segment_boundary_carryover_messages=boundary_carryover_messages,
             model_max_concurrency=model_max_concurrency,
+            decision_temperature=decision_temperature,
+            speech_temperature=speech_temperature,
+            auxiliary_temperature=auxiliary_temperature,
             chat_cooldown_seconds=chat_cooldown_seconds,
             chat_publish_delay_min_seconds=chat_publish_delay_min_seconds,
             chat_publish_delay_max_seconds=chat_publish_delay_max_seconds,

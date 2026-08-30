@@ -600,7 +600,8 @@ class ArkCandidateAdapter:
 
     The evaluator does not invent a second candidate prompt or temperature.
     ``DecisionService`` supplies the existing protocol rules, JSON schema,
-    retry policy, and ``temperature=0.2``.  The only caller-owned value is the
+    retry policy, and protocol-specific production temperature.  The only
+    caller-owned value is the
     case's synthetic ``input_context`` JSON, which is passed as the protocol
     prompt.  This keeps live semantic measurements comparable to production
     behavior without importing RunService or mutating world state.

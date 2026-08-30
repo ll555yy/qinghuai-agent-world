@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from core.backend.app.ai.models import TextGenerationResult, TokenUsage
 from core.backend.app.evaluation.judge import FakeJudge as StrictFakeJudge
 from core.backend.app.evaluation.models import EvaluationCase
@@ -587,7 +588,7 @@ def test_live_candidate_reuses_production_protocol_prompt_temperature_and_usage(
 
     assert len(client.requests) == 1
     request = client.requests[0]
-    assert request.temperature == 0.2
+    assert request.temperature == 0.5
     assert "协议=SpeechGeneration" in request.system_prompt
     payload = json.loads(request.messages[0].content)
     assert payload["persona"]["summary"]
