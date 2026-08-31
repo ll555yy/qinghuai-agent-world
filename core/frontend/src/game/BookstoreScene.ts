@@ -41,6 +41,7 @@ import {
 } from './bookstoreTilemap'
 import {
   applyPixelActorLayout,
+  pixelActorDisplaySize,
   pixelActorFrameOffset,
   pixelActorSpriteConfig,
   queuePixelActorSheets,
@@ -62,6 +63,8 @@ interface ActorView {
   moving: boolean
   movementTarget: string | null
   movementToken: number
+  /** Pixels from the feet to just above the head; overhead labels hang here. */
+  labelLift: number
 }
 
 interface SceneCallbacks {
@@ -142,9 +145,16 @@ const ROOM_BOUNDS: Record<SceneRoom, { left: number; right: number; top: number;
 }
 
 const ACTOR_RADIUS = 26
-// Characters deliberately stay above every architectural/furniture layer.
-// This trades furniture occlusion for a stable, never-clipped presentation.
-const ACTOR_RENDER_DEPTH = 50
+// Stardew Valley style y-sorting: an actor's render depth follows its feet,
+// so walking behind a table or the divider hides the body naturally instead
+// of letting the sprite clip through (and draw on top of) the furniture.
+// Ceiling fixtures (hanging lanterns) sit above the tallest possible actor
+// depth (feet y 480 -> 10.48) yet below conversation/UI layers.
+const ACTOR_OVERHEAD_DEPTH = 10.55
+// Floating UI (conversation sign, speech bubbles) always renders above every
+// y-sorted object so it can never be swallowed by furniture or tall actors.
+const CONVERSATION_LABEL_DEPTH = 10.7
+const BUBBLE_DEPTH = 10.9
 const ROOM_DOORWAY = { left: 396, right: 484, top: 220, bottom: 296 }
 const ACTOR_WALK_SPEED = 112
 
@@ -188,16 +198,16 @@ export function roomScenePosition(position: { x: number; y: number }, room: Scen
 
 const ACTOR_COLORS = [0x5d7351, 0x486478, 0xa35a39, 0x944432, 0x475152, 0x627756]
 const TONE_STYLE: Record<BubbleTone, { fill: number; text: string; stroke: number; shadow: number }> = {
-  npc: { fill: 0xfbf7eb, text: '#2a241d', stroke: 0x8a7258, shadow: 0x241810 },
-  player: { fill: 0xeef5eb, text: '#213022', stroke: 0x5b7852, shadow: 0x1a2618 },
-  invite: { fill: 0xfdf4dc, text: '#4a3618', stroke: 0xb8883b, shadow: 0x33230c },
-  accept: { fill: 0xebf5e7, text: '#293d25', stroke: 0x698c5b, shadow: 0x162414 },
-  refuse: { fill: 0xb34d3b, text: '#fffbf5', stroke: 0x7a291b, shadow: 0x38100a },
-  join: { fill: 0xe6eef0, text: '#1f3338', stroke: 0x567780, shadow: 0x142024 },
-  leave: { fill: 0xede4d8, text: '#473a2d', stroke: 0x826c58, shadow: 0x261d15 },
-  thinking: { fill: 0xf5eee0, text: '#5c4e3f', stroke: 0x9e8c78, shadow: 0x241d17 },
-  closing: { fill: 0xf2d3b1, text: '#452914', stroke: 0xb56c35, shadow: 0x301908 },
-  system: { fill: 0x3b3732, text: '#fff9ed', stroke: 0x1f1c19, shadow: 0x100e0d },
+  npc: { fill: 0xf7e7c3, text: '#3a2113', stroke: 0x5b3820, shadow: 0x241810 },
+  player: { fill: 0xe9f0d2, text: '#2c3d1c', stroke: 0x4d6c31, shadow: 0x1a2618 },
+  invite: { fill: 0xfdf0c8, text: '#4a3618', stroke: 0xb8862f, shadow: 0x33230c },
+  accept: { fill: 0xe6f2d4, text: '#293d25', stroke: 0x5d8548, shadow: 0x162414 },
+  refuse: { fill: 0xb04a32, text: '#fffbf5', stroke: 0x7e2f1f, shadow: 0x38100a },
+  join: { fill: 0xdfeaf2, text: '#1f3338', stroke: 0x4d7284, shadow: 0x142024 },
+  leave: { fill: 0xeee0c8, text: '#473a2d', stroke: 0x826c58, shadow: 0x261d15 },
+  thinking: { fill: 0xf5ecd4, text: '#5c4e3f', stroke: 0x9e8c78, shadow: 0x241d17 },
+  closing: { fill: 0xf6d3a4, text: '#452914', stroke: 0xb56c35, shadow: 0x301908 },
+  system: { fill: 0x3a2113, text: '#f6cd7d', stroke: 0x1c0f07, shadow: 0x100e0d },
 }
 
 export function scenePosition(x: number, y: number): { x: number; y: number } {
@@ -353,6 +363,11 @@ export class BookstoreScene extends Phaser.Scene {
     return 10 + baselineY / 1000 + extra
   }
 
+  /** Depth-sorted actor layer: feet y decides who occludes whom. */
+  private actorDepth(feetY: number): number {
+    return this.baselineDepth(feetY, 0.0005)
+  }
+
   private drawTilemapBookstore(): void {
     const { ground, furniture, overlays } = buildBookstoreMap()
     const tilemap = this.make.tilemap({
@@ -375,6 +390,7 @@ export class BookstoreScene extends Phaser.Scene {
     const groundLayer = tilemap.createBlankLayer('ground', tileset)!
     groundLayer.setDepth(-2)
     groundLayer.putTilesAt(groundLayerData, 0, 0)
+    this.drawFloorGrain()
     this.drawTilemapAtmosphere()
 
     this.ensureTilesetFrames()
@@ -383,9 +399,16 @@ export class BookstoreScene extends Phaser.Scene {
     // here would fight the coherent 2.5D facades below and expose tile seams.
     this.drawTilemapArchitecture()
     for (const rug of collectTileObjects(ground, T_RUG)) this.drawTileObject(rug)
+    // Hanging lanterns are ceiling fixtures: they always render above every
+    // actor (but below UI labels), so walking under them never covers them.
+    for (const lantern of collectTileObjects(furniture, T_HANGING_LANTERN)) {
+      this.add.image(lantern.col * TILE_SIZE, lantern.row * TILE_SIZE, 'tileset', `tile-${T_HANGING_LANTERN}`)
+        .setOrigin(0, 0)
+        .setDepth(ACTOR_OVERHEAD_DEPTH)
+    }
     const objectTiles = [
       T_BOOKSHELF, T_TABLE, T_CHAIR, T_PLANT, T_LANTERN, T_COUNTER,
-      T_SCROLL_DESK, T_POTTED_PLANT_LG, T_HANGING_LANTERN, T_TEA_SET, T_WALL_CLOCK,
+      T_SCROLL_DESK, T_POTTED_PLANT_LG, T_TEA_SET, T_WALL_CLOCK,
     ]
     for (const tile of objectTiles) {
       for (const object of collectTileObjects(furniture, tile)) this.drawTileObject(object)
@@ -419,20 +442,66 @@ export class BookstoreScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * 地板纹理增强：参考 Stardew/AI Town 的手绘地板，给平坦的 16px 地砖
+   * 叠加木板拼缝、木纹短线、木节与石板错色，消除"一整块塑料地板"感。
+   * 全部用确定性哈希取色，帧间不会闪烁。
+   */
+  private drawFloorGrain(): void {
+    const grain = this.add.graphics().setDepth(-1.9)
+    const hash = (x: number, y: number) => (((x * 73856093) ^ (y * 19349663)) >>> 0) % 100
+
+    // 书房木地板：横向木板，两砖(32px)一道板缝，错缝拼接。
+    for (let seamY = 96; seamY <= 256; seamY += 32) {
+      grain.fillStyle(0x5c3a1e, 0.16).fillRect(32, seamY - 1, 816, 2)
+    }
+    for (let rowY = 64; rowY < 256; rowY += 32) {
+      const stagger = ((rowY / 32) % 2) * 64
+      for (let seamX = 96 + stagger; seamX < 848; seamX += 128) {
+        grain.fillStyle(0x5c3a1e, 0.14).fillRect(seamX, rowY + 2, 2, 28)
+      }
+    }
+    // 木纹短线与木节
+    for (let y = 68; y < 252; y += 8) {
+      for (let x = 36; x < 844; x += 8) {
+        const h = hash(x, y)
+        if (h < 6) grain.fillStyle(0x6e4426, 0.2).fillRect(x, y, 5 + (h % 3) * 2, 1)
+        else if (h > 96) grain.fillStyle(0x8a5a33, 0.5).fillEllipse(x + 2, y + 2, 4, 3)
+      }
+    }
+
+    // 前厅石板地：砖缝网格 + 每砖深浅错色 + 偶尔细裂纹。
+    for (let groutY = 304; groutY < 480; groutY += 16) {
+      grain.fillStyle(0x4a3a2c, 0.12).fillRect(32, groutY, 816, 1)
+    }
+    for (let groutX = 48; groutX < 848; groutX += 16) {
+      grain.fillStyle(0x4a3a2c, 0.12).fillRect(groutX, 304, 1, 176)
+    }
+    for (let y = 288; y < 480; y += 16) {
+      for (let x = 32; x < 848; x += 16) {
+        const h = hash(x, y)
+        if (h < 14) grain.fillStyle(h % 2 ? 0x5b4a38 : 0x9a8a72, 0.11).fillRect(x + 1, y + 1, 14, 14)
+        else if (h === 42) {
+          grain.lineStyle(1, 0x4a3a2c, 0.28).lineBetween(x + 3, y + 4, x + 11, y + 12)
+        }
+      }
+    }
+  }
+
   /** 光影重构：多阶柔和丁达尔光束、环境光晕与物体投影 */
   private drawTilemapAtmosphere(): void {
     const shade = this.add.graphics().setDepth(-1.5)
 
-    // 边缘暗角（Vignette）
-    shade.fillStyle(0x130b08, 0.35)
+    // 边缘暗角（Vignette）——提亮后的场景只需要轻薄暗角
+    shade.fillStyle(0x3d2415, 0.22)
     shade.fillRect(0, 0, 880, 28)
     shade.fillRect(0, 0, 32, 528)
     shade.fillRect(848, 0, 32, 528)
     shade.fillRect(0, 494, 880, 34)
 
     // 墙壁根部环境光遮蔽（AO）：分段且逐级变淡，门洞处留空。
-    for (const [offset, alpha] of [[0, 0.34], [4, 0.2], [8, 0.09]] as const) {
-      shade.fillStyle(0x100906, alpha)
+    for (const [offset, alpha] of [[0, 0.26], [4, 0.15], [8, 0.07]] as const) {
+      shade.fillStyle(0x3d2415, alpha)
       shade.fillRect(32, 60 + offset, 816, 5)
       shade.fillRect(32, 278 + offset, 364, 4)
       shade.fillRect(484, 278 + offset, 364, 4)
@@ -442,8 +511,8 @@ export class BookstoreScene extends Phaser.Scene {
 
     // Side-wall AO follows the inner edge and fades into the room, making the
     // narrow side slices read as depth rather than front-facing wall stickers.
-    for (const [offset, alpha] of [[0, 0.28], [4, 0.14], [8, 0.06]] as const) {
-      shade.fillStyle(0x100906, alpha)
+    for (const [offset, alpha] of [[0, 0.2], [4, 0.1], [8, 0.05]] as const) {
+      shade.fillStyle(0x3d2415, alpha)
       shade.fillRect(32 + offset, 64, 4, 414)
       shade.fillRect(844 - offset, 64, 4, 414)
     }
@@ -494,7 +563,7 @@ export class BookstoreScene extends Phaser.Scene {
     drawRadialGlow(640, 385, 80, 0xffc96b, 0.14)
 
     // 家具与大案接触阴影（带圆角与微透光）
-    shade.fillStyle(0x100a07, 0.28)
+    shade.fillStyle(0x3d2415, 0.22)
     shade.fillRoundedRect(128, 150, 84, 40, 6)
     shade.fillRoundedRect(390, 136, 102, 44, 6)
     shade.fillRoundedRect(662, 118, 92, 44, 6)
@@ -502,40 +571,45 @@ export class BookstoreScene extends Phaser.Scene {
     shade.fillRoundedRect(598, 366, 196, 48, 8)
   }
 
-  /** 建筑立面重构：雕花木板壁、明清棂花花窗与黄铜壁灯 */
+  /** 建筑立面重构：星露谷式奶油墙纸、木质护墙板、棂花花窗与黄铜壁灯 */
   private drawTilemapArchitecture(): void {
     const top = this.add.graphics().setDepth(this.baselineDepth(64, -0.002))
 
-    // 护墙板/顶梁木纹基座
-    top.fillStyle(0x2f1c13, 1).fillRect(32, 0, 816, 65)
-    top.fillStyle(0x1e110b, 1).fillRect(32, 0, 816, 8)
-    top.fillStyle(0x8a5b3a, 1).fillRect(34, 8, 812, 3)
-    top.fillStyle(0x4a2e1d, 1).fillRect(34, 11, 812, 42)
+    // 顶部皇冠线脚（温暖实木）
+    top.fillStyle(0x8a5a2e, 1).fillRect(32, 0, 816, 10)
+    top.fillStyle(0xa9743f, 1).fillRect(32, 1, 816, 2)
+    top.fillStyle(0x5c3a1e, 1).fillRect(32, 8, 816, 2)
 
-    // 墙板古典雕花凹槽框
-    for (let panelX = 42; panelX < 840; panelX += 116) {
-      top.fillStyle(0x24150e, 1).fillRect(panelX, 14, 104, 34)
-      top.lineStyle(2, 0x6e4933, 1).strokeRect(panelX + 2, 15, 100, 32)
-      top.lineStyle(1, 0xa3744d, 0.6).strokeRect(panelX + 5, 18, 94, 26)
+    // 奶油墙纸 + 竖条纹 + 点状花纹（星露谷起居室配方）
+    top.fillStyle(0xdfc08c, 1).fillRect(32, 10, 816, 41)
+    top.fillStyle(0xd3af77, 1)
+    for (let stripeX = 36; stripeX < 848; stripeX += 6) top.fillRect(stripeX, 10, 2, 41)
+    top.fillStyle(0xc9a265, 1)
+    for (let dotX = 44; dotX < 844; dotX += 24) {
+      top.fillRect(dotX, 20, 2, 2)
+      top.fillRect(dotX + 12, 36, 2, 2)
     }
-    top.fillStyle(0x1a0e09, 1).fillRect(32, 51, 816, 14)
-    top.fillStyle(0x94643d, 1).fillRect(32, 51, 816, 3)
-    top.fillStyle(0x5c3722, 1).fillRect(32, 54, 816, 7)
-    top.fillStyle(0x120a06, 0.85).fillRect(32, 61, 816, 7)
+
+    // 木质护墙板（wainscot）：盖板线 + 嵌板 + 根部阴影
+    top.fillStyle(0xb58552, 1).fillRect(32, 51, 816, 4)
+    top.fillStyle(0x9a6a3c, 1).fillRect(32, 55, 816, 9)
+    top.lineStyle(1, 0x7e5230, 0.9)
+    for (let panelX = 40; panelX < 844; panelX += 32) top.strokeRect(panelX, 56, 24, 6)
+    top.fillStyle(0x5c3a1e, 1).fillRect(32, 63, 816, 2)
 
     // 东方木质棂花格窗（双窗套与通透天光）
     for (const windowX of [278, 508]) {
-      top.fillStyle(0x190d09, 0.7).fillRect(windowX + 4, 7, 116, 49)
-      top.fillStyle(0x734a2c, 1).fillRect(windowX, 4, 116, 49)
-      top.lineStyle(1, 0x9b6b44, 1).strokeRect(windowX + 2, 6, 112, 45)
+      top.fillStyle(0x5c3a1e, 0.7).fillRect(windowX + 4, 7, 116, 49)
+      top.fillStyle(0x8a5a2e, 1).fillRect(windowX, 4, 116, 49)
+      top.lineStyle(1, 0xa9743f, 1).strokeRect(windowX + 2, 6, 112, 45)
 
       // 窗纸与透光
-      top.fillStyle(0xd5dec5, 1).fillRect(windowX + 6, 9, 104, 39)
-      top.fillStyle(0xf3efd3, 0.95).fillRect(windowX + 8, 10, 100, 6)
-      top.fillStyle(0xaab89b, 1).fillRect(windowX + 8, 16, 100, 30)
+      top.fillStyle(0xe8e4c8, 1).fillRect(windowX + 6, 9, 104, 39)
+      top.fillStyle(0xf8f3dc, 0.95).fillRect(windowX + 8, 10, 100, 6)
+      top.fillStyle(0xbcc9a8, 1).fillRect(windowX + 8, 16, 100, 30)
 
       // 木棂条纹格栅（步步锦/回纹风）
-      top.lineStyle(2, 0x473727, 1)
+      top.lineStyle(2, 0x5c4028, 1)
       for (let paneX = windowX + 10; paneX <= windowX + 106; paneX += 16) {
         top.lineBetween(paneX, 10, paneX, 46)
       }
@@ -543,26 +617,26 @@ export class BookstoreScene extends Phaser.Scene {
       top.lineBetween(windowX + 6, 28, windowX + 110, 28)
 
       // 窗棱斜对角加固细木线
-      top.lineStyle(1, 0xede4c2, 0.5)
+      top.lineStyle(1, 0xf5ecd0, 0.55)
       for (let paneX = windowX + 10; paneX < windowX + 104; paneX += 16) {
         top.lineBetween(paneX, 16, paneX + 16, 28)
         top.lineBetween(paneX + 16, 28, paneX, 44)
       }
 
       // 窗台挑檐与投影
-      top.fillStyle(0xb58957, 1).fillRect(windowX - 4, 50, 124, 5)
-      top.fillStyle(0x27160e, 1).fillRect(windowX - 4, 55, 124, 3)
+      top.fillStyle(0xc99a5e, 1).fillRect(windowX - 4, 50, 124, 5)
+      top.fillStyle(0x5c3a1e, 1).fillRect(windowX - 4, 55, 124, 3)
     }
 
     // 雅致名人匾额与画轴组
     for (const [px, py, pw, ph, coat, face] of [
-      [412, 11, 26, 35, 0x3d4b47, 0xcab18e],
-      [443, 7, 30, 41, 0x543f32, 0xcfb094],
-      [478, 15, 20, 28, 0x2e3c43, 0xbe9d7c],
+      [412, 11, 26, 35, 0x4d6068, 0xd8bc96],
+      [443, 7, 30, 41, 0x6b4a38, 0xdec09c],
+      [478, 15, 20, 28, 0x3d4e55, 0xcead8a],
     ] as const) {
-      top.fillStyle(0x140b07, 0.85).fillRect(px + 3, py + 4, pw, ph)
-      top.fillStyle(0x825a35, 1).fillRect(px, py, pw, ph)
-      top.fillStyle(0x241b14, 1).fillRect(px + 2, py + 2, pw - 4, ph - 4)
+      top.fillStyle(0x5c3a1e, 0.85).fillRect(px + 3, py + 4, pw, ph)
+      top.fillStyle(0x9a6a3c, 1).fillRect(px, py, pw, ph)
+      top.fillStyle(0x2e2016, 1).fillRect(px + 2, py + 2, pw - 4, ph - 4)
       top.fillStyle(coat, 1).fillPoints([
         new Phaser.Geom.Point(px + 4, py + ph - 3), new Phaser.Geom.Point(px + pw / 2, py + ph / 2),
         new Phaser.Geom.Point(px + pw - 4, py + ph - 3),
@@ -570,43 +644,73 @@ export class BookstoreScene extends Phaser.Scene {
       top.fillStyle(face, 1).fillCircle(px + pw / 2, py + ph / 2 - 4, Math.max(3, pw / 7))
     }
 
+    // 山水挂轴：宣纸立轴配天杆地杆，水墨远山、近岭与朱红印章
+    for (const scrollX of [184, 692]) {
+      top.fillStyle(0x3d2415, 0.5).fillRect(scrollX + 3, 14, 20, 36)
+      top.fillStyle(0xefe3c2, 1).fillRect(scrollX, 12, 20, 34)
+      top.fillStyle(0xf8f0d8, 1).fillRect(scrollX + 2, 14, 16, 4)
+      top.fillStyle(0x5c3a22, 1).fillRect(scrollX - 3, 9, 26, 3)
+      top.fillRect(scrollX - 3, 46, 26, 3)
+      top.fillStyle(0x8a5a33, 1).fillRect(scrollX - 3, 9, 3, 40)
+      top.fillRect(scrollX + 20, 9, 3, 40)
+      // 远山淡墨
+      top.fillStyle(0x9aa498, 0.85).fillPoints([
+        new Phaser.Geom.Point(scrollX + 3, 30), new Phaser.Geom.Point(scrollX + 8, 21),
+        new Phaser.Geom.Point(scrollX + 12, 30),
+      ], true)
+      top.fillStyle(0x7e8a80, 0.9).fillPoints([
+        new Phaser.Geom.Point(scrollX + 9, 32), new Phaser.Geom.Point(scrollX + 14, 24),
+        new Phaser.Geom.Point(scrollX + 18, 32),
+      ], true)
+      // 近岭浓墨与苔点
+      top.fillStyle(0x4a5148, 1).fillPoints([
+        new Phaser.Geom.Point(scrollX + 2, 40), new Phaser.Geom.Point(scrollX + 7, 33),
+        new Phaser.Geom.Point(scrollX + 11, 40),
+      ], true)
+      top.fillRect(scrollX + 5, 36, 1, 1)
+      top.fillRect(scrollX + 8, 38, 1, 1)
+      // 朱红印章
+      top.fillStyle(0xa63c2a, 1).fillRect(scrollX + 14, 40, 4, 4)
+      top.fillStyle(0xefe3c2, 0.9).fillRect(scrollX + 15, 41, 1, 1)
+    }
+
     // 两侧只表现窄墙截面与承重柱，避免把北墙正立面贴图旋转到侧面。
     const sides = this.add.graphics().setDepth(this.baselineDepth(480, 0.03))
     for (const [sideX, innerX] of [[0, 25], [848, 848]] as const) {
-      sides.fillStyle(0x170c08, 1).fillRect(sideX, 64, 32, 416)
-      sides.fillStyle(0x332015, 1).fillRect(sideX + 4, 64, 24, 416)
-      sides.fillStyle(0x74492c, 1).fillRect(innerX, 64, 7, 416)
-      sides.fillStyle(0xa77448, 0.65).fillRect(innerX + (sideX === 0 ? 1 : 5), 64, 1, 416)
+      sides.fillStyle(0x54352a, 1).fillRect(sideX, 64, 32, 416)
+      sides.fillStyle(0x6e4426, 1).fillRect(sideX + 4, 64, 24, 416)
+      sides.fillStyle(0x9a6a3c, 1).fillRect(innerX, 64, 7, 416)
+      sides.fillStyle(0xc99a5e, 0.65).fillRect(innerX + (sideX === 0 ? 1 : 5), 64, 1, 416)
       for (let sy = 78; sy < 470; sy += 62) {
-        sides.fillStyle(0x27170f, 1).fillRect(sideX + 5, sy, 20, 48)
-        sides.lineStyle(1, 0x684128, 0.8).strokeRect(sideX + 7, sy + 2, 16, 44)
+        sides.fillStyle(0x7a4e2c, 1).fillRect(sideX + 5, sy, 20, 48)
+        sides.lineStyle(1, 0x9a6a3c, 0.85).strokeRect(sideX + 7, sy + 2, 16, 44)
       }
     }
 
     // Four consistent corner posts close the north facade and the low south
     // boundary. The lower posts are short so the room stays visually open.
     for (const [postX, postY, postH] of [[24, 0, 68], [836, 0, 68], [24, 464, 32], [836, 464, 32]] as const) {
-      sides.fillStyle(0x160c08, 0.55).fillRect(postX + 4, postY + 3, 22, postH)
-      sides.fillStyle(0x3a2216, 1).fillRect(postX, postY, 20, postH)
-      sides.fillStyle(0x875939, 1).fillRect(postX + 3, postY, 4, postH)
-      sides.fillStyle(0x21120c, 1).fillRect(postX - 2, postY + postH - 6, 24, 6)
+      sides.fillStyle(0x3d2415, 0.55).fillRect(postX + 4, postY + 3, 22, postH)
+      sides.fillStyle(0x5c3a22, 1).fillRect(postX, postY, 20, postH)
+      sides.fillStyle(0xa9743f, 1).fillRect(postX + 3, postY, 4, postH)
+      sides.fillStyle(0x3d2415, 1).fillRect(postX - 2, postY + postH - 6, 24, 6)
     }
 
     // 隔墙与侧墙的 T 型榫接柱，同时封住最外侧灰白墙砖截面。
     for (const jointX of [24, 836]) {
-      sides.fillStyle(0x160c08, 0.5).fillRect(jointX + 4, 247, 22, 48)
-      sides.fillStyle(0x3a2216, 1).fillRect(jointX, 244, 20, 48)
-      sides.fillStyle(0x825536, 1).fillRect(jointX + 3, 244, 4, 48)
-      sides.fillStyle(0x24140d, 1).fillRect(jointX - 4, 249, 28, 9)
-      sides.fillStyle(0xa07146, 0.75).fillRect(jointX - 2, 249, 24, 2)
-      sides.fillStyle(0x21120c, 1).fillRect(jointX - 2, 286, 24, 7)
+      sides.fillStyle(0x3d2415, 0.5).fillRect(jointX + 4, 247, 22, 48)
+      sides.fillStyle(0x5c3a22, 1).fillRect(jointX, 244, 20, 48)
+      sides.fillStyle(0xa9743f, 1).fillRect(jointX + 3, 244, 4, 48)
+      sides.fillStyle(0x4a2d1a, 1).fillRect(jointX - 4, 249, 28, 9)
+      sides.fillStyle(0xc99a5e, 0.75).fillRect(jointX - 2, 249, 24, 2)
+      sides.fillStyle(0x3d2415, 1).fillRect(jointX - 2, 286, 24, 7)
     }
-    sides.fillStyle(0x2a1911, 1).fillRect(840, 64, 8, 190)
+    sides.fillStyle(0x54352a, 1).fillRect(840, 64, 8, 190)
 
     // 仿古黄铜壁灯
     const sconces = this.add.graphics().setDepth(this.baselineDepth(66, 0.004))
     for (const sx of [224, 652]) {
-      sconces.fillStyle(0x27170f, 1).fillRect(sx - 3, 14, 6, 26)
+      sconces.fillStyle(0x54352a, 1).fillRect(sx - 3, 14, 6, 26)
       sconces.fillStyle(0xbfa05a, 1).fillRect(sx - 6, 19, 12, 4)
       sconces.fillStyle(0xe5b857, 1).fillPoints([
         new Phaser.Geom.Point(sx - 7, 23), new Phaser.Geom.Point(sx + 7, 23),
@@ -616,39 +720,63 @@ export class BookstoreScene extends Phaser.Scene {
     }
 
     // 厅堂中堂采用薄木格隔断：保留空间分区，但让上下两间房透气连贯。
-    const divider = this.add.graphics().setDepth(this.baselineDepth(286, -0.002))
+    // Baseline sits at the painted base beam bottom (y 293): actors crossing
+    // the doorway stay behind the frame until their feet fully clear it.
+    const divider = this.add.graphics().setDepth(this.baselineDepth(293, -0.002))
     for (const [left, width] of [[32, 364], [484, 364]] as const) {
-      divider.fillStyle(0x5c3821, 1).fillRect(left, 256, width, 7)
-      divider.fillStyle(0xa06d40, 0.8).fillRect(left, 256, width, 2)
-      divider.fillStyle(0x27160e, 0.82).fillRect(left, 263, width, 14)
-      divider.fillStyle(0x704528, 1).fillRect(left, 277, width, 6)
-      divider.fillStyle(0x1d1009, 0.9).fillRect(left, 283, width, 3)
+      divider.fillStyle(0x8a5a33, 1).fillRect(left, 256, width, 7)
+      divider.fillStyle(0xc99a5e, 0.85).fillRect(left, 256, width, 2)
+      divider.fillStyle(0x6e4426, 0.92).fillRect(left, 263, width, 14)
+      divider.fillStyle(0x8a5a33, 1).fillRect(left, 277, width, 6)
+      divider.fillStyle(0x54352a, 0.95).fillRect(left, 283, width, 3)
       for (let latticeX = left + 8; latticeX < left + width - 4; latticeX += 18) {
-        divider.fillStyle(0x765035, 0.9).fillRect(latticeX, 263, 3, 14)
-        divider.fillStyle(0xa9794c, 0.5).fillRect(latticeX + 1, 264, 1, 12)
+        divider.fillStyle(0xa9743f, 0.95).fillRect(latticeX, 263, 3, 14)
+        divider.fillStyle(0xd9b075, 0.6).fillRect(latticeX + 1, 264, 1, 12)
       }
-      divider.fillStyle(0x9c7244, 0.6).fillRect(left + 2, 278, width - 4, 1)
+      divider.fillStyle(0xc99a5e, 0.6).fillRect(left + 2, 278, width - 4, 1)
     }
     // 完整门楣、向下落地的门框柱和木石过门槛。
-    divider.fillStyle(0x160c08, 0.55).fillRect(390, 246, 100, 12)
-    divider.fillStyle(0x2d1a10, 1).fillRect(390, 244, 14, 48)
-    divider.fillStyle(0x754a2a, 1).fillRect(394, 244, 5, 44)
-    divider.fillStyle(0x2d1a10, 1).fillRect(476, 244, 14, 48)
-    divider.fillStyle(0x4a2b18, 1).fillRect(476, 244, 5, 44)
-    divider.fillStyle(0x5f3921, 1).fillRect(390, 244, 100, 10)
-    divider.fillStyle(0x9a6a3b, 1).fillRect(395, 245, 90, 3)
-    divider.fillStyle(0x2a1a12, 1).fillRect(396, 283, 88, 10)
-    divider.fillStyle(0x68472f, 1).fillRect(398, 283, 84, 3)
-    divider.fillStyle(0xb2885a, 0.55).fillRect(402, 286, 76, 2)
+    divider.fillStyle(0x3d2415, 0.55).fillRect(390, 246, 100, 12)
+    divider.fillStyle(0x5c3a22, 1).fillRect(390, 244, 14, 48)
+    divider.fillStyle(0xa9743f, 1).fillRect(394, 244, 5, 44)
+    divider.fillStyle(0x5c3a22, 1).fillRect(476, 244, 14, 48)
+    divider.fillStyle(0x7a4e2c, 1).fillRect(476, 244, 5, 44)
+    divider.fillStyle(0x8a5a33, 1).fillRect(390, 244, 100, 10)
+    divider.fillStyle(0xc99a5e, 1).fillRect(395, 245, 90, 3)
+    divider.fillStyle(0x54352a, 1).fillRect(396, 283, 88, 10)
+    divider.fillStyle(0x8a5a33, 1).fillRect(398, 283, 84, 3)
+    divider.fillStyle(0xc99a5e, 0.6).fillRect(402, 286, 76, 2)
+
+    // 门楣下悬一对红灯笼：贴着门框柱内侧，行人自灯笼下方穿过，
+    // 深度跟随隔断基线（293），走到门南的角色会自然地挡在灯笼前。
+    for (const lanternX of [408, 472]) {
+      divider.lineStyle(1, 0x3d2415, 1).lineBetween(lanternX, 254, lanternX, 261)
+      divider.fillStyle(0xbfa05a, 1).fillRect(lanternX - 3, 261, 6, 2)
+      divider.fillStyle(0xc23b2e, 1).fillRect(lanternX - 5, 263, 10, 4)
+      divider.fillStyle(0xd8483a, 1).fillRect(lanternX - 6, 267, 12, 8)
+      divider.fillStyle(0xc23b2e, 1).fillRect(lanternX - 5, 275, 10, 3)
+      divider.fillStyle(0xe87a52, 1).fillRect(lanternX - 4, 268, 2, 6)
+      divider.fillStyle(0xbfa05a, 1).fillRect(lanternX - 3, 278, 6, 2)
+      divider.fillStyle(0xa63c2a, 1).fillRect(lanternX - 1, 280, 2, 5)
+    }
 
     // 南墙压缩为一格高的通透矮墙，中央入口完整留空。
     const south = this.add.graphics().setDepth(this.baselineDepth(496, -0.003))
     for (const [left, width] of [[0, 392], [488, 392]] as const) {
-      south.fillStyle(0x1b0f0a, 1).fillRect(left, 480, width, 16)
-      south.fillStyle(0x6c4328, 1).fillRect(left, 480, width, 5)
-      south.fillStyle(0xa27145, 0.75).fillRect(left, 480, width, 2)
-      south.fillStyle(0x342015, 1).fillRect(left, 485, width, 8)
-      south.fillStyle(0x110906, 0.9).fillRect(left, 493, width, 3)
+      south.fillStyle(0x54352a, 1).fillRect(left, 480, width, 16)
+      south.fillStyle(0x9a6a3c, 1).fillRect(left, 480, width, 5)
+      south.fillStyle(0xc99a5e, 0.8).fillRect(left, 480, width, 2)
+      south.fillStyle(0x6e4426, 1).fillRect(left, 485, width, 8)
+      south.fillStyle(0x3d2415, 0.95).fillRect(left, 493, width, 3)
+    }
+
+    // 矮墙上的陶盆绿植：避开中央入口（x 392-488），盆沿落在墙帽上。
+    for (const plantX of [120, 300, 580, 760]) {
+      south.fillStyle(0x7a4226, 1).fillRect(plantX - 5, 469, 10, 11)
+      south.fillStyle(0xa85a3a, 1).fillRect(plantX - 6, 468, 12, 3)
+      south.fillStyle(0x41603a, 1).fillCircle(plantX, 463, 6)
+      south.fillStyle(0x527a44, 1).fillCircle(plantX - 3, 460, 4)
+      south.fillStyle(0x6f9657, 1).fillRect(plantX + 1, 457, 2, 2)
     }
   }
 
@@ -663,18 +791,18 @@ export class BookstoreScene extends Phaser.Scene {
 
     // 1. 织花地毯 (T_RUG)
     if (object.tile === T_RUG) {
-      art.fillStyle(0x1a0f0b, 0.35).fillRoundedRect(x + 3, y + 5, width - 2, height - 1, 4)
-      art.fillStyle(0x6b3b2c, 1).fillRoundedRect(x, y, width - 3, height - 4, 4)
+      art.fillStyle(0x3d2415, 0.35).fillRoundedRect(x + 3, y + 5, width - 2, height - 1, 4)
+      art.fillStyle(0x8a4534, 1).fillRoundedRect(x, y, width - 3, height - 4, 4)
 
       // 回纹边框
-      art.lineStyle(2, 0xad824f, 0.95).strokeRoundedRect(x + 3, y + 3, width - 9, height - 10, 3)
-      art.lineStyle(1, 0x42241d, 0.9).strokeRoundedRect(x + 7, y + 7, width - 17, height - 18, 2)
+      art.lineStyle(2, 0xc99a5e, 0.95).strokeRoundedRect(x + 3, y + 3, width - 9, height - 10, 3)
+      art.lineStyle(1, 0x5c2e24, 0.9).strokeRoundedRect(x + 7, y + 7, width - 17, height - 18, 2)
 
       // 织锦底纹点缀
       for (let px = x + 12; px < x + width - 12; px += 14) {
         for (let py = y + 12; py < y + height - 12; py += 14) {
-          art.fillStyle(0xbf9459, 0.65).fillRect(px, py, 2, 2)
-          art.fillStyle(0x47241d, 0.75).fillRect(px + 2, py + 2, 2, 2)
+          art.fillStyle(0xd9b075, 0.7).fillRect(px, py, 2, 2)
+          art.fillStyle(0x63302a, 0.8).fillRect(px + 2, py + 2, 2, 2)
         }
       }
 
@@ -688,29 +816,29 @@ export class BookstoreScene extends Phaser.Scene {
 
     // 2. 仿古藏书阁柜 (T_BOOKSHELF)
     if (object.tile === T_BOOKSHELF) {
-      art.fillStyle(0x0e0805, 0.45).fillRect(x + 6, y + 8, width, height)
-      art.fillStyle(0x2d1b11, 1).fillRect(x, y + 6, width, height - 6)
+      art.fillStyle(0x3d2415, 0.45).fillRect(x + 6, y + 8, width, height)
+      art.fillStyle(0x5c3a22, 1).fillRect(x, y + 6, width, height - 6)
 
       // 柜顶斜角立体面与金线
-      art.fillStyle(0x5f3d23, 1).fillPoints([
+      art.fillStyle(0x8a5a33, 1).fillPoints([
         new Phaser.Geom.Point(x, y + 6), new Phaser.Geom.Point(x + 6, y),
         new Phaser.Geom.Point(x + width, y), new Phaser.Geom.Point(x + width, y + 6),
       ], true)
-      art.fillStyle(0x875a34, 1).fillRect(x + 7, y + 1, width - 8, 2)
-      art.fillStyle(0x190d08, 1).fillRect(x + width - 5, y + 6, 5, height - 6)
-      art.fillStyle(0x1f120a, 1).fillRect(x, y + height - 5, width, 5)
-      art.fillStyle(0x6f492b, 1).fillRect(x + 2, y + 7, 3, height - 12)
+      art.fillStyle(0xa9743f, 1).fillRect(x + 7, y + 1, width - 8, 2)
+      art.fillStyle(0x3d2415, 1).fillRect(x + width - 5, y + 6, 5, height - 6)
+      art.fillStyle(0x4a2d1a, 1).fillRect(x, y + height - 5, width, 5)
+      art.fillStyle(0x9a6a3c, 1).fillRect(x + 2, y + 7, 3, height - 12)
       // Independent solid end panels stop long shelves looking sliced off.
-      art.fillStyle(0x5b3923, 1).fillRect(x, y + 6, 6, height - 7)
-      art.fillStyle(0x936442, 1).fillRect(x + 1, y + 8, 2, height - 13)
-      art.fillStyle(0x21120b, 1).fillRect(x + width - 7, y + 6, 7, height - 7)
-      art.fillStyle(0x684329, 1).fillRect(x + width - 7, y + 8, 2, height - 13)
+      art.fillStyle(0x7a4e2c, 1).fillRect(x, y + 6, 6, height - 7)
+      art.fillStyle(0xb58552, 1).fillRect(x + 1, y + 8, 2, height - 13)
+      art.fillStyle(0x4a2d1a, 1).fillRect(x + width - 7, y + 6, 7, height - 7)
+      art.fillStyle(0x8a5a33, 1).fillRect(x + width - 7, y + 8, 2, height - 13)
 
       // 丰富色彩的书脊与函套
-      const bookColors = [0x213236, 0x482f23, 0x2b3d29, 0x52432a, 0x362d3a, 0x613c28, 0x1f2e3d, 0x522d25]
+      const bookColors = [0x3d5a62, 0x7a4a34, 0x4d6c44, 0x8a734a, 0x5c4d66, 0x9c5a40, 0x3a5468, 0x8a4a3d]
       let shelfIndex = 0
       for (let shelfY = y + 20; shelfY < y + height - 4; shelfY += 15) {
-        art.fillStyle(0x160d08, 1).fillRect(x + 4, shelfY, width - 8, 3)
+        art.fillStyle(0x33200f, 1).fillRect(x + 4, shelfY, width - 8, 3)
         let bookX = x + 6
         while (bookX < x + width - 6) {
           const bookWidth = 3 + ((bookX + shelfIndex * 7) % 4)
@@ -720,7 +848,7 @@ export class BookstoreScene extends Phaser.Scene {
 
           // 烫金书脊线
           if ((bookX + shelfIndex) % 2 === 0) {
-            art.fillStyle(0xb5925a, 0.8).fillRect(bookX + 1, shelfY - bookHeight + 2, 1, 1)
+            art.fillStyle(0xd9b075, 0.85).fillRect(bookX + 1, shelfY - bookHeight + 2, 1, 1)
           }
           // 偶尔横放的书本/卷轴
           if ((bookX + shelfIndex) % 11 === 0 && bookX + bookWidth + 6 < x + width - 5) {
@@ -747,27 +875,27 @@ export class BookstoreScene extends Phaser.Scene {
 
     // 3. 中堂长桌/书案 (T_TABLE, T_SCROLL_DESK, T_TEA_SET)
     if (object.tile === T_TABLE || object.tile === T_SCROLL_DESK || object.tile === T_TEA_SET) {
-      art.fillStyle(0x100906, 0.45).fillRoundedRect(x + 7, y + 9, width - 1, height - 2, 4)
-      art.fillStyle(0x3f2314, 1).fillRoundedRect(x, y + 7, width - 3, height - 8, 4)
+      art.fillStyle(0x3d2415, 0.45).fillRoundedRect(x + 7, y + 9, width - 1, height - 2, 4)
+      art.fillStyle(0x6e4426, 1).fillRoundedRect(x, y + 7, width - 3, height - 8, 4)
 
       // 案面打磨温润高光
-      art.fillStyle(0x6b4627, 1).fillPoints([
+      art.fillStyle(0xa06d40, 1).fillPoints([
         new Phaser.Geom.Point(x, y + 7), new Phaser.Geom.Point(x + 6, y + 1),
         new Phaser.Geom.Point(x + width - 3, y + 1), new Phaser.Geom.Point(x + width - 3, y + height - 8),
         new Phaser.Geom.Point(x, y + height - 8),
       ], true)
-      art.lineStyle(2, 0x22130a, 1).strokeRoundedRect(x, y + 1, width - 3, height - 8, 4)
-      art.fillStyle(0x9e7143, 1).fillRect(x + 7, y + 3, width - 12, 2)
+      art.lineStyle(2, 0x3d2415, 1).strokeRoundedRect(x, y + 1, width - 3, height - 8, 4)
+      art.fillStyle(0xc99a5e, 1).fillRect(x + 7, y + 3, width - 12, 2)
 
       // 细腻木纹
       for (let grainY = y + 9; grainY < y + height - 9; grainY += 6) {
-        art.fillStyle(0x52311b, 0.8).fillRect(x + 6, grainY, width - 14, 1)
+        art.fillStyle(0x7e5230, 0.85).fillRect(x + 6, grainY, width - 14, 1)
       }
 
       // 桌腿及马蹄牙板
-      art.fillStyle(0x2a160d, 1).fillRect(x + 3, y + height - 13, width - 9, 7)
-      art.fillStyle(0x6a4225, 1).fillRect(x + 5, y + height - 13, width - 13, 2)
-      art.fillStyle(0x22130b, 1).fillRect(x + 5, y + height - 8, 5, 8)
+      art.fillStyle(0x54352a, 1).fillRect(x + 3, y + height - 13, width - 9, 7)
+      art.fillStyle(0x8a5a33, 1).fillRect(x + 5, y + height - 13, width - 13, 2)
+      art.fillStyle(0x3d2415, 1).fillRect(x + 5, y + height - 8, 5, 8)
       art.fillRect(x + width - 12, y + height - 8, 5, 8)
 
       if (object.tile === T_SCROLL_DESK) {
@@ -787,34 +915,34 @@ export class BookstoreScene extends Phaser.Scene {
 
     // 4. 服务柜台 (T_COUNTER)
     if (object.tile === T_COUNTER) {
-      art.fillStyle(0x0e0805, 0.45).fillRoundedRect(x + 7, y + 9, width, height - 2, 4)
-      art.fillStyle(0x321c11, 1).fillRect(x, y + 7, width, height - 7)
-      art.fillStyle(0x633f24, 1).fillPoints([
+      art.fillStyle(0x3d2415, 0.45).fillRoundedRect(x + 7, y + 9, width, height - 2, 4)
+      art.fillStyle(0x5c3a22, 1).fillRect(x, y + 7, width, height - 7)
+      art.fillStyle(0x9a6a3c, 1).fillPoints([
         new Phaser.Geom.Point(x, y + 7), new Phaser.Geom.Point(x + 6, y + 1),
         new Phaser.Geom.Point(x + width, y + 1), new Phaser.Geom.Point(x + width, y + 7),
       ], true)
-      art.fillStyle(0x9a6d3f, 1).fillRect(x + 7, y + 2, width - 8, 2)
-      art.fillStyle(0x1e1009, 1).fillRect(x + width - 5, y + 7, 5, height - 7)
+      art.fillStyle(0xc99a5e, 1).fillRect(x + 7, y + 2, width - 8, 2)
+      art.fillStyle(0x3d2415, 1).fillRect(x + width - 5, y + 7, 5, height - 7)
 
       // 立面复古雕花板面与黄铜抽屉把手
       for (let panelX = x + 7; panelX < x + width - 8; panelX += 24) {
-        art.lineStyle(1, 0x180d07, 1).strokeRect(panelX, y + 11, Math.min(18, x + width - 6 - panelX), height - 16)
-        art.fillStyle(0xc7a05e, 1).fillRect(panelX + 8, y + 14, 2, 2)
+        art.lineStyle(1, 0x33200f, 1).strokeRect(panelX, y + 11, Math.min(18, x + width - 6 - panelX), height - 16)
+        art.fillStyle(0xd9b075, 1).fillRect(panelX + 8, y + 14, 2, 2)
       }
-      art.fillStyle(0x1b0e08, 0.95).fillRect(x, y + height - 4, width, 4)
+      art.fillStyle(0x3d2415, 0.95).fillRect(x, y + height - 4, width, 4)
       return
     }
 
     // 5. 雕花官帽椅/木凳 (T_CHAIR)
     if (object.tile === T_CHAIR) {
-      art.fillStyle(0x100906, 0.4).fillEllipse(x + width / 2 + 3, y + height - 1, Math.max(12, width - 1), 6)
-      art.fillStyle(0x3f2214, 1).fillRect(x + 3, y + 2, Math.max(9, width - 7), 4)
+      art.fillStyle(0x3d2415, 0.4).fillEllipse(x + width / 2 + 3, y + height - 1, Math.max(12, width - 1), 6)
+      art.fillStyle(0x6e4426, 1).fillRect(x + 3, y + 2, Math.max(9, width - 7), 4)
       for (let slat = x + 5; slat < x + width - 4; slat += 4) {
-        art.fillStyle(0x6b4627, 1).fillRect(slat, y + 4, 2, 5)
+        art.fillStyle(0xa06d40, 1).fillRect(slat, y + 4, 2, 5)
       }
-      art.fillStyle(0x633e24, 1).fillRect(x + 3, y + 9, Math.max(9, width - 7), Math.max(4, height - 12))
-      art.fillStyle(0x916538, 1).fillRect(x + 5, y + 9, Math.max(5, width - 11), 2)
-      art.fillStyle(0x22130b, 1).fillRect(x + 4, y + height - 4, 3, 4)
+      art.fillStyle(0x9a6a3c, 1).fillRect(x + 3, y + 9, Math.max(9, width - 7), Math.max(4, height - 12))
+      art.fillStyle(0xc99a5e, 1).fillRect(x + 5, y + 9, Math.max(5, width - 11), 2)
+      art.fillStyle(0x3d2415, 1).fillRect(x + 4, y + height - 4, 3, 4)
       art.fillRect(x + width - 7, y + height - 4, 3, 4)
       return
     }
@@ -825,13 +953,13 @@ export class BookstoreScene extends Phaser.Scene {
       art.fillStyle(0x140c08, 0.32).fillEllipse(cx + 3, y + height - 3, Math.max(14, width - 1), 8)
 
       // 青花瓷/紫砂花盆
-      art.fillStyle(0x733c20, 1).fillRect(cx - 6, y + height - 9, 12, 8)
-      art.fillStyle(0x94542d, 1).fillRect(cx - 8, y + height - 11, 16, 3)
+      art.fillStyle(0x8a4a28, 1).fillRect(cx - 6, y + height - 9, 12, 8)
+      art.fillStyle(0xa96a3d, 1).fillRect(cx - 8, y + height - 11, 16, 3)
 
       // 丰富深浅层次的翠绿叶片
       for (const [dx, dy, color] of [
-        [-8, -17, 0x364f27], [2, -20, 0x4a6230], [8, -15, 0x2b4221],
-        [-3, -13, 0x597039], [5, -11, 0x6e8748],
+        [-8, -17, 0x3d5c2a], [2, -20, 0x557334], [8, -15, 0x33502a],
+        [-3, -13, 0x66853f], [5, -11, 0x7d9c52],
       ]) {
         art.fillStyle(color, 1).fillEllipse(cx + dx, y + height + dy, 10, 14)
       }
@@ -849,19 +977,19 @@ export class BookstoreScene extends Phaser.Scene {
     const studyDetails = this.add.graphics().setDepth(this.baselineDepth(226, 0.002))
 
     // 藏书阁取书移动木梯
-    studyDetails.lineStyle(5, 0x24140d, 1)
+    studyDetails.lineStyle(5, 0x54352a, 1)
       .lineBetween(803, 94, 766, 226)
       .lineBetween(817, 96, 780, 226)
-    studyDetails.lineStyle(2, 0x8a6039, 1)
+    studyDetails.lineStyle(2, 0xa9743f, 1)
       .lineBetween(801, 94, 764, 226)
       .lineBetween(815, 96, 778, 226)
     for (let y = 108; y <= 211; y += 15) {
       const lx = 803 - (y - 94) / 3.57
-      studyDetails.lineStyle(4, 0x2f1b11, 1).lineBetween(lx, y + 2, lx + 14, y + 2)
-      studyDetails.lineStyle(2, 0x7e5432, 1).lineBetween(lx, y, lx + 14, y)
-      if (y % 30 !== 0) studyDetails.fillStyle(0xa88055, 0.8).fillRect(lx + 3, y, 4, 1)
+      studyDetails.lineStyle(4, 0x5c3a22, 1).lineBetween(lx, y + 2, lx + 14, y + 2)
+      studyDetails.lineStyle(2, 0x9a6a3c, 1).lineBetween(lx, y, lx + 14, y)
+      if (y % 30 !== 0) studyDetails.fillStyle(0xc99a5e, 0.8).fillRect(lx + 3, y, 4, 1)
     }
-    studyDetails.fillStyle(0x120a06, 0.46).fillEllipse(773, 228, 43, 9)
+    studyDetails.fillStyle(0x3d2415, 0.46).fillEllipse(773, 228, 43, 9)
 
     // 左侧品茗考据案：古旧舆图、铜柄放大镜、墨盒与摊开典籍
     studyDetails.fillStyle(0x2f1b11, 0.42).fillRect(134, 143, 59, 27)
@@ -936,13 +1064,13 @@ export class BookstoreScene extends Phaser.Scene {
     guide.fillStyle(0xf8dda8, 0.08).fillRect(dividerDoor.left + 5, 286, dividerDoor.right - dividerDoor.left - 10, 6)
 
     // 底部大门：门柱、门扇暗部、门槛与两级台阶形成完整入口。
-    guide.fillStyle(0x1b0f09, 0.45).fillRect(frontDoor.left - 9, 476, 98, 52)
-    guide.fillStyle(0x3b2417, 1).fillRect(frontDoor.left - 8, 474, 12, 54)
-    guide.fillStyle(0x805333, 1).fillRect(frontDoor.left - 5, 475, 4, 49)
-    guide.fillStyle(0x3b2417, 1).fillRect(frontDoor.right - 4, 474, 12, 54)
-    guide.fillStyle(0x56351f, 1).fillRect(frontDoor.right - 4, 475, 4, 49)
-    guide.fillStyle(0x5c3922, 1).fillRect(frontDoor.left - 8, 474, 96, 9)
-    guide.fillStyle(0x9a6b40, 1).fillRect(frontDoor.left - 3, 475, 86, 3)
+    guide.fillStyle(0x3d2415, 0.45).fillRect(frontDoor.left - 9, 476, 98, 52)
+    guide.fillStyle(0x5c3a22, 1).fillRect(frontDoor.left - 8, 474, 12, 54)
+    guide.fillStyle(0xa9743f, 1).fillRect(frontDoor.left - 5, 475, 4, 49)
+    guide.fillStyle(0x5c3a22, 1).fillRect(frontDoor.right - 4, 474, 12, 54)
+    guide.fillStyle(0x7a4e2c, 1).fillRect(frontDoor.right - 4, 475, 4, 49)
+    guide.fillStyle(0x8a5a33, 1).fillRect(frontDoor.left - 8, 474, 96, 9)
+    guide.fillStyle(0xc99a5e, 1).fillRect(frontDoor.left - 3, 475, 86, 3)
     guide.fillStyle(0x2c2019, 1).fillRect(frontDoor.left - 4, 508, 88, 7)
     guide.fillStyle(0x72614e, 1).fillRect(frontDoor.left - 9, 515, 98, 6)
     guide.fillStyle(0x9a8b73, 1).fillRect(frontDoor.left - 14, 521, 108, 7)
@@ -967,8 +1095,6 @@ export class BookstoreScene extends Phaser.Scene {
     for (const [actorId, view] of this.actorViews) {
       if (!liveActorIds.has(actorId)) {
         view.container.destroy(true)
-        view.name.destroy()
-        view.status.destroy()
         this.actorViews.delete(actorId)
         this.logicalPositions.delete(actorId)
       }
@@ -1056,33 +1182,36 @@ export class BookstoreScene extends Phaser.Scene {
 
       const ring = this.add.ellipse(0, 0, 42, 15).setStrokeStyle(2.5, 0xf2b861, 0).setVisible(false)
 
-      // 雅致卡片式名牌
-      const name = this.add.text(target.x, target.y + 16, actor.kind === 'player' ? '你' : actor.name, {
+      // 星露谷风头顶名牌：作为人物容器的子对象挂在头顶，与身体共享同一
+      // y 排序深度。人物被建筑/家具遮挡时名牌一起被遮挡，人物站在家具前
+      // 时名牌也自然压在身体前方的同一层，不再出现名牌贴到家具上的穿模。
+      const labelLift = Math.round((pixelActorDisplaySize(actor.actorId)?.height ?? 66) * 0.95) + 4
+      const name = this.add.text(0, -labelLift - 8, actor.kind === 'player' ? '你' : actor.name, {
         fontFamily: 'STSong, "PingFang SC", "Microsoft YaHei", serif',
         fontSize: '12px',
         fontStyle: 'bold',
-        color: '#1b120c',
-        stroke: '#fffaf0',
+        color: '#3a2113',
+        stroke: '#fdf3da',
         strokeThickness: 1,
-        backgroundColor: '#fffaf0ff',
+        backgroundColor: '#f7e7c3ff',
         padding: { x: 7, y: 3 },
-      }).setOrigin(0.5).setDepth(100).setResolution(2)
+      }).setOrigin(0.5).setResolution(2)
 
-      // 微型胶囊状态徽章
-      const status = this.add.text(target.x, target.y + 35, '', {
+      // 深木牌金字状态徽章
+      const status = this.add.text(0, -labelLift - 26, '', {
         fontFamily: 'STSong, "Microsoft YaHei", sans-serif',
         fontSize: '10px',
-        color: '#fff5e6',
-        backgroundColor: '#2b211aff',
+        color: '#f6cd7d',
+        backgroundColor: '#3a2113ff',
         padding: { x: 6, y: 2 },
-      }).setOrigin(0.5).setDepth(100).setResolution(2)
+      }).setOrigin(0.5).setResolution(2)
 
       const children: Phaser.GameObjects.GameObject[] = [shadow]
       if (sprite) children.push(sprite)
-      children.push(fallbackBackground, fallback, ring)
+      children.push(fallbackBackground, fallback, ring, name, status)
 
       const container = this.add.container(target.x, target.y, children)
-        .setDepth(ACTOR_RENDER_DEPTH)
+        .setDepth(this.actorDepth(target.y))
         .setSize(72, 92)
         .setInteractive({ useHandCursor: true })
 
@@ -1102,9 +1231,9 @@ export class BookstoreScene extends Phaser.Scene {
         moving: false,
         movementTarget: null,
         movementToken: 0,
+        labelLift,
       }
       this.actorViews.set(actor.actorId, view)
-      this.syncActorLabels(view)
     }
 
     view.actorStatus = actorState?.status ?? 'present'
@@ -1126,7 +1255,6 @@ export class BookstoreScene extends Phaser.Scene {
     }
     const visibleStatus = view.moving ? 'approaching' : view.actorStatus
     view.status.setText(labels[visibleStatus] ?? '').setVisible(Boolean(labels[visibleStatus]))
-    this.syncActorLabels(view)
 
     if (view.actorStatus === 'departed') {
       this.tweens.killTweensOf(view.container)
@@ -1162,8 +1290,7 @@ export class BookstoreScene extends Phaser.Scene {
 
     if (this.reducedMotion) {
       view.container.setPosition(target.x, target.y)
-      view.container.setDepth(ACTOR_RENDER_DEPTH)
-      this.syncActorLabels(view)
+      view.container.setDepth(this.actorDepth(target.y))
       view.moving = false
       this.setActorPixelFrame(actorId, view, 'idle')
       this.refreshConversationVisuals()
@@ -1206,8 +1333,7 @@ export class BookstoreScene extends Phaser.Scene {
       if (!next) {
         view.moving = false
         view.container.setPosition(target.x, target.y)
-        view.container.setDepth(ACTOR_RENDER_DEPTH)
-        this.syncActorLabels(view)
+        view.container.setDepth(this.actorDepth(target.y))
         this.setActorPixelFrame(actorId, view, 'idle')
         this.refreshConversationVisuals()
         return
@@ -1232,8 +1358,7 @@ export class BookstoreScene extends Phaser.Scene {
           const actions: PixelActorAction[] = ['walkA', 'pass', 'walkB', 'pass']
           const stride = Math.floor((tween.progress * Math.max(distance, 24)) / 18)
           this.setActorPixelFrame(actorId, view, actions[stride % actions.length])
-          view.container.setDepth(ACTOR_RENDER_DEPTH)
-          this.syncActorLabels(view)
+          view.container.setDepth(this.actorDepth(view.container.y))
         },
         onComplete: () => walkSegment(index + 1),
       })
@@ -1242,12 +1367,6 @@ export class BookstoreScene extends Phaser.Scene {
     walkSegment(0)
   }
 
-  private syncActorLabels(view: ActorView): void {
-    const x = view.container.x
-    const y = view.container.y
-    view.name.setPosition(Math.round(x), Math.round(y + 16))
-    view.status.setPosition(Math.round(x), Math.round(y + 36))
-  }
 
   private refreshConversationVisuals(): void {
     const snapshot = this.pendingSnapshot
@@ -1279,13 +1398,13 @@ export class BookstoreScene extends Phaser.Scene {
       )
       ring.on('pointerdown', () => this.callbacks.onConversationClick(conversation.conversationId))
 
-      const bg = this.add.graphics().setDepth(8)
-      const label = this.add.text(x, y - 68, '', {
+      const bg = this.add.graphics().setDepth(CONVERSATION_LABEL_DEPTH - 0.01)
+      const label = this.add.text(x, y + 44, '', {
         fontFamily: 'STSong, "Microsoft YaHei", sans-serif',
         fontSize: '12px',
-        color: '#2d3d28',
+        color: '#3a2113',
         fontStyle: 'bold',
-      }).setOrigin(0.5).setDepth(9)
+      }).setOrigin(0.5).setDepth(CONVERSATION_LABEL_DEPTH)
 
       view = { ring, label, bg }
       this.conversationViews.set(conversation.conversationId, view)
@@ -1294,22 +1413,24 @@ export class BookstoreScene extends Phaser.Scene {
     // 绘制柔和交谈光环
     view.ring.clear()
     if (!waitingForArrival) {
-      view.ring.fillStyle(0x6e8761, 0.15).fillEllipse(x, y, 136, 96)
-      view.ring.lineStyle(2, 0x8ea881, 0.85).strokeEllipse(x, y, 136, 96)
-      view.ring.lineStyle(1, 0xd4e2ce, 0.5).strokeEllipse(x, y, 142, 102)
+      view.ring.fillStyle(0x7da05a, 0.16).fillEllipse(x, y, 136, 96)
+      view.ring.lineStyle(2, 0x9cbf6f, 0.9).strokeEllipse(x, y, 136, 96)
+      view.ring.lineStyle(1, 0xe3a955, 0.65).strokeEllipse(x, y, 142, 102)
 
-      // 绘制顶部会话标签背景框
+      // 绘制底部会话标签背景框（羊皮纸木框小牌，挂在光环下方——上方容易
+      // 贴上人物身后的书桌/博古架，下方始终是干净的地板与地毯背景）
       view.bg.clear()
-      view.bg.fillStyle(0x19120c, 0.25).fillRoundedRect(x - 52, y - 80, 104, 24, 6)
-      view.bg.fillStyle(0xf8f3e6, 0.95).fillRoundedRect(x - 54, y - 82, 108, 24, 6)
-      view.bg.lineStyle(1, 0xb09677, 0.9).strokeRoundedRect(x - 54, y - 82, 108, 24, 6)
+      view.bg.fillStyle(0x241308, 0.35).fillRoundedRect(x - 50, y + 34, 104, 24, 4)
+      view.bg.fillStyle(0xf7e7c3, 0.97).fillRoundedRect(x - 54, y + 30, 108, 24, 4)
+      view.bg.lineStyle(2, 0x5b3820, 0.95).strokeRoundedRect(x - 54, y + 30, 108, 24, 4)
+      view.bg.lineStyle(1, 0xfdf3da, 0.8).strokeRoundedRect(x - 51, y + 33, 102, 18, 3)
     } else {
       view.bg.clear()
     }
 
     view.ring.setVisible(!waitingForArrival)
     view.bg.setVisible(!waitingForArrival)
-    view.label.setPosition(x, y - 70)
+    view.label.setPosition(x, y + 42)
       .setText(`💬 ${conversation.participants.length}/3 · 点击聆听`)
       .setVisible(!waitingForArrival)
   }
@@ -1330,6 +1451,7 @@ export class BookstoreScene extends Phaser.Scene {
       return other ? Phaser.Math.Distance.Between(actor.container.x, actor.container.y, other.container.x, other.container.y) < 150 : false
     }).length
 
+    const bubbleBoxDepth = BUBBLE_DEPTH
     const textObj = this.add.text(0, 0, content, {
       fontFamily: 'STSong, "PingFang SC", "Microsoft YaHei", sans-serif',
       fontSize: '13px',
@@ -1338,13 +1460,13 @@ export class BookstoreScene extends Phaser.Scene {
       padding: { x: 4, y: 3 },
       wordWrap: { width: 180, useAdvancedWrap: true },
       maxLines: 2,
-    }).setOrigin(0.5, 0.5).setDepth(72)
+    }).setOrigin(0.5, 0.5).setDepth(bubbleBoxDepth + 0.0001)
 
     const bw = Math.max(56, textObj.width + 20)
     const bh = textObj.height + 14
     const pos = clampBubblePosition(actor.container.x, actor.container.y - 82, bw, layer)
 
-    const bubbleBox = this.add.graphics().setDepth(70)
+    const bubbleBox = this.add.graphics().setDepth(bubbleBoxDepth)
 
     // 绘制气泡阴影
     bubbleBox.fillStyle(style.shadow, 0.25)

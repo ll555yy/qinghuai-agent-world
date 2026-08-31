@@ -121,6 +121,42 @@ function clampToRange(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
 }
 
+/**
+ * Overhead name labels reach ~64px above the feet. A slot is "label blocked"
+ * when solid furniture directly behind the actor would end up underneath the
+ * floating label, which reads as the label being pasted onto the furniture.
+ */
+const LABEL_HEADROOM = 64
+
+function labelBlockedByFurniture(point: NavigationPoint): boolean {
+  return BOOKSTORE_OBSTACLES.some((obstacle) => (
+    obstacle.bottom <= point.y
+    && obstacle.bottom > point.y - LABEL_HEADROOM
+    && point.x + 26 > obstacle.left
+    && point.x - 26 < obstacle.right
+  ))
+}
+
+/** Nudge a slot south (into the open aisle) until the overhead label clears
+ *  the furniture behind it, keeping every step walkable. */
+function withLabelHeadroom(
+  candidate: NavigationPoint,
+  roomBounds: NavigationRect,
+): NavigationPoint {
+  let adjusted = candidate
+  let guard = 0
+  while (labelBlockedByFurniture(adjusted) && adjusted.y + 12 <= roomBounds.bottom && guard < 6) {
+    const next = { x: adjusted.x, y: adjusted.y + 12 }
+    if (!isBookstoreWalkable(next, {
+      clearanceX: BOOKSTORE_ACTOR_CLEARANCE,
+      clearanceY: BOOKSTORE_ACTOR_CLEARANCE_Y,
+    })) break
+    adjusted = next
+    guard += 1
+  }
+  return adjusted
+}
+
 /** Pick a collision-free conversation slot near an authoritative position. */
 export function findBookstoreActorSlot(
   preferred: NavigationPoint,
@@ -130,14 +166,16 @@ export function findBookstoreActorSlot(
 ): NavigationPoint {
   const base = isBookstoreWalkable(preferred) ? preferred : nearestBookstoreWalkablePoint(preferred)
   for (const offset of ACTOR_SLOT_OFFSETS) {
-    const candidate = {
+    const clamped = {
       x: clampToRange(base.x + offset.x, roomBounds.left, roomBounds.right),
       y: clampToRange(base.y + offset.y, roomBounds.top, roomBounds.bottom),
     }
-    if (!isBookstoreWalkable(candidate, {
+    if (!isBookstoreWalkable(clamped, {
       clearanceX: BOOKSTORE_ACTOR_CLEARANCE,
       clearanceY: BOOKSTORE_ACTOR_CLEARANCE_Y,
     })) continue
+    const candidate = withLabelHeadroom(clamped, roomBounds)
+    if (labelBlockedByFurniture(candidate)) continue
     if (occupied.every((other) => Math.hypot(candidate.x - other.x, candidate.y - other.y) >= minimumDistance)) return candidate
   }
 
@@ -159,10 +197,13 @@ export function findBookstoreActorSlot(
     const secondDistance = (second.x - base.x) ** 2 + (second.y - base.y) ** 2
     return firstDistance - secondDistance || first.y - second.y || first.x - second.x
   })
-  const available = roomCandidates.find((candidate) => occupied.every(
-    (other) => Math.hypot(candidate.x - other.x, candidate.y - other.y) >= minimumDistance,
-  ))
-  if (available) return available
+  const available = roomCandidates.find((raw) => {
+    const candidate = withLabelHeadroom(raw, roomBounds)
+    return !labelBlockedByFurniture(candidate) && occupied.every(
+      (other) => Math.hypot(candidate.x - other.x, candidate.y - other.y) >= minimumDistance,
+    )
+  })
+  if (available) return withLabelHeadroom(available, roomBounds)
   return base
 }
 
@@ -215,14 +256,13 @@ function addEndpointBridge(
   if (isBookstoreWalkable(verticalFirst, options)) {
     return atStart ? [endpoint, verticalFirst, ...points] : [...points, verticalFirst, endpoint]
   }
-  // Dense furniture can make both L-shaped corners unwalkable. Snap the
-  // endpoint onto the route's first/last row or column instead of emitting a
-  // corner point inside a shelf or in the wall gap between rooms.
-  const rowStub = { x: endpoint.x, y: anchor.y }
-  const colStub = { x: anchor.x, y: endpoint.y }
-  return atStart
-    ? [endpoint, colStub, ...points]
-    : [...points, rowStub, endpoint]
+  // Dense furniture can make both L-shaped corners unwalkable. Never emit an
+  // unchecked stub (that marches the sprite straight through a shelf or the
+  // divider band). Fall back to the endpoint's nearest walkable snap so the
+  // actor starts/stops a few pixels away on open floor instead.
+  const snapped = nearestBookstoreWalkablePoint(endpoint, options)
+  if (snapped.x === endpoint.x && snapped.y === endpoint.y) return points
+  return atStart ? [snapped, ...points] : [...points, snapped]
 }
 
 /**
@@ -266,6 +306,10 @@ export function findBookstorePath(
     if (currentKey === endKey) {
       let route = compressOrthogonalPath(reconstructPath(cameFrom, currentKey))
       route = addEndpointBridge(route, start, true, options)
+      // The start bridge must anchor on (or very near) the actor's position.
+      // A bridge that lands further away would make the first tween segment
+      // slice diagonally through furniture, so fail closed instead.
+      if (!route.length || Math.hypot(route[0].x - start.x, route[0].y - start.y) > GRID_SIZE * 2) return [start]
       route = addEndpointBridge(route, end, false, options)
       return compressOrthogonalPath(route)
     }

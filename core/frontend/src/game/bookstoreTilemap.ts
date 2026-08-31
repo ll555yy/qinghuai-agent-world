@@ -91,9 +91,9 @@ export const TILEMAP_BOUNDS: TileRect = { left: 32, right: 810, top: 64, bottom:
 export const TILEMAP_WALKABLE_AREAS: readonly TileRect[] = [
   { left: 36, right: 806, top: 68, bottom: 252 },
   { left: 400, right: 480, top: 248, bottom: 296 },
-  // Top edge hugs the divider base so actors can stand right below the
-  // partition (they are depth-sorted behind it, like Stardew walls).
-  { left: 36, right: 806, top: 286, bottom: 476 },
+  // Top edge clears the divider's painted base beam (y 283-293) so actors
+  // never stand with their feet visually inside the woodwork.
+  { left: 36, right: 806, top: 296, bottom: 476 },
 ]
 
 /** Deterministic floor variation so tiles do not look machine stamped. */
@@ -162,7 +162,14 @@ export function buildBookstoreMap(): BookstoreTilemapData {
   // ── Rugs & floor decor (walkable) ───────────────────────
   fillG(7, 6, 11, 14, T_RUG)      // study tea rug
   setG(14, 10, T_CUSHION)
+  // Seat cushions around the tea table (outside the rug so they stay visible).
+  setG(5, 8, T_CUSHION); setG(5, 10, T_CUSHION)
+  setG(15, 8, T_CUSHION); setG(15, 10, T_CUSHION)
+  // Study aisle gathering rug: conversations anchor here instead of floating
+  // on bare floor, like the woven mats in Stardew's community centre.
+  fillG(12, 20, 14, 34, T_RUG)
   fillG(21, 21, 26, 33, T_RUG)    // front reading rug under the big table
+  fillG(28, 25, 29, 29, T_RUG)    // welcome mat at the entrance
 
   // ── Study furniture ─────────────────────────────────────
   // Tall cabinets across the back wall create the dense, lived-in study

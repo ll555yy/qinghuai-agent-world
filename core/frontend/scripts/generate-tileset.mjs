@@ -90,17 +90,24 @@ function renderWoodFloor(col, base, seam, light, upperJoint, lowerJoint) {
   hline(col, 0, 4, 1, Math.max(2, upperJoint - 2), base[0] - 9, base[1] - 7, base[2] - 4)
   hline(col, 0, 12, lowerJoint + 2, 14, base[0] - 8, base[1] - 6, base[2] - 3)
   px(col * TILE + 2, 5, light[0] - 10, light[1] - 8, light[2] - 5)
+  // Extra Stardew-style grain ticks so planks never read as flat colour.
+  hline(col, 0, 5, 8, 12, base[0] - 13, base[1] - 10, base[2] - 5)
+  hline(col, 0, 13, 2, 5, base[0] - 11, base[1] - 8, base[2] - 4)
+  px(col * TILE + 13, 6, base[0] + 13, base[1] + 10, base[2] + 6)
+  px(col * TILE + 6, 14, base[0] + 10, base[1] + 8, base[2] + 5)
 }
 
 // Row 0: T_EMPTY and floor variants.
+// Stardew-style warm palette: honey oak planks in the study, sunlit
+// beige stone in the front hall. Bright mid-tones, caramel highlights.
 clearTile(0, 0)
-renderStoneFloor(1, [108, 99, 87], [68, 64, 64], [134, 120, 99], 8, 0)
-renderStoneFloor(2, [94, 86, 77], [57, 55, 58], [117, 103, 86], 4, 12)
-renderWoodFloor(3, [108, 72, 42], [66, 43, 29], [139, 94, 55], 11, 4)
-renderWoodFloor(4, [91, 59, 36], [53, 36, 28], [116, 78, 48], 6, 13)
-renderStoneFloor(5, [116, 103, 88], [72, 65, 61], [143, 125, 101], 11, 3)
-renderStoneFloor(6, [101, 98, 92], [61, 62, 68], [126, 119, 107], 6, 14)
-renderWoodFloor(7, [119, 81, 48], [73, 48, 31], [149, 103, 62], 13, 5)
+renderStoneFloor(1, [188, 170, 140], [138, 120, 96], [212, 196, 166], 8, 0)
+renderStoneFloor(2, [172, 154, 126], [124, 108, 86], [196, 178, 148], 4, 12)
+renderWoodFloor(3, [200, 148, 86], [156, 106, 52], [216, 168, 104], 11, 4)
+renderWoodFloor(4, [184, 134, 74], [142, 96, 46], [204, 154, 92], 6, 13)
+renderStoneFloor(5, [196, 178, 146], [144, 126, 100], [218, 202, 170], 11, 3)
+renderStoneFloor(6, [180, 166, 142], [130, 118, 98], [204, 190, 164], 6, 14)
+renderWoodFloor(7, [210, 160, 98], [162, 112, 58], [226, 178, 114], 13, 5)
 
 // Row 1: architectural surfaces.
 fill(0, 1, 0, 0, 16, 16, 49, 29, 19)
