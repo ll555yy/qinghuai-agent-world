@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 import core.backend.app.main as main_module
 from core.backend.app.main import create_app
 from core.backend.app.settings import Settings
+from fastapi.testclient import TestClient
 
 
 class FakeEmbeddingClient:

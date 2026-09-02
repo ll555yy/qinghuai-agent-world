@@ -5,7 +5,6 @@ import json
 from typing import Any
 
 import pytest
-
 from core.backend.app.ai.decision_service import (
     PROTOCOL_RULES,
     DecisionService,

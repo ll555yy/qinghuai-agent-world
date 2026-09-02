@@ -6,7 +6,6 @@ import time
 from typing import Any
 
 import pytest
-
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.conversation import Conversation
 from core.backend.app.orchestration.event_hub import EventHub

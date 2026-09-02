@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from core.backend.app.ai.models import TextGenerationResult
 from core.backend.app.domain.errors import WorldStepError
 from core.backend.app.orchestration.run_service import RunService
