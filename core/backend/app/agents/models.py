@@ -8,7 +8,7 @@ applies the resulting semantic decision after the graph has finished.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypedDict
 
@@ -27,6 +27,22 @@ AgentEventType = Literal[
 
 AgentDecision = DailyActionDecision | InvitationDecision | ChatDecision
 PromptBuilder = Callable[[list[str]], str]
+
+
+@dataclass(frozen=True, slots=True)
+class PublicDecisionContext:
+    """Prompt-free projection exposed to deterministic benchmark policies."""
+
+    run_id: str
+    npc_id: str
+    event_type: AgentEventType
+    conversation_id: str | None
+    trigger_message_id: str | None
+    candidate_actor_ids: tuple[str, ...]
+    visible_messages: tuple[Mapping[str, Any], ...]
+
+
+DecisionPolicy = Callable[[PublicDecisionContext], Awaitable[AgentDecision] | AgentDecision]
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,5 +194,7 @@ __all__ = [
     "MemoryToolContext",
     "MemoryToolResult",
     "PromptBuilder",
+    "PublicDecisionContext",
+    "DecisionPolicy",
     "invocation_state",
 ]

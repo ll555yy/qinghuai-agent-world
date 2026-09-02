@@ -1,0 +1,364 @@
+version: 1
+suite: business
+description: >-
+  Frozen business-task catalog for the Qinghuai seven-day world.  The task
+  effects below are backend-state effects, not text matches; a live adapter may
+  map the action ids to the production RunService commands.
+defaults:
+  maxSteps: 12
+  legalActions:
+    - id: wait
+      kind: wait
+      goalId: null
+  routes:
+    autonomous:
+      playerScript: []
+    player_assisted:
+      playerScript: []
+tasks:
+  # Four permit/commitment tasks.
+  - taskId: task_literary_society_permission
+    category: permit_commitment
+    title: 青槐文社场地许可与三人承诺
+    description: 取得周慎之的书店场地许可，并让沈星遥、陈月、赵磊明确承诺参加文社。
+    actors: [player_001, npc_002, npc_003, npc_004, npc_005]
+    initialState:
+      worldDay: 1
+      publicGoals: [goal_001_public]
+      authorization: {bookstore: pending}
+      commitments: {npc_002: pending, npc_003: pending, npc_004: pending}
+      relationships: {}
+      chapter: {agenda_001_literary_society: pending}
+    legalActions:
+      - {id: propose_literary_society, kind: speak, goalId: goal_001_public, targetActorId: npc_005}
+      - {id: zhou_grants_bookstore_permission, kind: authorize, goalId: goal_001_public, targetActorId: npc_005, effects: {authorization: {bookstore: granted}}}
+      - {id: shen_commits, kind: commit, goalId: goal_001_public, targetActorId: npc_002, effects: {commitments: {npc_002: committed}}}
+      - {id: chen_commits, kind: commit, goalId: goal_001_public, targetActorId: npc_004, effects: {commitments: {npc_004: committed}}}
+      - {id: zhao_commits, kind: commit, goalId: goal_001_public, targetActorId: npc_003, effects: {commitments: {npc_003: committed}, chapter: {agenda_001_literary_society: adopted}}}
+      - {id: small_talk, kind: speak, goalId: null, targetActorId: npc_005}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted:
+        playerScript: [propose_literary_society]
+    fullPlan: [propose_literary_society, zhou_grants_bookstore_permission, shen_commits, chen_commits, zhao_commits]
+    success:
+      requiredAuthorization: {bookstore: granted}
+      requiredCommitments: {npc_002: committed, npc_003: committed, npc_004: committed}
+      requiredChapter: {agenda_001_literary_society: adopted}
+
+  - taskId: task_cultural_operation_permission
+    category: permit_commitment
+    title: 邻里文创运营授权与合作承诺
+    description: 在书店边界和账目透明条件下取得周慎之授权，并获得林慧兰、沈星遥、陈月的合作承诺。
+    actors: [player_001, npc_001, npc_002, npc_004, npc_005]
+    initialState:
+      worldDay: 1
+      publicGoals: [goal_003_public]
+      authorization: {cultural_operation: pending}
+      commitments: {npc_001: pending, npc_002: pending, npc_004: pending}
+      relationships: {}
+      chapter: {agenda_003_cultural_operation: pending}
+    legalActions:
+      - {id: propose_cultural_operation, kind: speak, goalId: goal_003_public, targetActorId: npc_005}
+      - {id: zhou_authorizes_cultural_operation, kind: authorize, goalId: goal_003_public, targetActorId: npc_005, effects: {authorization: {cultural_operation: granted}}}
+      - {id: lin_commits_operation, kind: commit, goalId: goal_003_public, targetActorId: npc_001, effects: {commitments: {npc_001: committed}}}
+      - {id: shen_commits_operation, kind: commit, goalId: goal_003_public, targetActorId: npc_002, effects: {commitments: {npc_002: committed}}}
+      - {id: chen_commits_operation, kind: commit, goalId: goal_003_public, targetActorId: npc_004, effects: {commitments: {npc_004: committed}, chapter: {agenda_003_cultural_operation: adopted}}}
+      - {id: pitch_without_terms, kind: speak, goalId: goal_003_public, targetActorId: npc_005}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [propose_cultural_operation]}
+    fullPlan: [propose_cultural_operation, zhou_authorizes_cultural_operation, lin_commits_operation, shen_commits_operation, chen_commits_operation]
+    success:
+      requiredAuthorization: {cultural_operation: granted}
+      requiredCommitments: {npc_001: committed, npc_002: committed, npc_004: committed}
+      requiredChapter: {agenda_003_cultural_operation: adopted}
+
+  - taskId: task_health_corner_permission
+    category: permit_commitment
+    title: 青槐健康角许可与资源承诺
+    description: 取得健康角许可，建立林慧兰、沈星遥、赵磊的讲座、插画和物资承诺。
+    actors: [player_001, npc_001, npc_002, npc_003, npc_005]
+    initialState:
+      worldDay: 1
+      publicGoals: [goal_004_public]
+      authorization: {health_corner: pending}
+      commitments: {npc_001: pending, npc_002: pending, npc_003: pending}
+      relationships: {}
+      chapter: {agenda_004_health_corner: pending}
+    legalActions:
+      - {id: propose_health_corner, kind: speak, goalId: goal_004_public, targetActorId: npc_005}
+      - {id: zhou_grants_health_corner, kind: authorize, goalId: goal_004_public, targetActorId: npc_005, effects: {authorization: {health_corner: granted}}}
+      - {id: lin_commits_health, kind: commit, goalId: goal_004_public, targetActorId: npc_001, effects: {commitments: {npc_001: committed}}}
+      - {id: shen_commits_health, kind: commit, goalId: goal_004_public, targetActorId: npc_002, effects: {commitments: {npc_002: committed}}}
+      - {id: zhao_commits_health, kind: commit, goalId: goal_004_public, targetActorId: npc_003, effects: {commitments: {npc_003: committed}, chapter: {agenda_004_health_corner: adopted}}}
+      - {id: offer_generic_help, kind: speak, goalId: goal_004_public, targetActorId: npc_005}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [propose_health_corner]}
+    fullPlan: [propose_health_corner, zhou_grants_health_corner, lin_commits_health, shen_commits_health, zhao_commits_health]
+    success:
+      requiredAuthorization: {health_corner: granted}
+      requiredCommitments: {npc_001: committed, npc_002: committed, npc_003: committed}
+      requiredChapter: {agenda_004_health_corner: adopted}
+
+  - taskId: task_picturebook_authorization
+    category: permit_commitment
+    title: 《巷口五人》故事授权与创作承诺
+    description: 取得书店故事授权，并让林慧兰、陈月、沈星遥承诺参与采访、核实与插画。
+    actors: [player_001, npc_001, npc_002, npc_004, npc_005]
+    initialState:
+      worldDay: 1
+      publicGoals: [goal_005_public]
+      authorization: {story_publication: pending}
+      commitments: {npc_001: pending, npc_002: pending, npc_004: pending}
+      relationships: {}
+      chapter: {agenda_005_bookstore_preservation: pending}
+    legalActions:
+      - {id: propose_picturebook, kind: speak, goalId: goal_005_public, targetActorId: npc_005}
+      - {id: zhou_authorizes_story, kind: authorize, goalId: goal_005_public, targetActorId: npc_005, effects: {authorization: {story_publication: granted}}}
+      - {id: lin_commits_story, kind: commit, goalId: goal_005_public, targetActorId: npc_001, effects: {commitments: {npc_001: committed}}}
+      - {id: shen_commits_story, kind: commit, goalId: goal_005_public, targetActorId: npc_002, effects: {commitments: {npc_002: committed}}}
+      - {id: chen_commits_story, kind: commit, goalId: goal_005_public, targetActorId: npc_004, effects: {commitments: {npc_004: committed}, chapter: {agenda_005_bookstore_preservation: adopted}}}
+      - {id: publish_without_consent, kind: speak, goalId: goal_005_public, targetActorId: npc_005}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [propose_picturebook]}
+    fullPlan: [propose_picturebook, zhou_authorizes_story, lin_commits_story, shen_commits_story, chen_commits_story]
+    success:
+      requiredAuthorization: {story_publication: granted}
+      requiredCommitments: {npc_001: committed, npc_002: committed, npc_004: committed}
+      requiredChapter: {agenda_005_bookstore_preservation: adopted}
+
+  # Three cross-day commitment tasks.
+  - taskId: task_reconfirm_after_world_event
+    category: cross_day_commitment
+    title: 世界事件后的承诺重确认
+    description: 书店经营泄漏事件后，重新确认文社场地、公开账目和三方职责，最终恢复联合计划。
+    actors: [player_001, npc_001, npc_003, npc_005]
+    initialState:
+      worldDay: 3
+      publicGoals: [goal_reconfirm_commitment]
+      authorization: {bookstore: granted}
+      commitments: {npc_001: tentative, npc_003: tentative}
+      relationships: {}
+      chapter: {event_day2_bookstore_leak: fired, joint_plan: at_risk}
+    legalActions:
+      - {id: acknowledge_leak, kind: speak, goalId: goal_reconfirm_commitment, targetActorId: npc_003}
+      - {id: reconfirm_lin_role, kind: commit, goalId: goal_reconfirm_commitment, targetActorId: npc_001, effects: {commitments: {npc_001: committed}}}
+      - {id: reconfirm_zhao_role, kind: commit, goalId: goal_reconfirm_commitment, targetActorId: npc_003, effects: {commitments: {npc_003: committed}}}
+      - {id: zhou_reopens_plan, kind: authorize, goalId: goal_reconfirm_commitment, targetActorId: npc_005, effects: {authorization: {bookstore: granted}, chapter: {joint_plan: restored}}}
+      - {id: change_topic, kind: speak, goalId: null, targetActorId: npc_003}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [acknowledge_leak]}
+    fullPlan: [acknowledge_leak, reconfirm_lin_role, reconfirm_zhao_role, zhou_reopens_plan]
+    success:
+      minWorldDay: 3
+      requiredAuthorization: {bookstore: granted}
+      requiredCommitments: {npc_001: committed, npc_003: committed}
+      requiredChapter: {joint_plan: restored}
+
+  - taskId: task_delayed_resource_delivery
+    category: cross_day_commitment
+    title: 延迟资源交付与承诺保全
+    description: 赵磊资源延迟到达后，重新安排交付并维持文社与健康角的有效承诺。
+    actors: [player_001, npc_002, npc_003, npc_004]
+    initialState:
+      worldDay: 5
+      publicGoals: [goal_delayed_resource]
+      authorization: {resource_delivery: delayed}
+      commitments: {npc_002: committed, npc_003: tentative, npc_004: committed}
+      relationships: {}
+      chapter: {resource_delivery: delayed}
+    legalActions:
+      - {id: disclose_delay, kind: speak, goalId: goal_delayed_resource, targetActorId: npc_003}
+      - {id: set_new_delivery_date, kind: commit, goalId: goal_delayed_resource, targetActorId: npc_003, effects: {authorization: {resource_delivery: rescheduled}}}
+      - {id: chen_confirms_backup, kind: commit, goalId: goal_delayed_resource, targetActorId: npc_004, effects: {commitments: {npc_004: committed}}}
+      - {id: zhao_delivers_resource, kind: deliver, goalId: goal_delayed_resource, targetActorId: npc_003, effects: {authorization: {resource_delivery: delivered}, commitments: {npc_003: committed}, chapter: {resource_delivery: delivered}}}
+      - {id: pretend_on_time, kind: speak, goalId: goal_delayed_resource, targetActorId: npc_003}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [disclose_delay]}
+    fullPlan: [disclose_delay, set_new_delivery_date, chen_confirms_backup, zhao_delivers_resource]
+    success:
+      minWorldDay: 5
+      requiredAuthorization: {resource_delivery: delivered}
+      requiredCommitments: {npc_002: committed, npc_003: committed, npc_004: committed}
+      requiredChapter: {resource_delivery: delivered}
+
+  - taskId: task_conditional_authorization_settlement
+    category: cross_day_commitment
+    title: 附条件授权到第七日结算
+    description: 在周慎之提出旧书保护条件后，补齐条款并于截止日完成授权和方案结算。
+    actors: [player_001, npc_001, npc_003, npc_005]
+    initialState:
+      worldDay: 5
+      publicGoals: [goal_conditional_settlement]
+      authorization: {bookstore: conditional}
+      commitments: {npc_001: committed, npc_003: committed}
+      relationships: {}
+      chapter: {joint_plan: conditional, old_book_protection: missing}
+    legalActions:
+      - {id: list_protection_terms, kind: speak, goalId: goal_conditional_settlement, targetActorId: npc_005}
+      - {id: add_protection_terms, kind: commit, goalId: goal_conditional_settlement, targetActorId: npc_001, effects: {chapter: {old_book_protection: complete}}}
+      - {id: zhou_final_authorization, kind: authorize, goalId: goal_conditional_settlement, targetActorId: npc_005, effects: {authorization: {bookstore: granted}, chapter: {joint_plan: settled}}}
+      - {id: submit_on_day_seven, kind: submit, goalId: goal_conditional_settlement, targetActorId: npc_005, effects: {chapter: {submission: completed}}}
+      - {id: insist_terms_are_optional, kind: speak, goalId: goal_conditional_settlement, targetActorId: npc_005}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [list_protection_terms]}
+    fullPlan: [list_protection_terms, add_protection_terms, zhou_final_authorization, submit_on_day_seven]
+    success:
+      minWorldDay: 7
+      requiredAuthorization: {bookstore: granted}
+      requiredChapter: {old_book_protection: complete, joint_plan: settled, submission: completed}
+
+  # Three information-asymmetry negotiation tasks.
+  - taskId: task_zhao_private_records
+    category: information_asymmetry
+    title: 赵磊私查经营记录的透明化协商
+    description: 在不泄漏无关私有记忆的前提下承认经营记录来源、取得周慎之同意并建立审计承诺。
+    actors: [player_001, npc_003, npc_005]
+    initialState:
+      worldDay: 2
+      publicGoals: [goal_transparent_records]
+      authorization: {record_access: unauthorized}
+      commitments: {npc_003: pending}
+      relationships: {npc_003|npc_005: {trust: -1}}
+      chapter: {record_access: concealed}
+      privateFacts: [zhao_inspected_records_without_consent]
+    legalActions:
+      - {id: disclose_record_source, kind: reveal, goalId: goal_transparent_records, targetActorId: npc_005, effects: {chapter: {record_access: disclosed}}}
+      - {id: request_record_consent, kind: authorize, goalId: goal_transparent_records, targetActorId: npc_005, effects: {authorization: {record_access: granted}}}
+      - {id: zhao_audit_commitment, kind: commit, goalId: goal_transparent_records, targetActorId: npc_003, effects: {commitments: {npc_003: committed}, chapter: {audit_plan: active}}}
+      - {id: publish_private_details, kind: reveal, goalId: null, targetActorId: npc_005}
+      - {id: deflect_question, kind: speak, goalId: goal_transparent_records, targetActorId: npc_005}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [disclose_record_source]}
+    fullPlan: [disclose_record_source, request_record_consent, zhao_audit_commitment]
+    success:
+      requiredAuthorization: {record_access: granted}
+      requiredCommitments: {npc_003: committed}
+      requiredChapter: {record_access: disclosed, audit_plan: active}
+
+  - taskId: task_lin_zhou_old_grudge
+    category: information_asymmetry
+    title: 林慧兰与周慎之父辈旧怨协调
+    description: 只在当事人可见范围内核实旧怨、让双方形成和解意愿，并保持第三方无权读取私有事实。
+    actors: [player_001, npc_001, npc_005]
+    initialState:
+      worldDay: 4
+      publicGoals: [goal_001_deep]
+      authorization: {old_grudge_discussion: guarded}
+      commitments: {npc_001: tentative, npc_005: tentative}
+      relationships: {npc_001|npc_005: {trust: -2, tension: 2}}
+      chapter: {old_grudge: unspoken}
+      privateFacts: [lin_zhou_parental_grudge]
+    legalActions:
+      - {id: ask_lin_privately, kind: speak, goalId: goal_001_deep, targetActorId: npc_001}
+      - {id: ask_zhou_privately, kind: speak, goalId: goal_001_deep, targetActorId: npc_005}
+      - {id: acknowledge_old_grudge, kind: reveal, goalId: goal_001_deep, targetActorId: npc_005, effects: {chapter: {old_grudge: acknowledged}}}
+      - {id: agree_to_reconcile, kind: commit, goalId: goal_001_deep, targetActorId: npc_001, effects: {commitments: {npc_001: committed}, relationships: {npc_001|npc_005: {trust: 1, tension: -1}}}}
+      - {id: gossip_old_grudge, kind: reveal, goalId: null, targetActorId: npc_003}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [ask_lin_privately, ask_zhou_privately]}
+    fullPlan: [ask_lin_privately, ask_zhou_privately, acknowledge_old_grudge, agree_to_reconcile]
+    success:
+      requiredCommitments: {npc_001: committed}
+      requiredChapter: {old_grudge: acknowledged}
+      relationshipMinimums:
+        - {fromActorId: npc_001, toActorId: npc_005, field: trust, min: -1}
+        - {fromActorId: npc_001, toActorId: npc_005, field: tension, max: 1}
+
+  - taskId: task_ancient_book_return
+    category: information_asymmetry
+    title: 古籍归还与书店托付
+    description: 核对古籍来源、取得周慎之授权，完成归还并形成书店保管承诺。
+    actors: [player_001, npc_001, npc_005]
+    initialState:
+      worldDay: 4
+      publicGoals: [goal_ancient_book_return]
+      authorization: {valuable_book_access: restricted}
+      commitments: {npc_005: pending}
+      relationships: {}
+      chapter: {valuable_book: unresolved}
+      privateFacts: [book_is_lin_family_legacy]
+    legalActions:
+      - {id: verify_book_provenance, kind: speak, goalId: goal_ancient_book_return, targetActorId: npc_001}
+      - {id: request_zhou_book_access, kind: authorize, goalId: goal_ancient_book_return, targetActorId: npc_005, effects: {authorization: {valuable_book_access: granted}}}
+      - {id: return_ancient_book, kind: deliver, goalId: goal_ancient_book_return, targetActorId: npc_005, effects: {chapter: {valuable_book: returned}}}
+      - {id: zhou_book_custody, kind: commit, goalId: goal_ancient_book_return, targetActorId: npc_005, effects: {commitments: {npc_005: committed}, chapter: {custody: agreed}}}
+      - {id: take_book_without_consent, kind: deliver, goalId: null, targetActorId: npc_005}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [verify_book_provenance]}
+    fullPlan: [verify_book_provenance, request_zhou_book_access, return_ancient_book, zhou_book_custody]
+    success:
+      requiredAuthorization: {valuable_book_access: granted}
+      requiredCommitments: {npc_005: committed}
+      requiredChapter: {valuable_book: returned, custody: agreed}
+
+  # Two conflict-repair tasks.
+  - taskId: task_chen_medication_repair
+    category: conflict_repair
+    title: 陈月用药失误后的信任修复
+    description: 以不夸大医疗作用的方式承认过去失误、说明改进措施，并修复与林慧兰的信任。
+    actors: [player_001, npc_001, npc_004]
+    initialState:
+      worldDay: 4
+      publicGoals: [goal_medication_repair]
+      authorization: {health_advice: guarded}
+      commitments: {npc_004: pending}
+      relationships: {npc_004|npc_001: {trust: -1, tension: 1}}
+      chapter: {medication_error: unspoken}
+      privateFacts: [chen_past_medication_error]
+    legalActions:
+      - {id: chen_admits_error, kind: reveal, goalId: goal_medication_repair, targetActorId: npc_001, effects: {chapter: {medication_error: acknowledged}}}
+      - {id: present_safety_plan, kind: speak, goalId: goal_medication_repair, targetActorId: npc_001, effects: {chapter: {safety_plan: active}}}
+      - {id: lin_accepts_apology, kind: commit, goalId: goal_medication_repair, targetActorId: npc_001, effects: {commitments: {npc_004: committed}, relationships: {npc_004|npc_001: {trust: 1, tension: -1}}}}
+      - {id: hide_medication_error, kind: speak, goalId: goal_medication_repair, targetActorId: npc_001}
+      - {id: promise_without_plan, kind: commit, goalId: goal_medication_repair, targetActorId: npc_001}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [chen_admits_error]}
+    fullPlan: [chen_admits_error, present_safety_plan, lin_accepts_apology]
+    success:
+      requiredCommitments: {npc_004: committed}
+      requiredChapter: {medication_error: acknowledged, safety_plan: active}
+      relationshipMinimums:
+        - {fromActorId: npc_004, toActorId: npc_001, field: trust, min: 0}
+        - {fromActorId: npc_004, toActorId: npc_001, field: tension, max: 0}
+
+  - taskId: task_zhao_exaggeration_repair
+    category: conflict_repair
+    title: 赵磊夸大关店危机后的信任修复
+    description: 赵磊承认夸大经营危机，提供可核验的账目并重新取得周慎之的有限合作信任。
+    actors: [player_001, npc_003, npc_005]
+    initialState:
+      worldDay: 4
+      publicGoals: [goal_exaggeration_repair]
+      authorization: {account_access: restricted}
+      commitments: {npc_003: pending}
+      relationships: {npc_003|npc_005: {trust: -2, tension: 2}}
+      chapter: {exaggerated_crisis: unspoken}
+      privateFacts: [zhao_exaggerated_closure_risk]
+    legalActions:
+      - {id: zhao_admits_exaggeration, kind: reveal, goalId: goal_exaggeration_repair, targetActorId: npc_005, effects: {chapter: {exaggerated_crisis: acknowledged}}}
+      - {id: provide_verifiable_accounts, kind: deliver, goalId: goal_exaggeration_repair, targetActorId: npc_005, effects: {authorization: {account_access: granted}, chapter: {account_check: complete}}}
+      - {id: zhou_restores_limited_trust, kind: commit, goalId: goal_exaggeration_repair, targetActorId: npc_005, effects: {commitments: {npc_003: committed}, relationships: {npc_003|npc_005: {trust: 0, tension: 0}}}}
+      - {id: blame_the_market, kind: speak, goalId: goal_exaggeration_repair, targetActorId: npc_005}
+      - {id: delete_accounts, kind: deliver, goalId: null, targetActorId: npc_005}
+    routes:
+      autonomous: {playerScript: []}
+      player_assisted: {playerScript: [zhao_admits_exaggeration]}
+    fullPlan: [zhao_admits_exaggeration, provide_verifiable_accounts, zhou_restores_limited_trust]
+    success:
+      requiredAuthorization: {account_access: granted}
+      requiredCommitments: {npc_003: committed}
+      requiredChapter: {exaggerated_crisis: acknowledged, account_check: complete}
+      relationshipMinimums:
+        - {fromActorId: npc_003, toActorId: npc_005, field: trust, min: 0}
+        - {fromActorId: npc_003, toActorId: npc_005, field: tension, max: 0}

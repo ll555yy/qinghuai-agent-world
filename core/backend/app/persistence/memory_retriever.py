@@ -40,6 +40,25 @@ class MemoryRetriever(Protocol):
         """Return only IDs of memories owned by ``owner_npc_id``."""
 
 
+@dataclass(frozen=True, slots=True)
+class RetrievalPolicy:
+    """Read-only ablation switches; owner scoping is intentionally not configurable."""
+
+    use_keyword: bool = True
+    use_vector: bool = True
+    use_actor_filter: bool = True
+    use_goal_filter: bool = True
+    use_topic_filter: bool = True
+    graph_hops: int = 2
+    max_seed_candidates: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.graph_hops not in {0, 1, 2}:
+            raise ValueError("graph_hops must be 0, 1, or 2")
+        if self.max_seed_candidates is not None and self.max_seed_candidates < 1:
+            raise ValueError("max_seed_candidates must be positive when configured")
+
+
 @dataclass(slots=True)
 class _Candidate:
     memory_id: str
@@ -62,6 +81,7 @@ class DatabaseMemoryRetriever:
         embedding_port: EmbeddingPort | None = None,
         vector_dimensions: int = MEMORY_EMBEDDING_DIMENSIONS,
         candidate_limit: int = 48,
+        policy: RetrievalPolicy | None = None,
     ) -> None:
         if vector_dimensions != MEMORY_EMBEDDING_DIMENSIONS:
             raise ValueError(
@@ -71,6 +91,7 @@ class DatabaseMemoryRetriever:
         self._embedding_port = embedding_port
         self._vector_dimensions = vector_dimensions
         self._candidate_limit = candidate_limit
+        self._policy = policy or RetrievalPolicy()
 
     async def search(
         self,
@@ -91,7 +112,11 @@ class DatabaseMemoryRetriever:
             return MemoryToolResult()
 
         vector: Sequence[float] | None = None
-        if self._embedding_port is not None and query.query_text.strip():
+        if (
+            self._policy.use_vector
+            and self._embedding_port is not None
+            and query.query_text.strip()
+        ):
             try:
                 produced = tuple(float(value) for value in await self._embedding_port.embed(query.query_text))
                 if len(produced) == self._vector_dimensions:
@@ -133,7 +158,11 @@ class DatabaseMemoryRetriever:
                 run_id,
                 owned_ids,
             )
-            topic_ids = await self._resolve_topics(session, query.topic_hints)
+            topic_ids = (
+                await self._resolve_topics(session, query.topic_hints)
+                if self._policy.use_topic_filter
+                else set()
+            )
 
             seeds = self._score_seeds(
                 owned_rows,
@@ -142,6 +171,7 @@ class DatabaseMemoryRetriever:
                 goal_links=goal_links,
                 topic_links=topic_links,
                 resolved_topic_ids=topic_ids,
+                policy=self._policy,
             )
             # Irrelevant rows do not become graph seeds merely because they
             # are recent. Empty queries have already returned above.
@@ -157,12 +187,30 @@ class DatabaseMemoryRetriever:
                 for memory_id, score in seeds.items()
                 if score > 0 or by_id[memory_id].vector_score > 0 or not has_hints
             }
-            distances = await self._graph_distances(
-                session,
-                run_id=run_id,
-                owner_npc_id=owner_npc_id,
-                seed_ids=seed_ids,
-                max_hops=2,
+            if (
+                self._policy.max_seed_candidates is not None
+                and len(seed_ids) > self._policy.max_seed_candidates
+            ):
+                ranked_seeds = sorted(
+                    seed_ids,
+                    key=lambda memory_id: (
+                        seeds.get(memory_id, 0.0)
+                        + by_id[memory_id].vector_score * 4.0,
+                        memory_id,
+                    ),
+                    reverse=True,
+                )
+                seed_ids = set(ranked_seeds[: self._policy.max_seed_candidates])
+            distances = (
+                await self._graph_distances(
+                    session,
+                    run_id=run_id,
+                    owner_npc_id=owner_npc_id,
+                    seed_ids=seed_ids,
+                    max_hops=self._policy.graph_hops,
+                )
+                if self._policy.graph_hops
+                else {}
             )
             for memory_id, distance in distances.items():
                 if memory_id in by_id:
@@ -309,14 +357,16 @@ class DatabaseMemoryRetriever:
         goal_links: dict[str, set[str]],
         topic_links: dict[str, set[str]],
         resolved_topic_ids: set[str],
+        policy: RetrievalPolicy | None = None,
     ) -> dict[str, float]:
+        policy = policy or RetrievalPolicy()
         tokens = {
             token.casefold()
             for token in query.query_text.replace("，", " ").replace("。", " ").split()
             if token.strip()
-        }
-        actors = set(query.actor_ids)
-        goals = set(query.goal_ids)
+        } if policy.use_keyword else set()
+        actors = set(query.actor_ids) if policy.use_actor_filter else set()
+        goals = set(query.goal_ids) if policy.use_goal_filter else set()
         result: dict[str, float] = {}
         for item in candidates:
             content = item.content.casefold()
@@ -325,7 +375,11 @@ class DatabaseMemoryRetriever:
                 text_hits * 2
                 + len(actors & actor_links.get(item.memory_id, set())) * 5
                 + len(goals & goal_links.get(item.memory_id, set())) * 4
-                + len(resolved_topic_ids & topic_links.get(item.memory_id, set())) * 4
+                + (
+                    len(resolved_topic_ids & topic_links.get(item.memory_id, set())) * 4
+                    if policy.use_topic_filter
+                    else 0
+                )
             )
         return result
 
@@ -383,4 +437,4 @@ class DatabaseMemoryRetriever:
         return distances
 
 
-__all__ = ["DatabaseMemoryRetriever", "MemoryRetriever"]
+__all__ = ["DatabaseMemoryRetriever", "MemoryRetriever", "RetrievalPolicy"]

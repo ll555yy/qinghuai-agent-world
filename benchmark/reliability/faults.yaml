@@ -1,0 +1,87 @@
+schemaVersion: "1.0"
+suite: reliability-p0
+description: >-
+  Eight deterministic local fault controls. Each fault is paired with a
+  no-fault run using the same seed and input; live provider failures are
+  reported separately.
+faults:
+  - faultId: F1_model_timeout
+    name: Candidate 调用超时
+    description: Candidate request does not return at the declared timeout.
+    injectionPoint: candidate.request
+    triggerCall: 1
+    maxInjections: 1
+    retryable: true
+    afterCommit: false
+    attempts: 10
+    expectedRecovery: retry_without_state_advance
+  - faultId: F2_invalid_schema
+    name: 非法结构化输出
+    description: Candidate returns an invalid action/schema payload.
+    injectionPoint: candidate.parse
+    triggerCall: 1
+    maxInjections: 1
+    retryable: true
+    afterCommit: false
+    attempts: 10
+    expectedRecovery: schema_retry_without_state_write
+  - faultId: F3_embedding_outage
+    name: Embedding 服务不可用
+    description: Embedding or vector retrieval is temporarily unavailable.
+    injectionPoint: embedding.request
+    triggerCall: 1
+    maxInjections: 1
+    retryable: true
+    afterCommit: false
+    attempts: 10
+    expectedRecovery: keyword_graph_fallback
+  - faultId: F4_database_disconnect
+    name: PostgreSQL 短暂断连
+    description: The persistence connection drops before transaction commit.
+    injectionPoint: database.transaction
+    triggerCall: 1
+    maxInjections: 1
+    retryable: true
+    afterCommit: false
+    attempts: 10
+    expectedRecovery: rollback_then_retry
+  - faultId: F5_process_restart
+    name: Day 3/5/7 进程重启
+    description: The worker exits at a durable day boundary and is restarted.
+    injectionPoint: process.day_boundary
+    triggerCall: 1
+    maxInjections: 1
+    retryable: true
+    afterCommit: false
+    attempts: 10
+    expectedRecovery: resume_from_durable_snapshot
+  - faultId: F6_duplicate_command
+    name: 重复 command ID
+    description: A client sends an already committed command a second time.
+    injectionPoint: command.execute
+    triggerCall: 1
+    maxInjections: 1
+    retryable: false
+    afterCommit: true
+    attempts: 10
+    expectedRecovery: idempotent_cached_result
+  - faultId: F7_ws_reconnect
+    name: WebSocket 断线重连
+    description: The event stream disconnects before the client acknowledges a frame.
+    injectionPoint: websocket.receive
+    triggerCall: 1
+    maxInjections: 1
+    retryable: true
+    afterCommit: false
+    attempts: 10
+    expectedRecovery: replay_from_event_sequence
+  - faultId: F8_lost_response
+    name: 保存成功但响应丢失
+    description: The command commits but its response is lost before delivery.
+    injectionPoint: response.deliver
+    triggerCall: 1
+    maxInjections: 1
+    retryable: true
+    afterCommit: true
+    attempts: 10
+    expectedRecovery: retry_without_duplicate_side_effect

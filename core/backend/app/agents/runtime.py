@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -24,6 +25,8 @@ from .models import (
     AgentGraphState,
     AgentInvocation,
     AgentResult,
+    DecisionPolicy,
+    PublicDecisionContext,
     invocation_state,
 )
 from .trace import AgentTrace, AgentTraceSink, InMemoryAgentTraceSink
@@ -43,10 +46,12 @@ class NPCAgentRuntime:
         *,
         trace_sink: AgentTraceSink | None = None,
         memory_tool_factory: Any | None = None,
+        decision_policy: DecisionPolicy | None = None,
     ) -> None:
         self.decisions = decisions
         self.trace_sink = trace_sink or InMemoryAgentTraceSink()
         self._memory_tool_factory = memory_tool_factory
+        self._decision_policy = decision_policy
         self.graph = self._build_graph().compile()
         # ``compiled_graph`` is an explicit alias used by diagnostics and
         # integration code; it points to the same compiled object.
@@ -82,7 +87,27 @@ class NPCAgentRuntime:
         if agent.recall_was_used_for(invocation):
             state["recall_used"] = True
         try:
-            output = await self.graph.ainvoke(state)
+            if self._decision_policy is not None:
+                projected = PublicDecisionContext(
+                    run_id=invocation.run_id,
+                    npc_id=invocation.npc_id,
+                    event_type=invocation.event_type,
+                    conversation_id=invocation.conversation_id,
+                    trigger_message_id=invocation.trigger_message_id,
+                    candidate_actor_ids=tuple(invocation.candidate_actor_ids),
+                    visible_messages=tuple(deepcopy(item) for item in invocation.visible_messages),
+                )
+                policy_result = self._decision_policy(projected)
+                decision = await policy_result if inspect.isawaitable(policy_result) else policy_result
+                if not isinstance(decision, (DailyActionDecision, InvitationDecision, ChatDecision)):
+                    raise TypeError("decision_policy returned an unsupported decision")
+                output = {
+                    "final_output": decision,
+                    "decision": decision,
+                    "node_path": ("public_decision_policy", "finalize"),
+                }
+            else:
+                output = await self.graph.ainvoke(state)
             if output.get("tool_used", False):
                 agent.mark_recall_used_for(invocation)
             decision = output.get("final_output") or output.get("decision")

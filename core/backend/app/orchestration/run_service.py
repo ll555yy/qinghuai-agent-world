@@ -15,8 +15,9 @@ from copy import deepcopy
 from typing import Any, cast
 
 from ..agents.memory_tool import RetrieveOwnedMemoriesTool
-from ..agents.models import AgentInvocation, MemoryToolContext
+from ..agents.models import AgentInvocation, DecisionPolicy, MemoryToolContext
 from ..agents.runtime import NPCAgent, NPCAgentRegistry, NPCAgentRuntime
+from ..agents.trace import AgentTraceSink
 from ..ai.decision_service import (
     DEFAULT_AUXILIARY_TEMPERATURE,
     DEFAULT_DECISION_TEMPERATURE,
@@ -107,6 +108,8 @@ class RunService:
         chat_publish_delay_max_seconds: float = 0.0,
         chat_model_call_timeout_seconds: float = 45.0,
         chat_npc_only_safety_rounds: int = CHAT_NPC_ONLY_SAFETY_ROUNDS,
+        decision_policy: DecisionPolicy | None = None,
+        trace_sink: AgentTraceSink | None = None,
     ) -> None:
         if segment_summary_recent_messages >= segment_summary_trigger_messages:
             raise ValueError(
@@ -153,6 +156,8 @@ class RunService:
         # remains the authority that applies their semantic decisions.
         self.agent_runtime = NPCAgentRuntime(
             self.decisions,
+            trace_sink=trace_sink,
+            decision_policy=decision_policy,
             memory_tool_factory=(
                 lambda actor_id: RetrieveOwnedMemoriesTool(
                     bound_owner_npc_id=actor_id,

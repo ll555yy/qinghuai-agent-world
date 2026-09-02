@@ -331,10 +331,20 @@ class SimulationMetrics:
     historical_topic_messages: int = 0
     goal_completion_rate: float | None = None
     embedding_provider_requests: int = 0
+    embedding_failed_requests: int = 0
+    embedding_provider_retries: int = 0
+    embedding_latency_ms: list[float] = field(default_factory=list)
     embedding_tokens: int = 0
     text_input_cny_per_million: float = DEFAULT_TEXT_INPUT_CNY_PER_MILLION
     text_output_cny_per_million: float = DEFAULT_TEXT_OUTPUT_CNY_PER_MILLION
     embedding_cny_per_million: float = DEFAULT_EMBEDDING_CNY_PER_MILLION
+    step_latency_ms: list[float] = field(default_factory=list)
+    run_duration_ms: float | None = None
+
+    def record_step_latency(self, duration_ms: float) -> None:
+        if duration_ms < 0:
+            raise ValueError("step latency cannot be negative")
+        self.step_latency_ms.append(round(duration_ms, 3))
 
     def record_protocol_call(self, protocol: str) -> None:
         self.protocol_calls[protocol] += 1
@@ -493,6 +503,8 @@ class SimulationMetrics:
                 "totalMs": round(sum(values), 3),
                 "maxMs": round(max(values), 3) if values else 0.0,
                 "avgMs": round(sum(values) / len(values), 3) if values else 0.0,
+                "p50Ms": self._percentile(values, 50),
+                "p95Ms": self._percentile(values, 95),
             }
             for protocol, values in sorted(self.latency_ms.items())
         }
@@ -515,6 +527,12 @@ class SimulationMetrics:
             "retries": counters(self.retries),
             "failures": counters(self.failures),
             "latencyMs": latencies,
+            "stepLatencyMs": {
+                "count": len(self.step_latency_ms),
+                "p50Ms": self._percentile(self.step_latency_ms, 50),
+                "p95Ms": self._percentile(self.step_latency_ms, 95),
+            },
+            "runDurationMs": self.run_duration_ms,
             "tokens": counters(self.tokens),
             "events": counters(self.events),
             "worldEvents": {
@@ -554,6 +572,10 @@ class SimulationMetrics:
                 "graphHits": self.memory_graph_hits,
                 "vector": self.memory_vector_status,
                 "graph": self.memory_graph_status,
+                "embeddingFailedRequests": self.embedding_failed_requests,
+                "embeddingProviderRetries": self.embedding_provider_retries,
+                "embeddingLatencyP50Ms": self._percentile(self.embedding_latency_ms, 50),
+                "embeddingLatencyP95Ms": self._percentile(self.embedding_latency_ms, 95),
             },
             "historicalCueCounts": {
                 "invitationIntents": self.historical_invitation_intents,
@@ -624,6 +646,19 @@ class SimulationMetrics:
             index = min(len(ordered) - 1, max(0, math.ceil(len(ordered) * 0.95) - 1))
             result[protocol] = round(ordered[index], 3)
         return result
+
+    @staticmethod
+    def _percentile(values: list[float], percent: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        position = (len(ordered) - 1) * percent / 100
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        if lower == upper:
+            return round(ordered[lower], 3)
+        weight = position - lower
+        return round(ordered[lower] * (1 - weight) + ordered[upper] * weight, 3)
 
 
 @dataclass(frozen=True, slots=True)
@@ -906,6 +941,7 @@ class SevenDaySimulationRunner:
         if route not in ROUTE_AGENDAS:
             raise ValueError(f"unknown simulation route: {route}")
         metrics = SimulationMetrics()
+        run_started_at = time.perf_counter()
         attempt_id = (
             str(attempt.get("attemptId"))
             if isinstance(attempt, dict)
@@ -957,7 +993,9 @@ class SevenDaySimulationRunner:
 
         try:
             embedding_port = getattr(memory_retriever, "_embedding_port", None)
-            embedding_snapshot = getattr(embedding_port, "metrics_snapshot", None)
+            embedding_snapshot = getattr(embedding_port, "telemetry_snapshot", None)
+            if not callable(embedding_snapshot):
+                embedding_snapshot = getattr(embedding_port, "metrics_snapshot", None)
             before_embedding_metrics = (
                 embedding_snapshot()
                 if callable(embedding_snapshot)
@@ -1057,6 +1095,7 @@ class SevenDaySimulationRunner:
                 timeout=self._remaining_timeout(deadline),
             )
             self._check_world_budget(run, metrics)
+            step_started_at = time.perf_counter()
             await asyncio.wait_for(
                 engine.step(
                     created["runId"],
@@ -1065,8 +1104,10 @@ class SevenDaySimulationRunner:
                 ),
                 timeout=self._remaining_timeout(deadline),
             )
+            metrics.record_step_latency((time.perf_counter() - step_started_at) * 1000)
             self._check_world_budget(run, metrics)
             for day in range(2, self.registry.end_day + 1):
+                step_started_at = time.perf_counter()
                 await asyncio.wait_for(
                     engine.step(
                         created["runId"],
@@ -1075,7 +1116,9 @@ class SevenDaySimulationRunner:
                     ),
                     timeout=self._remaining_timeout(deadline),
                 )
+                metrics.record_step_latency((time.perf_counter() - step_started_at) * 1000)
                 self._check_world_budget(run, metrics)
+                step_started_at = time.perf_counter()
                 await asyncio.wait_for(
                     self._run_player_strategy_for_day(
                         run_service,
@@ -1088,6 +1131,7 @@ class SevenDaySimulationRunner:
                     ),
                     timeout=self._remaining_timeout(deadline),
                 )
+                metrics.record_step_latency((time.perf_counter() - step_started_at) * 1000)
                 self._check_world_budget(run, metrics)
                 await asyncio.wait_for(
                     engine.step(
@@ -1123,6 +1167,7 @@ class SevenDaySimulationRunner:
             metrics.failures[f"runner:{safe_label}"] += 1
             metrics.abnormal_termination = safe_label
         finally:
+            metrics.run_duration_ms = round((time.perf_counter() - run_started_at) * 1000, 3)
             if run is not None:
                 metrics.observe_run(
                     run,
@@ -1151,6 +1196,19 @@ class SevenDaySimulationRunner:
                     after_embedding["totalTokens"]
                     - before_embedding_metrics["totalTokens"]
                 )
+                metrics.embedding_failed_requests = (
+                    int(after_embedding.get("failedRequests", 0))
+                    - int(before_embedding_metrics.get("failedRequests", 0))
+                )
+                metrics.embedding_provider_retries = (
+                    int(after_embedding.get("providerRetries", 0))
+                    - int(before_embedding_metrics.get("providerRetries", 0))
+                )
+                before_latencies = tuple(before_embedding_metrics.get("latencyMs", ()))
+                after_latencies = tuple(after_embedding.get("latencyMs", ()))
+                metrics.embedding_latency_ms = [
+                    float(value) for value in after_latencies[len(before_latencies):]
+                ]
             if attempt_ledger is not None and attempt is not None:
                 attempt_ledger.finish(
                     attempt,

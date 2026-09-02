@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -52,7 +53,10 @@ class ArkEmbeddingClient(EmbeddingPort):
         self._client = client
         self._last_metadata: dict[str, Any] = {}
         self._completed_requests = 0
+        self._provider_attempts = 0
+        self._failed_requests = 0
         self._total_tokens = 0
+        self._latency_ms: list[float] = []
         self._timeout = httpx.Timeout(settings.timeout_seconds)
         if self._client is None and settings.configured:
             self._client = AsyncOpenAI(
@@ -80,6 +84,17 @@ class ArkEmbeddingClient(EmbeddingPort):
             "totalTokens": self._total_tokens,
         }
 
+    def telemetry_snapshot(self) -> dict[str, Any]:
+        """Return extended embedding reliability and latency telemetry."""
+
+        return {
+            **self.metrics_snapshot(),
+            "providerAttempts": self._provider_attempts,
+            "failedRequests": self._failed_requests,
+            "providerRetries": 0,
+            "latencyMs": tuple(self._latency_ms),
+        }
+
     async def embed(self, text: str) -> list[float]:
         return (await self.embed_many([text]))[0]
 
@@ -92,12 +107,20 @@ class ArkEmbeddingClient(EmbeddingPort):
         inputs = [str(text) for text in texts]
         if not inputs or len(inputs) > 10 or any(not text.strip() for text in inputs):
             raise ValueError("embedding batch must contain 1..10 non-empty texts")
-        response = await self._client.embeddings.create(
-            model=self.model_name,
-            input=inputs,
-            encoding_format="float",
-            timeout=self._timeout,
-        )
+        started = time.perf_counter()
+        self._provider_attempts += 1
+        try:
+            response = await self._client.embeddings.create(
+                model=self.model_name,
+                input=inputs,
+                encoding_format="float",
+                timeout=self._timeout,
+            )
+        except Exception:
+            self._failed_requests += 1
+            raise
+        finally:
+            self._latency_ms.append(round((time.perf_counter() - started) * 1000, 3))
         data = getattr(response, "data", None)
         if not isinstance(data, list) or len(data) != len(inputs):
             raise RuntimeError("Ark returned no embedding data")

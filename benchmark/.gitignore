@@ -1,0 +1,6 @@
+__pycache__/
+.pytest-cache/
+.test-*/
+pytest-cache-files-*/
+results/*
+!results/.gitignore
