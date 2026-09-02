@@ -1,7 +1,3 @@
-# These immutable baseline reports were checksummed with CRLF bytes. Force the
-# same checkout representation on every OS so their published SHA-256 remains
-# reproducible in GitHub Actions.
+# The regression baseline was checksummed with CRLF bytes. Force the same
+# checkout representation on every OS so its SHA-256 stays reproducible.
 project/evaluation-results/live-baseline-2026-08-23/* text eol=crlf
-
-# The final v5 provider-unavailable evidence was published with LF bytes.
-project/simulation-results/final-preregistered-strategy-v3-v5-provider-unavailable-2026-08-24/* text eol=lf

@@ -1,1 +1,0 @@
-python core/backend/scripts/summarize_seven_day_evidence.py --manifest core/backend/app/simulation/manifests/final_agent_validation_v1.json --attempt-root simulation_reports/final_preregistered_15/attempts --output project/simulation-results/final-preregistered-v1-interrupted-2026-08-23

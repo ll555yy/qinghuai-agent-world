@@ -159,15 +159,9 @@ def test_representative_reconstructions_only_assert_their_declared_rule_subset()
         assert "full baseline replay" not in replay["purpose"]
 
 
-def test_baseline_sha256sums_matches_the_seven_immutable_artifacts() -> None:
+def test_baseline_sha256_matches_the_immutable_regression_fixture() -> None:
     expected = {
-        "agent_semantic_evaluation_bad_cases.md": "55f9299e61071ed448484e690581943896e62f4ad844f8db30e2c9d5e7c5457d",
-        "agent_semantic_evaluation_human_arbitration.md": "9df33b3a588cb15147d6e109a2a8f0810bd22c2569d7b7b582f934657506e48f",
-        "agent_semantic_evaluation_judge_stability.md": "b77046195f0cdd263d7110dc7d97eb9255f1be46274afabfe3ac0e52d1e83188",
         "agent_semantic_evaluation.json": "444067d97327356b5946598ad77715b29fac8dc7dd1d0e8cbb89900a8b5060a5",
-        "agent_semantic_evaluation.md": "14b798b9623527bbc72acaee9136deebeac81c4164c260de94d71e7aed8f0170",
-        "judge_calibration_report.json": "b2014cee5161b03dc91b0390666e3bcc9841b263375be973ad0ca175cf8f412f",
-        "judge_calibration_report.md": "dbe6d7e63c3f06c1fe1bb08386b3b739c6a70df9fdba2e9b1878e9b315410e8a",
     }
     lines = [line.split() for line in CHECKSUM_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
     actual = {parts[1]: parts[0].lower() for parts in lines if len(parts) == 2}

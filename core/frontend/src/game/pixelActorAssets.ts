@@ -1,8 +1,9 @@
 /**
  * Runtime manifest for the full-body, 4x4 pixel actor sheets.
  *
- * The high-resolution source art stays under `project/visual-concepts`.
- * Browser-facing copies are nearest-neighbour runtime sheets: Lin and Zhou
+ * High-resolution source art is retained as local development material and is
+ * intentionally excluded from the release repository. Browser-facing copies
+ * are nearest-neighbour runtime sheets: Lin and Zhou
  * use 360x360 (90x90 cells), while the player and other NPCs use 256x384
  * (64x96 cells). Named frames keep direction/action mapping explicit and let
  * the scene fall back cleanly when one texture fails to load.
@@ -82,9 +83,9 @@ const SQUARE_PIXEL_DISPLAY: PixelActorDisplayLayout = {
 const PIXEL_GRID: PixelActorGrid = { columns: 4, rows: 4 }
 
 /**
- * Every URL below is a versioned runtime derivative of the matching source
- * under `project/visual-concepts`. Existing portrait assets are intentionally
- * not replaced and remain available to dialogue/panel UI.
+ * Every URL below is a versioned runtime derivative of locally retained source
+ * art. Existing portrait assets are intentionally not replaced and remain
+ * available to dialogue/panel UI.
  */
 export const PIXEL_ACTOR_ASSETS = {
   player_001: {

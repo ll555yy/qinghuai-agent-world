@@ -41,6 +41,32 @@ simulation_reports/
 
 # Local assistant workspace state
 .superpowers/
+.workbuddy/
+
+# Local development notes and generated evidence. Keep the public repository
+# focused on runnable code, curated docs and reviewed benchmark summaries.
+/project/*_DESIGN.md
+!/project/SYSTEM_DESIGN.md
+/project/*_PLAN.md
+/project/NEXT_GOAL_*.md
+/project/*_REPORT.md
+/project/*_RESULTS.md
+/project/*_BEFORE_AFTER.md
+/project/FRONTEND_EVENT_MAPPING.md
+/project/evaluation-results/*
+!/project/evaluation-results/live-baseline-2026-08-23/
+/project/evaluation-results/live-baseline-2026-08-23/*
+!/project/evaluation-results/live-baseline-2026-08-23/SHA256SUMS
+!/project/evaluation-results/live-baseline-2026-08-23/agent_semantic_evaluation.json
+/project/simulation-results/
+/project/visual-concepts/
+/project/visual-qa/*
+!/project/visual-qa/world-1440x900.png
+
+# P0-3 remains local until its observation/annotation protocol is ready.
+/benchmark/trajectory/
+/benchmark/integrations/production_trajectory.py
+/benchmark/tests/test_trajectory_*.py
 
 # Local semantic-evaluation investigations (preserved in place, never canonical)
 /evaluation_reports/
