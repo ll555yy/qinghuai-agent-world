@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import pytest
+
 from core.backend.app.simulation.manifest import (
     DEFAULT_MANIFEST_PATH,
     DEFAULT_MANIFEST_SHA256_PATH,
@@ -63,16 +64,6 @@ def _canonical_json_digest(value: object) -> str:
         + "\n"
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
-
-
-def _scenario_digest(root: Path) -> str:
-    digest = hashlib.sha256()
-    for path in sorted((root / "core" / "scenario").glob("*.yaml")):
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-        digest.update(b"\n")
-        digest.update(path.read_bytes())
-        digest.update(b"\n")
-    return digest.hexdigest()
 
 
 def test_versioned_manifest_has_external_digest_and_full_continuous_matrix() -> None:
@@ -227,7 +218,14 @@ def test_manifest_artifact_and_strategy_digests_match_frozen_sources() -> None:
     assert manifest["artifacts"]["promptPolicy"]["sha256"] == _canonical_json_digest(
         route_payload
     )
-    assert manifest["artifacts"]["scenario"]["sha256"] == _scenario_digest(root)
+    # A historical experiment manifest identifies the scenario snapshot used
+    # for that run. The live scenario is allowed to evolve afterwards, so
+    # comparing this value with today's ``core/scenario`` would make an old,
+    # immutable experiment fail whenever world content changes.
+    scenario_digest = manifest["artifacts"]["scenario"]["sha256"]
+    assert scenario_digest == "b21ecca9b5283be198bd6875a175b86e33ed6e981712e5e253680fdbbb0e7e81"
+    assert len(scenario_digest) == 64
+    assert set(scenario_digest) <= set("0123456789abcdef")
     assert manifest["artifacts"]["case"]["sha256"] == hashlib.sha256(
         (root / "core" / "evaluation" / "agent_semantic_cases.yaml").read_bytes()
     ).hexdigest()

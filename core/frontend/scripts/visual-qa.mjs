@@ -132,7 +132,9 @@ try {
   await canvas.waitFor({ state: 'visible' })
   await page.waitForFunction(() => document.querySelector('[data-ready="true"]'))
   await page.waitForTimeout(1_600)
-  await page.screenshot({ path: path.join(outDir, 'stardew-world-1440x900.png') })
+  // Canonical README screenshot: every visual QA run refreshes this file so
+  // the repository landing page cannot silently drift behind the current UI.
+  await page.screenshot({ path: path.join(outDir, 'world-1440x900.png') })
 
   // World screen with the chat panel open
   await page.getByRole('button', { name: /林慧兰、沈星遥正在聊天/ }).click()
