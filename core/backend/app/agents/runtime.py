@@ -87,6 +87,7 @@ class NPCAgentRuntime:
         if agent.recall_was_used_for(invocation):
             state["recall_used"] = True
         try:
+            output: dict[str, Any]
             if self._decision_policy is not None:
                 projected = PublicDecisionContext(
                     run_id=invocation.run_id,
@@ -98,16 +99,20 @@ class NPCAgentRuntime:
                     visible_messages=tuple(deepcopy(item) for item in invocation.visible_messages),
                 )
                 policy_result = self._decision_policy(projected)
-                decision = await policy_result if inspect.isawaitable(policy_result) else policy_result
-                if not isinstance(decision, (DailyActionDecision, InvitationDecision, ChatDecision)):
+                policy_decision = (
+                    await policy_result if inspect.isawaitable(policy_result) else policy_result
+                )
+                if not isinstance(
+                    policy_decision, (DailyActionDecision, InvitationDecision, ChatDecision)
+                ):
                     raise TypeError("decision_policy returned an unsupported decision")
                 output = {
-                    "final_output": decision,
-                    "decision": decision,
+                    "final_output": policy_decision,
+                    "decision": policy_decision,
                     "node_path": ("public_decision_policy", "finalize"),
                 }
             else:
-                output = await self.graph.ainvoke(state)
+                output = dict(await self.graph.ainvoke(state))
             if output.get("tool_used", False):
                 agent.mark_recall_used_for(invocation)
             decision = output.get("final_output") or output.get("decision")
